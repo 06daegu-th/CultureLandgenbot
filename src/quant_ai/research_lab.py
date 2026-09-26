@@ -91,6 +91,8 @@ class StrategyConfig:
     buffer_k: int = 40
     gross: float = 1.0
     regime_scaling: bool = False
+    vol_target: float | None = None  # 연 변동성 목표 (예: 0.15). 보유 묶음의 최근 60일 변동성이 크면 비중 축소
+    vol_lookback: int = 60
     train_window: int = 750
     retrain_every: int = 20
     min_train_dates: int = 250
@@ -150,6 +152,9 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
     OP = p.open.to_numpy(float)
     S = scores.to_numpy(float)
     T, N = OP.shape
+    C = p.close.to_numpy(float)
+    CR = np.full((T, N), np.nan)
+    CR[1:] = C[1:] / C[:-1] - 1  # 종가→종가 (t 종가까지 정보만 사용)
     ret = np.full((T, N), np.nan)
     ret[:-1] = OP[1:] / OP[:-1] - 1  # d 시가 → d+1 시가
     last_idx = np.array([p.dates.searchsorted(p.last_date[s]) for s in p.symbols])
@@ -165,7 +170,7 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
             s = S[d - 1]
             ok = np.isfinite(s) & np.isfinite(OP[d])
             target = np.zeros(N)
-            if ok.sum() >= cfg.top_k:
+            if ok.sum() > 0:  # 가능한 종목이 top_k 보다 적으면 있는 만큼만 (전액 현금으로 가지 않음)
                 order = np.argsort(-np.where(ok, s, -np.inf))
                 rank = np.empty(N, int)
                 rank[order] = np.arange(N)
@@ -180,6 +185,13 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
                 if cfg.regime_scaling and regime is not None:
                     r = regime.iloc[d - 1] if d - 1 < len(regime) else None
                     g *= EXPOSURE_MULTIPLIER[Regime(r)] if isinstance(r, str) else 1.0
+                if cfg.vol_target and d > cfg.vol_lookback:
+                    # 사전(ex-ante) 변동성: 지금 고른 종목 동일가중 묶음의 과거 60일 일간 수익률
+                    hist = CR[d - cfg.vol_lookback:d][:, picks]
+                    basket = np.nanmean(hist, axis=1)
+                    vol = float(np.nanstd(basket) * np.sqrt(252))
+                    if vol > 0:
+                        g *= min(1.0, cfg.vol_target / vol)
                 target[picks] = g / len(picks)
             tradable = np.isfinite(OP[d])
             target = np.where(tradable, target, w)  # 거래 불가 종목은 비중 유지
@@ -312,4 +324,35 @@ def default_configs() -> list[StrategyConfig]:
         # 5) ML 없는 고전 팩터 (모멘텀 + 저변동성 + 52주 고점) — ML 이 정말 도움이 되는지 대조군
         StrategyConfig("factor-mom-lowvol", features=["mom_12_1", "vol_60", "dist_52w"], model="factor",
                        factor_weights={"mom_12_1": 1.0, "vol_60": -1.0, "dist_52w": 1.0}),
+        # 6) 5) + 변동성 타깃팅 15% (모멘텀 급락 방어, Barroso & Santa-Clara 2015) — dev 에서 탈락
+        StrategyConfig("factor-mom-lowvol-vt15", features=["mom_12_1", "vol_60", "dist_52w"], model="factor",
+                       factor_weights={"mom_12_1": 1.0, "vol_60": -1.0, "dist_52w": 1.0}, vol_target=0.15),
     ]
+
+
+def save_lab_report(res: dict, out_dir, data_info: dict) -> str:
+    """연구 결과를 JSON 으로 저장 (대시보드 '실데이터 연구' 화면에서 표시)."""
+    import json
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for r in res["results"]:
+        eq = r["_sim"]["equity"]
+        rows.append({
+            "name": r["config"]["name"], "config": r["config"], "dev": r["dev"], "dev_stress": r["dev_stress"],
+            "dev_ic": r["dev_ic"], "dev_dsr": r["dev_dsr"], "holdout": r["holdout"], "holdout_stress": r["holdout_stress"],
+            "holdout_ic": r["holdout_ic"], "full": r["full"], "yearly": r["yearly"], "turnover": r["turnover"],
+            "avg_exposure": r["avg_exposure"],
+            "equity": [[str(t.date()), float(v)] for t, v in eq.iloc[::5].items()],
+            "benchmarks": {k: [[str(t.date()), float(v)] for t, v in b.reindex(eq.index).ffill().iloc[::5].items()]
+                           for k, b in r["_benches"].items()},
+        })
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    path = out / f"lab-{stamp}.json"
+    path.write_text(json.dumps({"kind": "lab", "created_at": stamp, "data": data_info, "dev_end": res["dev_end"],
+                                "chosen": res["chosen"], "n_trials": res["n_trials"], "results": rows},
+                               ensure_ascii=False, default=float), encoding="utf-8")
+    return str(path)

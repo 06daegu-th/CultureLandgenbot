@@ -151,6 +151,25 @@ def cmd_research(args):
             print("  -", f)
 
 
+def cmd_lab(args):
+    import warnings
+
+    from .data.collectors.marcap import build_krx_dataset
+    from .research_lab import default_configs, run_lab, save_lab_report
+    warnings.filterwarnings("ignore")
+    ds = build_krx_dataset(args.marcap_dir, args.start, args.end, args.top)
+    print(f"데이터: {args.start}~{args.end}, 시총 상위 {args.top} (종목 {len(ds.bars)}), dev ≤ {args.dev_end}")
+    res = run_lab(ds, default_configs(), dev_end=args.dev_end, prior_trials=args.prior_trials)
+    print(f"\nholdout (선택 후 계산, 선택={res['chosen']}):")
+    for r in res["results"]:
+        h = r["holdout"]
+        print(f"  {r['config']['name']:<26} Sharpe {h['strategy']['sharpe']:5.2f} CAGR {h['strategy']['cagr']:6.1%} "
+              f"MDD {h['strategy']['max_drawdown']:6.1%} | KOSPI Sharpe {h['kospi']['sharpe']:.2f} CAGR {h['kospi']['cagr']:.1%}")
+    path = save_lab_report(res, args.out, {"source": "FinanceData/marcap (KRX)", "start": args.start, "end": args.end,
+                                           "top_n": args.top, "symbols": len(ds.bars)})
+    print(f"\n리포트: {path}")
+
+
 def cmd_health(args):
     from .web.api import DashboardAPI
     app = _app(args)
@@ -238,6 +257,15 @@ def main(argv: list[str] | None = None) -> None:
     rs.add_argument("--out", default="artifacts/research")
     rs.add_argument("--register", action="store_true", help="최고 설정을 레지스트리에 등록하고 게이트 평가")
     rs.set_defaults(fn=cmd_research)
+    lb = sub.add_parser("lab", help="전략 연구소: 여러 전략 dev/holdout 비교 (빠른 엔진)")
+    lb.add_argument("--marcap-dir", required=True)
+    lb.add_argument("--start", type=int, default=2010)
+    lb.add_argument("--end", type=int, default=datetime.now().year)
+    lb.add_argument("--top", type=int, default=100)
+    lb.add_argument("--dev-end", default="2020-12-31", help="이 날짜까지로만 전략 선택")
+    lb.add_argument("--prior-trials", type=int, default=0, help="이전에 시도한 설정 수 (DSR 보정)")
+    lb.add_argument("--out", default="artifacts/research")
+    lb.set_defaults(fn=cmd_lab)
 
     args = p.parse_args(argv)
     args.fn(args)

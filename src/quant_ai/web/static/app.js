@@ -439,6 +439,7 @@ function viewModels(d) {
 // ------------------------------------------------------------ 뷰: 실데이터 연구
 async function viewResearch(el) {
   const r = await api("/api/research");
+  if (r.kind === "lab") return viewLab(el, r);
   if (!r.trials) { el.innerHTML = card("실데이터 연구", empty("리포트 없음 — quant-ai research krx --marcap-dir ... 실행")); return; }
   const f2 = (v) => v == null ? "-" : Number(v).toFixed(2);
   const rows = r.trials.map((t) => { const s = t.metrics.strategy, p = t.metrics.prediction; return `<tr class="${t.trial.name === r.best ? "" : ""}">
@@ -468,6 +469,36 @@ async function viewResearch(el) {
     { data: best.equity, color: "#3b82f6", title: "전략" },
     { data: best.benchmark, color: "#94a3b8", title: "KOSPI" },
     { data: best.universe_ew_curve, color: "#f59e0b", title: "유니버스 EW" },
+  ]);
+}
+
+function viewLab(el, r) {
+  const f2 = (v) => v == null ? "-" : Number(v).toFixed(2);
+  const pc = (v) => v == null ? "-" : (v * 100).toFixed(1) + "%";
+  const row = (x) => { const d = x.dev.strategy, h = x.holdout.strategy, chosen = x.name === r.chosen; return `<tr>
+    <td><b>${esc(x.name)}</b>${chosen ? ' <span class="chip pos">dev 선택</span>' : ""}</td>
+    <td class="r num">${f2(d.sharpe)}</td><td class="r">${pct(d.cagr, 1)}</td><td class="r">${pct(d.max_drawdown, 1)}</td><td class="r num">${f2(x.dev_stress.sharpe)}</td><td class="r num ${x.dev_dsr < 0.5 ? "conflict-high" : "conflict-low"}">${f2(x.dev_dsr)}</td>
+    <td class="r num" style="border-left:1px solid var(--line)">${f2(h.sharpe)}</td><td class="r">${pct(h.cagr, 1)}</td><td class="r">${pct(h.max_drawdown, 1)}</td><td class="r num ${x.holdout.ir_vs_universe_ew < 0 ? "down" : "up"}">${f2(x.holdout.ir_vs_universe_ew)}</td>
+    <td class="r num">${x.turnover.toFixed(1)}배</td></tr>`; };
+  const best = r.results.find((x) => x.name === r.chosen) || r.results[0];
+  const k = best.holdout.kospi, e = best.holdout.universe_ew, bh = best.holdout.strategy, full = best.full;
+  const years = Object.keys(best.yearly.strategy).slice(1);
+  const yrows = years.map((y) => `<tr><td class="mono">${y}</td><td class="r">${pct(best.yearly.strategy[y], 1)}</td><td class="r">${pct(best.yearly.kospi[y], 1)}</td><td class="r">${pct(best.yearly.universe_ew[y], 1)}</td></tr>`).join("");
+  el.innerHTML = `
+  ${card(`전략 연구소 · 실제 KRX 데이터 <span class="small dim">${esc(r.data.source)} · ${r.data.start}~${r.data.end} · 월말 시총 상위 ${r.data.top_n} (상장폐지 포함 ${r.data.symbols}종목)</span>`,
+    `<div class="small muted" style="margin-bottom:12px">설정 선택은 <b>개발 구간(~${esc(r.dev_end)})</b> 성과로만 했고, 이후 구간(holdout)은 선택이 끝난 뒤 한 번 계산했습니다. 누적 시도 ${r.n_trials}회로 DSR 보정.</div>
+    <div class="stat-row">
+      <div class="stat"><div class="l">선택 전략 holdout</div><div class="big num">${f2(bh.sharpe)}</div><div class="small dim">Sharpe · CAGR ${pc(bh.cagr)} · MDD ${pc(bh.max_drawdown)}</div></div>
+      <div class="stat"><div class="l">KOSPI holdout</div><div class="big num">${f2(k.sharpe)}</div><div class="small dim">CAGR ${pc(k.cagr)} · MDD ${pc(k.max_drawdown)}</div></div>
+      <div class="stat"><div class="l">전체 구간 (전략 / KOSPI)</div><div class="big num">${f2(full.strategy.sharpe)} / ${f2(full.kospi.sharpe)}</div><div class="small dim">CAGR ${pc(full.strategy.cagr)} / ${pc(full.kospi.cagr)}</div></div>
+      <div class="stat"><div class="l">dev DSR (다중검정 보정)</div><div class="big num ${best.dev_dsr < 0.5 ? "down" : ""}">${f2(best.dev_dsr)}</div><div class="small dim">0.5 미만 = 개발 구간 우위가 우연일 수 있음</div></div></div>
+    <div id="lab-chart" class="chart" style="margin-top:14px"></div>`)}
+  ${card("전략별 결과 <span class='small dim'>왼쪽 = 개발 구간(선택 근거), 오른쪽 = holdout</span>", `<div class="scroll"><table><thead><tr><th>전략</th><th class="r">dev Sharpe</th><th class="r">CAGR</th><th class="r">MDD</th><th class="r">비용2배</th><th class="r">DSR</th><th class="r" style="border-left:1px solid var(--line)">holdout Sharpe</th><th class="r">CAGR</th><th class="r">MDD</th><th class="r" title="같은 종목군 동일가중 대비">IR</th><th class="r">연회전</th></tr></thead><tbody>${r.results.map(row).join("")}</tbody></table></div>`)}
+  ${card(`연도별 수익률 <span class="small dim">${esc(best.name)}</span>`, `<div class="scroll"><table><thead><tr><th>연도</th><th class="r">전략</th><th class="r">KOSPI</th><th class="r">유니버스 EW</th></tr></thead><tbody>${yrows}</tbody></table></div>`)}`;
+  lineChart($("#lab-chart"), [
+    { data: best.equity, color: "#3b82f6", title: best.name },
+    { data: best.benchmarks.kospi, color: "#94a3b8", title: "KOSPI" },
+    { data: best.benchmarks.universe_ew, color: "#f59e0b", title: "유니버스 EW" },
   ]);
 }
 
