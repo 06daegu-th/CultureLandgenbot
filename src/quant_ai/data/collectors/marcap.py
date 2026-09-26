@@ -87,6 +87,8 @@ def adjusted_bars(df: pd.DataFrame, codes: list[str]) -> dict[str, pd.DataFrame]
             "low": g["Low"].where(g["Low"] > 0, g["Close"]) * f,
             "close": adj_close,
             "volume": g["Volume"].astype(float) / f,  # 분할 전후 거래량도 같은 단위로
+            "marcap": g["Marcap"].astype(float),  # 시가총액(원) — 분할과 무관
+            "amount": g["Amount"].astype(float),  # 거래대금(원)
         })
         out[code] = bars
     return out
