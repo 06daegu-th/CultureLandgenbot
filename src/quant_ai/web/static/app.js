@@ -1,0 +1,538 @@
+/* Quant AI 대시보드 (vanilla JS, 개인용) */
+"use strict";
+
+const S = {
+  data: null,
+  view: "dashboard",
+  symbol: null,
+  pfMode: "paper",
+  newsKind: "all",
+  charts: [],
+  token: new URLSearchParams(location.search).get("token") || safeGet("qa_token") || "",
+};
+
+function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function safeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* 무시 */ } }
+if (S.token) safeSet("qa_token", S.token);
+
+// ------------------------------------------------------------ 유틸
+const $ = (sel, el = document) => el.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const isKR = (sym) => /^\d{6}$/.test(sym) || /\.K[SQ]$/.test(sym);
+
+function num(v, d = 0) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "-";
+  return Number(v).toLocaleString("ko-KR", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function price(v, sym) { return num(v, sym && !isKR(sym) && !["KOSPI", "KOSDAQ"].includes(sym) ? 2 : (Math.abs(v) < 1000 ? 2 : 0)); }
+function pct(v, d = 2, sign = true) {
+  if (v === null || v === undefined) return '<span class="flat">-</span>';
+  const cls = v > 0 ? "up" : v < 0 ? "down" : "flat";
+  const arrow = v > 0 ? "▲ " : v < 0 ? "▼ " : "";
+  return `<span class="${cls}">${arrow}${sign && v > 0 ? "+" : ""}${(v * 100).toFixed(d)}%</span>`;
+}
+function time(ts, withDate = false) {
+  if (!ts) return "-";
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, "0");
+  const t = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return withDate ? `${p(d.getMonth() + 1)}.${p(d.getDate())} ${t}` : t;
+}
+function date(ts) { if (!ts) return "-"; const d = new Date(ts); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; }
+const badge = (a) => a ? `<span class="badge b-${esc(a)}">${a === "NO_TRADE" ? "NO TRADE" : esc(a)}</span>` : '<span class="badge b-none">-</span>';
+const card = (title, body, right = "", cls = "") => `<div class="card ${cls}"><div class="card-h"><h3>${title}</h3><div class="right">${right}</div></div>${body}</div>`;
+const empty = (msg = "데이터 없음") => `<div class="empty">${esc(msg)}</div>`;
+
+async function api(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (S.token) headers["X-Token"] = S.token;
+  const r = await fetch(path, { ...opts, headers });
+  if (r.status === 401) {
+    const t = prompt("접속 토큰 (QUANT_WEB_TOKEN)");
+    if (t) { S.token = t; safeSet("qa_token", t); return api(path, opts); }
+  }
+  if (!r.ok) throw new Error(`${path} ${r.status}`);
+  return r.json();
+}
+
+// ------------------------------------------------------------ 작은 시각화 (SVG)
+function spark(values, w = 160, h = 44) {
+  const v = (values || []).filter((x) => x !== null);
+  if (v.length < 2) return "";
+  const min = Math.min(...v), max = Math.max(...v), rng = max - min || 1;
+  const pts = v.map((x, i) => [(i / (v.length - 1)) * w, h - 4 - ((x - min) / rng) * (h - 8)]);
+  const up = v[v.length - 1] >= v[0];
+  const col = up ? css("--up") : css("--down");
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
+  const id = "g" + Math.random().toString(36).slice(2, 8);
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".28"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs><path d="${line}L${w},${h}L0,${h}Z" fill="url(#${id})"/><path d="${line}" fill="none" stroke="${col}" stroke-width="1.6"/></svg>`;
+}
+
+function gauge(score, label) {
+  const r = 58, cx = 75, cy = 72, a0 = Math.PI, a1 = a0 + (Math.PI * Math.max(0, Math.min(100, score))) / 100;
+  const pt = (a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  const [x0, y0] = pt(a0), [x1, y1] = pt(a1), [xe, ye] = pt(2 * Math.PI);
+  const col = score >= 60 ? css("--good") : score < 40 ? css("--bad") : css("--warn");
+  return `<svg viewBox="0 0 150 92" width="150"><path d="M${x0},${y0} A${r},${r} 0 0 1 ${xe},${ye}" stroke="${css("--line-2")}" stroke-width="11" fill="none" stroke-linecap="round"/>
+  <path d="M${x0},${y0} A${r},${r} 0 0 1 ${x1.toFixed(2)},${y1.toFixed(2)}" stroke="${col}" stroke-width="11" fill="none" stroke-linecap="round"/>
+  <text x="75" y="68" text-anchor="middle" font-size="22" font-weight="800" fill="${css("--text")}">${Math.round(score)}%</text>
+  <text x="75" y="86" text-anchor="middle" font-size="11" fill="${css("--muted")}">${esc(label)}</text></svg>`;
+}
+
+function donut(segs, center) {
+  const total = segs.reduce((a, s) => a + s.value, 0) || 1;
+  let a = -Math.PI / 2;
+  const r = 58, cx = 70, cy = 70;
+  const arcs = segs.map((s) => {
+    const da = (s.value / total) * Math.PI * 2, a2 = a + da;
+    const large = da > Math.PI ? 1 : 0;
+    const p = (ang) => `${(cx + r * Math.cos(ang)).toFixed(2)},${(cy + r * Math.sin(ang)).toFixed(2)}`;
+    const d = da >= Math.PI * 2 - 1e-6 ? `M${cx},${cy - r} A${r},${r} 0 1 1 ${cx - 0.01},${cy - r}` : `M${p(a)} A${r},${r} 0 ${large} 1 ${p(a2)}`;
+    a = a2;
+    return `<path d="${d}" stroke="${s.color}" stroke-width="16" fill="none"/>`;
+  }).join("");
+  return `<svg viewBox="0 0 140 140" width="140">${arcs}<text x="70" y="64" text-anchor="middle" font-size="11" fill="${css("--muted")}">총 자산</text><text x="70" y="84" text-anchor="middle" font-size="15" font-weight="800" fill="${css("--text")}">${esc(center)}</text></svg>`;
+}
+
+const REGIME_KO = { bull_quiet: "안정적 상승", bull_volatile: "변동성 상승", sideways: "횡보", bear_quiet: "완만한 하락", bear_volatile: "변동성 하락", crisis: "위기" };
+const PALETTE = ["#3b82f6", "#8b5cf6", "#06b6d4", "#22c55e", "#f59e0b", "#ec4899", "#14b8a6", "#f97316", "#a3e635", "#64748b"];
+
+// ------------------------------------------------------------ 차트 (lightweight-charts)
+function clearCharts() { S.charts.forEach((c) => { try { c.remove(); } catch { /* */ } }); S.charts = []; }
+
+function chartOpts(el) {
+  return {
+    width: el.clientWidth, height: el.clientHeight,
+    layout: { background: { type: "solid", color: "transparent" }, textColor: css("--muted"), fontFamily: "Pretendard, sans-serif" },
+    grid: { vertLines: { color: css("--line") }, horzLines: { color: css("--line") } },
+    rightPriceScale: { borderColor: css("--line-2") }, timeScale: { borderColor: css("--line-2") },
+    crosshair: { mode: 0 },
+  };
+}
+
+async function candleChart(el, symbol) {
+  if (!window.LightweightCharts) { el.innerHTML = empty("차트 라이브러리를 불러오지 못했습니다 (오프라인?)"); return; }
+  const d = await api(`/api/chart?symbol=${encodeURIComponent(symbol)}`);
+  if (!d.bars.length) { el.innerHTML = empty(); return; }
+  const chart = LightweightCharts.createChart(el, chartOpts(el));
+  S.charts.push(chart);
+  const up = css("--up"), down = css("--down");
+  const candles = chart.addCandlestickSeries({ upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down });
+  const krw = isKR(symbol);
+  candles.applyOptions({ priceFormat: { type: "price", precision: krw ? 0 : 2, minMove: krw ? 1 : 0.01 } });
+  candles.setData(d.bars);
+  [["ma5", "#f59e0b"], ["ma20", "#a78bfa"], ["ma60", "#38bdf8"]].forEach(([k, c]) => {
+    const s = chart.addLineSeries({ color: c, lineWidth: 1.4, priceLineVisible: false, lastValueVisible: false });
+    s.setData(d[k]);
+  });
+  const vol = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", lastValueVisible: false, priceLineVisible: false });
+  chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  vol.setData(d.bars.map((b) => ({ time: b.time, value: b.volume, color: (b.close >= b.open ? up : down) + "66" })));
+  candles.setMarkers(d.markers.map((m) => ({
+    time: m.time, position: m.action === "BUY" ? "belowBar" : "aboveBar", shape: m.action === "BUY" ? "arrowUp" : "arrowDown",
+    color: m.action === "BUY" ? "#22c55e" : "#fb7185", text: `${m.action} ${Math.round(m.confidence)}`,
+  })));
+  chart.timeScale().fitContent();
+}
+
+function lineChart(el, series) {
+  if (!window.LightweightCharts) { el.innerHTML = empty("차트 라이브러리를 불러오지 못했습니다"); return; }
+  const chart = LightweightCharts.createChart(el, chartOpts(el));
+  S.charts.push(chart);
+  series.forEach(({ data, color, title }) => {
+    const s = chart.addAreaSeries({ lineColor: color, topColor: color + "44", bottomColor: color + "00", lineWidth: 2, title });
+    const seen = new Set();
+    s.setData(data.map(([t, v]) => ({ time: Math.floor(new Date(t).getTime() / 1000), value: v }))
+      .filter((p) => !seen.has(p.time) && seen.add(p.time)));
+  });
+  chart.timeScale().fitContent();
+}
+
+window.addEventListener("resize", () => S.charts.forEach((c) => {
+  const el = c.chartElement?.()?.parentElement; if (el) c.applyOptions({ width: el.clientWidth });
+}));
+
+// ------------------------------------------------------------ 컴포넌트
+function consensusBlock(c, labels, compact = false) {
+  if (!c) return empty("아직 합의 신호가 없습니다");
+  const voters = (c.contributions || []).map((v) => {
+    const st = v.prob_up === null ? null : v.stance;
+    const left = st === null ? 50 : st >= 0 ? 50 : 50 + st * 50, width = st === null ? 0 : Math.abs(st) * 50;
+    const col = st === null ? "transparent" : st >= 0 ? css("--up") : css("--down");
+    const acc = v.accuracy === null || v.accuracy === undefined ? "신규" : `${Math.round(v.accuracy * 100)}%`;
+    return `<div class="voter" title="${esc(v.summary)}">
+      <div class="name">${esc(labels[v.analyst] || v.analyst)}${v.veto ? ' <span class="chip neg">VETO</span>' : ""}<small>${esc(v.backend)}</small></div>
+      <div class="stance"><div style="left:${left}%;width:${width}%;background:${col}"></div></div>
+      <div class="mono r ${st === null ? "flat" : st >= 0 ? "up" : "down"}" style="text-align:right">${v.analyst === "risk" && st === null ? (v.veto ? '<span class="down">VETO</span>' : '<span style="color:var(--good)">통과</span>') : st === null ? "기권" : (st >= 0 ? "+" : "") + st.toFixed(2)}</div>
+      <div class="small muted" style="text-align:right" title="과거 적중률 (n=${v.n_scored})">${acc}</div></div>`;
+  }).join("");
+  const vetoes = (c.vetoes || []).map((v) => `<div class="veto">⛔ ${esc(v)}</div>`).join("");
+  const expl = (c.explanation || []).map((e) => `<div class="small muted">• ${esc(e)}</div>`).join("");
+  return `<div class="consensus">
+    <div class="cons-top"><div class="cons-action ${esc(c.action)}">${c.action === "NO_TRADE" ? "NO TRADE" : esc(c.action)}</div>
+      <div style="flex:1"><div class="small muted" style="display:flex;justify-content:space-between"><span>신뢰도</span><b class="mono" style="color:var(--text)">${Math.round(c.confidence)}</b></div>
+      <div class="conf-bar"><div style="width:${Math.min(100, c.confidence)}%"></div></div>
+      <div class="small muted" style="margin-top:4px">P(상승) <b class="mono" style="color:var(--text)">${(c.prob_up * 100).toFixed(1)}%</b> · 의견 충돌 <b class="conflict-${esc(c.conflict)}">${{ low: "낮음", medium: "보통", high: "높음" }[c.conflict] || c.conflict}</b></div></div></div>
+    <div style="display:grid;gap:8px">${voters}</div>
+    ${vetoes}${compact ? "" : expl}
+  </div>`;
+}
+
+// ------------------------------------------------------------ 뷰: 대시보드
+function viewDashboard(d) {
+  const idx = d.indices.length ? `<div class="idx-row">${d.indices.map((i) => `<div class="idx"><div class="n">${esc(i.name)}</div>
+      <div class="v num">${num(i.last, 2)}</div><div class="small">${pct(i.chg_pct)}</div>${spark(i.spark)}</div>`).join("")}</div>` : empty();
+
+  const m = d.market;
+  const mkt = m.regime ? `<div class="mkt"><div><div class="gauge-l" style="color:${m.score >= 60 ? "var(--good)" : m.score < 40 ? "var(--bad)" : "var(--warn)"}">${esc(m.risk_label)}</div>${gauge(m.score, "시장 심리")}</div>
+    <div class="kv">${d.macro.map((x) => `<div class="muted">${esc(x.label)}</div><div class="num">${num(x.last, 2)}</div><div class="small">${pct(x.chg_pct)}</div>`).join("") || '<div class="muted">경제지표 없음</div><div></div><div></div>'}</div></div>` : empty("국면 계산에 필요한 데이터 부족");
+
+  const summary = d.ai_summary.length ? `<ul class="plain">${d.ai_summary.map((s) => `<li><span class="chk">◉</span><span>${esc(s)}</span></li>`).join("")}</ul>` : empty();
+
+  const watch = d.watchlist.length ? `<div class="scroll"><table class="tight"><thead><tr><th>종목명</th><th class="r">현재가</th><th class="r">등락률</th><th class="r">AI 신호</th></tr></thead><tbody>
+    ${d.watchlist.map((w) => `<tr class="click" data-sym="${esc(w.symbol)}"><td><b>${esc(w.name)}</b><span class="sub">${esc(w.symbol)}</span></td><td class="r num">${price(w.last, w.symbol)}</td><td class="r">${pct(w.chg_pct)}</td>
+      <td class="r">${badge(w.action)}<span class="sub num">${w.prob_up === null ? "" : "P " + (w.prob_up * 100).toFixed(0) + "%"}</span></td></tr>`).join("")}</tbody></table></div>` : empty();
+
+  const pf = d.portfolios[S.pfMode] || {};
+  const pfBody = pf.equity ? portfolioSummary(pf) : empty(`${S.pfMode} 포트폴리오 기록 없음`);
+
+  const news = d.news.slice(0, 7).map((n) => `<tr><td class="dim small">${time(n.ts, true)}</td><td style="white-space:normal">${esc(n.title)}</td><td class="r">${sentChip(n.sentiment)}</td></tr>`).join("");
+
+  const board = scoreMatrix(d, true);
+
+  const trades = d.trades.slice(0, 7).map((t) => `<tr><td class="dim small">${time(t.ts, true)}<span class="sub">${esc(t.mode)}</span></td><td>${esc(t.name)}<span class="sub ${t.side === "buy" ? "up" : "down"}">${t.side === "buy" ? "매수" : "매도"}</span></td><td class="r num">${num(t.qty)}주<span class="sub">@${price(t.price, t.symbol)}</span></td></tr>`).join("");
+
+  const top = d.watchlist.find((w) => w.action === "BUY") || d.watchlist[0];
+  S.symbol = S.symbol || top?.symbol;
+
+  return `
+  <div class="grid g-top">
+    ${card("주요 지수", idx)}
+    ${card("시장 현황", mkt, m.regime ? `<span class="chip">${esc(m.regime_label)}</span>` : "")}
+    ${card("오늘의 AI 요약", summary, `<span class="small dim">${time(d.summary_time, true)}</span>`)}
+  </div>
+  <div class="grid g-mid">
+    ${card(`<span id="chart-title">${esc(nameOf(S.symbol))}</span>`, `<div id="main-chart" class="chart tall"></div>`, `<span class="small muted">MA5 · MA20 · MA60 · AI 신호</span>`)}
+    ${card("관심 종목", watch, `<span class="small muted">${d.watchlist.length}종목</span>`)}
+    ${card("AI 합의 신호", `<div id="cons-box">${empty("불러오는 중…")}</div>`, `<a class="link" href="#analysis">상세 분석 →</a>`)}
+  </div>
+  <div class="grid g-bot">
+    ${card("포트폴리오", pfBody, pfTabs())}
+    ${card("최근 뉴스 & 이벤트", news ? `<div class="scroll"><table><tbody>${news}</tbody></table></div>` : empty(), `<a class="link" href="#news">전체 →</a>`)}
+    ${card("AI 성적표 <span class='small dim'>단기 방향</span>", board, `<a class="link" href="#review">전체 →</a>`)}
+    ${card("거래 내역", trades ? `<div class="scroll"><table class="tight"><tbody>${trades}</tbody></table></div>` : empty("체결 없음"), `<a class="link" href="#trades">전체 →</a>`)}
+  </div>`;
+}
+
+function pfTabs() {
+  return `<div class="tabs" id="pf-tabs">${["paper", "shadow", "live"].map((m) => `<button data-m="${m}" class="${S.pfMode === m ? "on" : ""}">${m.toUpperCase()}</button>`).join("")}</div>`;
+}
+
+function portfolioSummary(pf) {
+  const stock = pf.positions.reduce((a, p) => a + (p.value || 0), 0);
+  const segs = [{ label: "현금", value: Math.max(pf.cash, 0), color: "#64748b" },
+    ...pf.positions.slice(0, 6).map((p, i) => ({ label: p.name, value: p.value, color: PALETTE[i] }))];
+  const rest = pf.positions.slice(6).reduce((a, p) => a + p.value, 0);
+  if (rest > 0) segs.push({ label: "기타", value: rest, color: "#334155" });
+  const eq = pf.equity || 1;
+  return `<div class="donut-wrap">${donut(segs, "₩" + num(pf.equity / 10000) + "만")}
+    <div class="legend">${segs.map((s) => `<div><span class="sw" style="background:${s.color}"></span>${esc(s.label)}<b class="num">${((s.value / eq) * 100).toFixed(1)}%</b></div>`).join("")}</div></div>
+    <div class="small muted" style="margin:10px 0 4px">누적 수익률 ${pct(pf.return_pct)} · 주식 ${((stock / eq) * 100).toFixed(0)}%</div>
+    ${pf.positions.length ? `<div class="scroll"><table><thead><tr><th>종목</th><th class="r">수량</th><th class="r">수익률</th></tr></thead><tbody>
+    ${pf.positions.slice(0, 5).map((p) => `<tr><td>${esc(p.name)}<span class="sub num">평균 ${price(p.avg_price, p.symbol)}</span></td><td class="r num">${num(p.qty)}</td><td class="r">${pct(p.pnl_pct)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+}
+
+function sentChip(s) {
+  if (s === null || s === undefined) return "";
+  if (s > 0.15) return '<span class="chip pos">긍정</span>';
+  if (s < -0.15) return '<span class="chip neg">부정</span>';
+  return '<span class="chip">중립</span>';
+}
+
+function scoreMatrix(d, compactDirection = false) {
+  const rows = d.scoreboard.filter((r) => r.analyst !== "challenger" || !compactDirection);
+  if (!rows.length) return empty("채점된 의견이 아직 없습니다 (horizon 경과 후 자동 채점)");
+  const labels = d.analyst_labels, cats = d.category_labels;
+  if (compactDirection) {
+    const dir = rows.filter((r) => r.category === "direction").sort((a, b) => (b.accuracy ?? 0) - (a.accuracy ?? 0));
+    return `<div style="display:grid;gap:10px">${dir.map((r) => `<div><div style="display:flex;justify-content:space-between;font-size:13px"><span>${esc(labels[r.analyst] || r.analyst)}</span><span class="num"><b>${r.accuracy === null ? "-" : (r.accuracy * 100).toFixed(0) + "%"}</b> <span class="dim small">n=${r.n}</span></span></div>
+      <div class="conf-bar" style="margin-top:4px"><div style="width:${(r.accuracy ?? 0) * 100}%;background:${heatColor(r.accuracy)}"></div></div></div>`).join("")}</div>`;
+  }
+  const analysts = [...new Set(rows.map((r) => r.analyst))];
+  const catKeys = Object.keys(cats).filter((c) => rows.some((r) => r.category === c));
+  const get = (a, c) => rows.find((r) => r.analyst === a && r.category === c);
+  return `<div class="scroll"><table class="heat"><thead><tr><th>AI</th>${catKeys.map((c) => `<th class="r">${esc(cats[c])}</th>`).join("")}</tr></thead><tbody>
+    ${analysts.map((a) => `<tr><td><b>${esc(labels[a] || a)}</b></td>${catKeys.map((c) => { const r = get(a, c); return r ? `<td class="cell num" style="background:${heatColor(r.accuracy)}33">${(r.accuracy * 100).toFixed(0)}% <span class="dim small">n=${r.n}</span></td>` : '<td class="cell dim">-</td>'; }).join("")}</tr>`).join("")}
+  </tbody></table></div><div class="small dim" style="margin-top:8px">성적은 앙상블 가중치에 자동 반영됩니다 (표본 30개 전까지는 50% 쪽으로 수축).</div>`;
+}
+function heatColor(a) { if (a === null || a === undefined) return css("--line-2"); return a >= 0.58 ? "#22c55e" : a >= 0.52 ? "#84cc16" : a >= 0.48 ? "#f59e0b" : "#ef4444"; }
+
+function nameOf(sym) { const w = S.data?.watchlist.find((x) => x.symbol === sym); return w ? `${w.name} (${w.symbol})` : sym || ""; }
+
+// ------------------------------------------------------------ 뷰: AI 종목 분석
+async function viewAnalysis(el) {
+  const d = S.data;
+  const sym = S.symbol || d.watchlist[0]?.symbol;
+  if (!sym) { el.innerHTML = card("AI 종목 분석", empty()); return; }
+  const a = await api(`/api/analysis?symbol=${encodeURIComponent(sym)}`);
+  const sel = `<select class="sym-select" id="sym-select">${d.watchlist.map((w) => `<option value="${esc(w.symbol)}" ${w.symbol === sym ? "selected" : ""}>${esc(w.name)} (${esc(w.symbol)})</option>`).join("")}</select>`;
+  const c = a.consensus;
+  const labels = d.analyst_labels;
+  const ops = c ? (c.contributions || []).map((v) => {
+    const det = a.details[v.analyst] || {};
+    const reasons = (det.reasons || []).map((r) => `<li>${esc(r)}</li>`).join("");
+    const risks = (det.risks || []).map((r) => `<li>${esc(r)}</li>`).join("");
+    return `<div class="op"><h4><span>${esc(labels[v.analyst] || v.analyst)}</span><span class="${v.prob_up === null ? "flat" : v.stance >= 0 ? "up" : "down"} num">${v.prob_up === null ? "기권" : (v.prob_up * 100).toFixed(0) + "%"}</span></h4>
+      <div class="small dim">${esc(v.backend)} · 가중치 ${(v.weight * 100).toFixed(0)}% · 확신 ${(v.confidence * 100).toFixed(0)}%</div>
+      <div class="small" style="margin-top:6px">${esc(det.summary || v.summary || "")}</div>
+      ${det.veto_reason ? `<div class="veto" style="margin-top:8px">⛔ ${esc(det.veto_reason)}</div>` : ""}
+      ${reasons ? `<ul>${reasons}</ul>` : ""}${risks ? `<div class="small muted" style="margin-top:6px">리스크</div><ul>${risks}</ul>` : ""}</div>`;
+  }).join("") : "";
+  const sc = a.scenario;
+  const scen = sc ? `<div class="scen">${sc.cases.map((x) => `<div><div class="t ${x.name}">${{ bull: "강세", base: "기준", bear: "약세" }[x.name]} <span class="dim small">${(x.probability * 100).toFixed(0)}%</span></div>
+    <div class="num" style="margin:4px 0">${price(x.price_low, sym)} ~ ${price(x.price_high, sym)}</div><div class="small muted">${esc(x.narrative)}</div></div>`).join("")}</div>
+    <div class="small dim" style="margin-top:8px">기준가 ${price(sc.last_close, sym)} · 1일 변동성 σ ${(sc.sigma * 100).toFixed(2)}% · 국면 ${esc(REGIME_KO[sc.regime] || sc.regime || "-")}</div>` : empty("시나리오 없음 (예측 모드 실행 필요)");
+  const news = a.news.map((n) => `<tr><td class="dim small">${time(n.ts, true)}</td><td style="white-space:normal">${esc(n.title)}</td><td class="r">${sentChip(n.sentiment)}</td></tr>`).join("");
+  const sim = a.similar.map((s) => `<tr><td class="dim small">${date(s.ts)}</td><td style="white-space:normal">${esc(s.text)}</td><td class="r num small">${s.similarity.toFixed(2)}</td></tr>`).join("");
+  const hist = a.history.map((h) => `<tr><td class="dim small">${date(h.ts)}</td><td>${badge(h.action)}</td><td class="r num">${(h.prob_up * 100).toFixed(0)}%</td><td class="r num">${Math.round(h.confidence)}</td><td class="r">${h.realized === null ? '<span class="dim">대기</span>' : pct(h.realized)}</td><td class="r">${h.correct === null ? "" : h.correct ? "✔" : "✘"}</td></tr>`).join("");
+
+  el.innerHTML = `
+  <div class="card"><div class="card-h"><h3>AI 종목 분석</h3><div class="right">${sel}</div></div>
+    <div class="small muted">모든 AI 는 같은 데이터를 보고 <b>서로의 의견을 모른 채</b> 독립적으로 판단합니다. 앙상블이 과거 성적으로 가중해 합의 신호를 만들고, Risk AI 의 거부권은 가중치로 희석되지 않습니다.</div></div>
+  <div class="grid g-21">
+    ${card(esc(a.name) + ` <span class="dim small">${esc(a.symbol)}</span>`, `<div id="an-chart" class="chart"></div>`)}
+    ${card("CONSENSUS SIGNAL", consensusBlock(c, labels), c ? `<span class="small dim">${time(c.as_of, true)}</span>` : "")}
+  </div>
+  ${card("AI 별 독립 의견", `<div class="op-grid">${ops || empty()}</div>`)}
+  <div class="grid g-2">
+    ${card("다음 거래일 시나리오", scen)}
+    ${card("판단 이력 · 채점", hist ? `<div class="scroll" style="max-height:420px"><table><thead><tr><th>일자</th><th>신호</th><th class="r">P(상승)</th><th class="r">신뢰도</th><th class="r">실제</th><th class="r"></th></tr></thead><tbody>${hist}</tbody></table></div>` : empty())}
+  </div>
+  <div class="grid g-2">
+    ${card("관련 뉴스", news ? `<div class="scroll"><table><tbody>${news}</tbody></table></div>` : empty())}
+    ${card("과거 유사 사례 (RAG 메모리)", sim ? `<div class="scroll"><table><tbody>${sim}</tbody></table></div>` : empty("메모리가 아직 비어 있습니다"))}
+  </div>`;
+  $("#sym-select").onchange = (e) => { S.symbol = e.target.value; render(); };
+  candleChart($("#an-chart"), sym);
+}
+
+// ------------------------------------------------------------ 뷰: 시장 분석
+function viewMarket(d) {
+  const m = d.market;
+  const stats = m.regime ? `<div class="stat-row">
+    <div class="stat"><div class="l">현재 국면</div><div class="big">${esc(m.regime_label)}</div></div>
+    <div class="stat"><div class="l">추세 (MA50/200)</div><div class="big ${m.trend >= 0 ? "up" : "down"}">${(m.trend * 100).toFixed(1)}%</div></div>
+    <div class="stat"><div class="l">변동성 분위</div><div class="big">${Math.round(m.vol_pct * 100)}</div></div>
+    <div class="stat"><div class="l">52주 고점 대비</div><div class="big down">${(m.drawdown * 100).toFixed(1)}%</div></div></div>
+    <div class="small muted" style="margin-top:10px">리스크 엔진 노출 배수 <b style="color:var(--text)">${m.exposure_multiplier}</b> · 20일 모멘텀 ${pct(m.momentum)} · 지지 ${num(m.support, 2)} / 저항 ${num(m.resistance, 2)}</div>` : empty();
+  const macro = d.macro.length ? `<table><thead><tr><th>지표</th><th class="r">값</th><th class="r">변화</th></tr></thead><tbody>${d.macro.map((x) => `<tr><td>${esc(x.label)}</td><td class="r num">${num(x.last, 2)}</td><td class="r">${pct(x.chg_pct)}</td></tr>`).join("")}</tbody></table>` : empty("FRED_API_KEY 설정 후 수집");
+  const hist = (m.history || []).slice(-20).reverse().map(([t, r]) => `<tr><td class="dim small">${date(t)}</td><td>${esc(r)}</td></tr>`).join("");
+  return `
+  ${card("시장 국면 (Market Regime Engine)", stats)}
+  <div class="grid g-21">
+    ${card("지수", `<div class="idx-row">${d.indices.map((i) => `<div class="idx"><div class="n">${esc(i.name)}</div><div class="v num">${num(i.last, 2)}</div><div class="small">${pct(i.chg_pct)}</div>${spark(i.spark)}</div>`).join("")}</div>
+      <div id="idx-chart" class="chart" style="margin-top:14px"></div>`)}
+    ${card("경제지표", macro)}
+  </div>
+  ${card("국면 변화 이력", hist ? `<div class="scroll" style="max-height:300px"><table><tbody>${hist}</tbody></table></div>` : empty())}`;
+}
+
+// ------------------------------------------------------------ 뷰: 포트폴리오
+function viewPortfolio(d) {
+  const pf = d.portfolios[S.pfMode] || {};
+  const stats = pf.equity ? `<div class="stat-row">
+    <div class="stat"><div class="l">평가 자산</div><div class="big num">₩${num(pf.equity)}</div></div>
+    <div class="stat"><div class="l">현금</div><div class="big num">₩${num(pf.cash)}</div></div>
+    <div class="stat"><div class="l">누적 수익률</div><div class="big">${pct(pf.return_pct)}</div></div>
+    <div class="stat"><div class="l">보유 종목</div><div class="big num">${pf.positions.length}</div></div></div>` : empty(`${S.pfMode} 기록 없음`);
+  const rows = (pf.positions || []).map((p) => `<tr><td><b>${esc(p.name)}</b> <span class="dim small">${esc(p.symbol)}</span></td><td class="r num">${num(p.qty)}</td><td class="r num">${price(p.avg_price, p.symbol)}</td><td class="r num">${price(p.last, p.symbol)}</td><td class="r num">₩${num(p.value)}</td><td class="r num">${(p.weight * 100).toFixed(1)}%</td><td class="r">${pct(p.pnl_pct)}</td></tr>`).join("");
+  return `
+  <div class="card"><div class="card-h"><h3>포트폴리오</h3><div class="right">${pfTabs()}</div></div>${stats}
+    <div class="small muted" style="margin-top:10px">PAPER = 가상매매 · SHADOW = 실제 주문이었다면(호가 기준 체결) · LIVE = 실계좌 (Shadow 검증 통과 champion 모델 + 안전장치 필요)</div></div>
+  <div class="grid g-21">
+    ${card("자산 추이", `<div id="eq-chart" class="chart"></div>`)}
+    ${card("자산 구성", pf.equity ? portfolioSummary(pf) : empty())}
+  </div>
+  ${card("보유 종목", rows ? `<div class="scroll"><table><thead><tr><th>종목</th><th class="r">수량</th><th class="r">평균가</th><th class="r">현재가</th><th class="r">평가금액</th><th class="r">비중</th><th class="r">수익률</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty("보유 없음"))}`;
+}
+
+// ------------------------------------------------------------ 뷰: 거래/리스크
+function viewTrades(d) {
+  const t = d.trades.map((x) => `<tr><td class="dim small">${time(x.ts, true)}</td><td><span class="chip">${esc(x.mode)}</span></td><td>${esc(x.name)}</td><td class="${x.side === "buy" ? "up" : "down"}">${x.side === "buy" ? "매수" : "매도"}</td><td class="r num">${num(x.qty)}</td><td class="r num">${price(x.price, x.symbol)}</td><td class="r num">${num(x.fee)}</td><td class="small muted" style="white-space:normal">${esc([x.reason, ...(x.reasons || [])].filter(Boolean).join(" · "))}</td></tr>`).join("");
+  const r = d.risk_log.map((x) => `<tr><td class="dim small">${time(x.ts, true)}</td><td><span class="chip">${esc(x.mode)}</span></td><td>${esc(x.name)}</td><td><span class="chip neg">${esc(x.status)}</span></td><td class="small" style="white-space:normal">${esc((x.reasons || []).join(" · "))}</td></tr>`).join("");
+  return `
+  ${card("체결 내역", t ? `<div class="scroll" style="max-height:480px"><table><thead><tr><th>시각</th><th>모드</th><th>종목</th><th>구분</th><th class="r">수량</th><th class="r">체결가</th><th class="r">비용</th><th>사유</th></tr></thead><tbody>${t}</tbody></table></div>` : empty("체결 없음"))}
+  ${card("리스크 게이트 로그 <span class='small dim'>거부·축소된 주문과 Risk AI 거부권</span>", r ? `<div class="scroll" style="max-height:420px"><table><thead><tr><th>시각</th><th>단계</th><th>종목</th><th>결과</th><th>사유</th></tr></thead><tbody>${r}</tbody></table></div>` : empty("거부된 주문 없음"))}`;
+}
+
+// ------------------------------------------------------------ 뷰: 뉴스
+function viewNews(d) {
+  const kinds = { all: "전체", news: "뉴스", disclosure: "공시" };
+  const list = d.news.filter((n) => S.newsKind === "all" || n.kind === S.newsKind);
+  const rows = list.map((n) => `<tr><td class="dim small">${time(n.ts, true)}</td><td><span class="chip">${n.kind === "news" ? "뉴스" : "공시"}</span></td><td style="white-space:normal">${esc(n.title)}</td><td class="small">${(n.symbols || []).map((s) => esc(nameOf(s).split(" (")[0])).join(", ")}</td><td class="small muted">${(n.events || []).map(esc).join(", ")}</td><td class="r">${sentChip(n.sentiment)}</td></tr>`).join("");
+  return card("뉴스 & 공시", rows ? `<div class="scroll"><table><thead><tr><th>시각</th><th>구분</th><th>제목</th><th>종목</th><th>이벤트</th><th class="r">감성</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty(),
+    `<div class="tabs" id="news-tabs">${Object.entries(kinds).map(([k, v]) => `<button data-k="${k}" class="${S.newsKind === k ? "on" : ""}">${v}</button>`).join("")}</div>`);
+}
+
+// ------------------------------------------------------------ 뷰: 복기 / 성적표
+async function viewReview(el) {
+  const d = S.data;
+  const reviews = await api("/api/reviews");
+  const r = reviews[0];
+  const s = r?.summary || {};
+  const stats = r ? `<div class="stat-row">
+    <div class="stat"><div class="l">채점된 합의 신호</div><div class="big num">${s.n_resolved ?? 0}</div></div>
+    <div class="stat"><div class="l">합의 정확도</div><div class="big num">${s.consensus_accuracy == null ? "-" : (s.consensus_accuracy * 100).toFixed(0) + "%"}</div></div>
+    <div class="stat"><div class="l">매매 신호 정확도</div><div class="big num">${s.traded_accuracy == null ? "-" : (s.traded_accuracy * 100).toFixed(0) + "%"}</div></div>
+    <div class="stat"><div class="l">NO TRADE 가 피한 하락</div><div class="big num">${s.no_trade_avoided_loss_rate == null ? "-" : (s.no_trade_avoided_loss_rate * 100).toFixed(0) + "%"}</div></div></div>` : empty("복기 기록 없음");
+  const lessons = r?.lessons?.length ? r.lessons.map((l) => `<div class="lesson">${esc(l)}</div>`).join("") : empty("아직 도출된 교훈이 없습니다");
+  const misses = (s.worst_misses || []).map((m) => `<tr><td class="dim small">${date(m.as_of)}</td><td>${esc(nameOf(m.symbol).split(" (")[0])}</td><td>${badge(m.action)}</td><td class="r num">${Math.round(m.confidence)}</td><td class="r">${pct(m.realized)}</td><td class="small" style="white-space:normal">${esc(m.cause)}</td></tr>`).join("");
+  const lbl = { ...REGIME_KO, low: "낮음", medium: "보통", high: "높음" };
+  const grp = (arr, key) => (arr || []).map((x) => `<tr><td>${esc(lbl[x[key]] || x[key] || "-")}</td><td class="r num">${(x.accuracy * 100).toFixed(0)}%</td><td class="r num dim">${x.count}</td></tr>`).join("");
+  el.innerHTML = `
+  ${card(`자동 복기 <span class="small dim">${r ? esc(r.date) + " · 최근 " + (s.window_days || "") + "일" : ""}</span>`, stats)}
+  ${card("AI 성적표 <span class='small dim'>카테고리별 적중률 · 실제 결과로 자동 채점</span>", scoreMatrix(d))}
+  <div class="grid g-2">
+    ${card("오늘의 교훈", lessons)}
+    ${card("크게 틀린 판단 (고신뢰 오답)", misses ? `<div class="scroll"><table><thead><tr><th>일자</th><th>종목</th><th>신호</th><th class="r">신뢰도</th><th class="r">실제</th><th>원인 분류</th></tr></thead><tbody>${misses}</tbody></table></div>` : empty())}
+  </div>
+  <div class="grid g-3">
+    ${card("국면별 정확도", s.by_regime ? `<table><tbody>${grp(s.by_regime, "regime")}</tbody></table>` : empty())}
+    ${card("신뢰도 구간별 (보정)", s.by_confidence ? `<table><tbody>${grp(s.by_confidence, "conf_bucket")}</tbody></table>` : empty())}
+    ${card("의견 충돌별", s.by_conflict ? `<table><tbody>${grp(s.by_conflict, "conflict")}</tbody></table>` : empty())}
+  </div>`;
+}
+
+// ------------------------------------------------------------ 뷰: 모델
+function viewModels(d) {
+  const st = { champion: "b-BUY", shadow: "b-NO_TRADE", candidate: "b-HOLD", rejected: "b-SELL", retired: "b-none" };
+  const rows = d.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="dim small mono">${esc(m.version)}</div></td><td><span class="badge ${st[m.status] || "b-none"}">${esc(m.status.toUpperCase())}</span></td>
+    <td class="r num">${m.sharpe ?? "-"}</td><td class="r">${pct(m.total_return, 1)}</td><td class="r">${pct(m.mdd, 1)}</td><td class="r num">${m.accuracy == null ? "-" : (m.accuracy * 100).toFixed(1) + "%"}</td><td class="r num">${m.ic ?? "-"}</td>
+    <td class="small muted" style="white-space:normal;max-width:360px">${esc(m.notes || "")}${m.shadow ? `<div class="dim">Shadow ${m.shadow.days}일 · 정확도 ${(m.shadow.accuracy * 100).toFixed(0)}%</div>` : ""}</td></tr>`).join("");
+  return `
+  ${card("모델 레지스트리 <span class='small dim'>검증된 모델만 교체</span>", `<div class="small muted" style="margin-bottom:12px">candidate → (walk-forward 백테스트 게이트) → shadow → (Shadow 실전 검증 게이트) → champion. Live 는 champion 만 사용합니다. 새로 학습된 모델은 절대 바로 실매매에 들어가지 않습니다.</div>
+    ${rows ? `<div class="scroll"><table><thead><tr><th>모델</th><th>상태</th><th class="r">Sharpe</th><th class="r">수익률</th><th class="r">MDD</th><th class="r">OOS 정확도</th><th class="r">IC</th><th>게이트 결과</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty()}`)}`;
+}
+
+// ------------------------------------------------------------ 뷰: 설정
+function viewSettings(d) {
+  const sys = d.system;
+  const risk = Object.entries(sys.risk).map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td class="r num">${esc(v)}</td></tr>`).join("");
+  return `
+  <div class="grid g-2">
+    ${card("AI 구성", `<table><tbody>
+      <tr><td class="muted">Primary AI</td><td>${esc(sys.primary)}</td></tr>
+      <tr><td class="muted">NVIDIA AI (독립 검증 · Risk AI)</td><td>${esc(sys.nvidia)}</td></tr>
+      <tr><td class="muted">Quant Model</td><td>모델 레지스트리의 champion (없으면 shadow/candidate, Live 는 champion 만)</td></tr>
+      <tr><td class="muted">RAG 임베딩</td><td>${esc(sys.embeddings)}</td></tr></tbody></table>
+      <div class="small dim" style="margin-top:10px">API 키는 서버 환경변수로만 설정합니다 (.env). 화면에는 키가 표시되지 않습니다.</div>`)}
+    ${card("리스크 한도", `<table><tbody>${risk}</tbody></table>`)}
+  </div>
+  ${card("실매매 안전장치", `<ul class="plain">
+    <li><span class="chk">${sys.live_enabled ? "◉" : "○"}</span>QUANT_LIVE_ENABLED=${sys.live_enabled}</li>
+    <li><span class="chk">◉</span>QUANT_LIVE_CONFIRM 확인 문구 · QUANT_LIVE_MAX_CAPITAL 소액 상한 · Shadow 통과 champion 필수</li>
+    <li><span class="chk">◉</span>AI 는 주문 권한 없음: AI → 신호 → 앙상블 → 리스크 게이트 → 실행 엔진 → 증권사 API</li>
+    <li><span class="chk">◉</span>킬스위치 ON 시 신규 매수 즉시 중단 (매도·위험 축소는 허용)</li></ul>`)}`;
+}
+
+// ------------------------------------------------------------ 렌더링
+async function render() {
+  const el = $("#view");
+  clearCharts();
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === S.view));
+  const d = S.data;
+  if (!d) { el.innerHTML = empty("불러오는 중…"); return; }
+  try {
+    if (S.view === "dashboard") {
+      el.innerHTML = viewDashboard(d);
+      if (S.symbol) {
+        candleChart($("#main-chart"), S.symbol);
+        api(`/api/analysis?symbol=${encodeURIComponent(S.symbol)}`).then((a) => { const b = $("#cons-box"); if (b) b.innerHTML = `<div class="small muted" style="margin-bottom:10px"><b style="color:var(--text)">${esc(a.name)}</b> ${esc(a.symbol)}</div>` + consensusBlock(a.consensus, d.analyst_labels, true); });
+      }
+    } else if (S.view === "analysis") await viewAnalysis(el);
+    else if (S.view === "market") {
+      el.innerHTML = viewMarket(d);
+      const first = d.indices[0];
+      if (first) candleChart($("#idx-chart"), first.symbol);
+    } else if (S.view === "portfolio") {
+      el.innerHTML = viewPortfolio(d);
+      const pf = d.portfolios[S.pfMode];
+      if (pf?.curve?.length) lineChart($("#eq-chart"), [{ data: pf.curve, color: "#3b82f6", title: S.pfMode }]);
+    } else if (S.view === "trades") el.innerHTML = viewTrades(d);
+    else if (S.view === "news") el.innerHTML = viewNews(d);
+    else if (S.view === "review") await viewReview(el);
+    else if (S.view === "models") el.innerHTML = viewModels(d);
+    else if (S.view === "settings") el.innerHTML = viewSettings(d);
+  } catch (e) {
+    el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
+  }
+  bindCommon();
+}
+
+function bindCommon() {
+  document.querySelectorAll("tr[data-sym]").forEach((tr) => tr.onclick = () => {
+    S.symbol = tr.dataset.sym;
+    if (S.view === "dashboard") render(); else { location.hash = "#analysis"; }
+  });
+  document.querySelectorAll("#pf-tabs button").forEach((b) => b.onclick = () => { S.pfMode = b.dataset.m; render(); });
+  document.querySelectorAll("#news-tabs button").forEach((b) => b.onclick = () => { S.newsKind = b.dataset.k; render(); });
+}
+
+function renderChrome(d) {
+  $("#demo-badge").hidden = !d.demo;
+  const mb = $("#mode-badge");
+  mb.textContent = d.mode.toUpperCase();
+  mb.className = "pill " + d.mode;
+  $("#market-badges").innerHTML = Object.entries(d.markets).map(([k, v]) => `<span class="pill ${v === "open" ? "open" : ""}">${k} ${v === "open" ? "장중" : v === "pre_open" ? "장전" : "장외"}</span>`).join(" ");
+  const kb = $("#kill-btn");
+  kb.classList.toggle("on", d.kill_switch);
+  kb.textContent = d.kill_switch ? "KILL SWITCH ON" : "KILL SWITCH";
+  $("#sys-status").innerHTML = `<span class="dot ok"></span>정상`;
+  $("#sys-last").textContent = d.system.last_bar ? `${date(d.system.last_bar)}` : "-";
+}
+
+async function refresh() {
+  try {
+    S.data = await api("/api/dashboard");
+    renderChrome(S.data);
+  } catch (e) {
+    $("#sys-status").innerHTML = `<span class="dot bad"></span>연결 실패`;
+    throw e;
+  }
+}
+
+function route() {
+  S.view = (location.hash || "#dashboard").slice(1) || "dashboard";
+  $(".side").classList.remove("open");
+  render();
+}
+
+// 검색
+$("#search").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  const box = $("#search-results");
+  if (!q || !S.data) { box.classList.remove("open"); return; }
+  const hits = S.data.watchlist.filter((w) => w.name.toLowerCase().includes(q) || w.symbol.toLowerCase().includes(q)).slice(0, 8);
+  box.innerHTML = hits.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span>${badge(w.action)}</a>`).join("") || '<div class="empty">결과 없음</div>';
+  box.classList.add("open");
+  box.querySelectorAll("a").forEach((a) => a.onclick = () => { S.symbol = a.dataset.sym; box.classList.remove("open"); e.target.value = ""; location.hash = "#analysis"; route(); });
+});
+document.addEventListener("click", (e) => { if (!e.target.closest(".search")) $("#search-results").classList.remove("open"); });
+
+$("#kill-btn").onclick = async () => {
+  const on = !S.data?.kill_switch;
+  if (!confirm(on ? "킬스위치를 켜면 모든 신규 매수가 즉시 중단됩니다. 켤까요?" : "킬스위치를 끌까요?")) return;
+  await api("/api/killswitch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) });
+  await refresh(); render();
+};
+$("#theme-btn").onclick = () => {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = next; safeSet("qa_theme", next); render();
+};
+$("#menu-btn").onclick = () => $(".side").classList.toggle("open");
+document.documentElement.dataset.theme = safeGet("qa_theme") || "dark";
+
+window.addEventListener("hashchange", route);
+refresh().then(route).catch(() => route());
+setInterval(async () => { if (S.view === "dashboard" || S.view === "trades") { await refresh(); render(); } else { await refresh(); } }, 60000);

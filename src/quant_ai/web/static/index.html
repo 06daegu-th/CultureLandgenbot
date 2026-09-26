@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quant AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="logo"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 16l4-6 4 3 6-8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18" cy="5" r="2" fill="currentColor"/></svg></div>
+      <div><div class="brand-name">Quant AI</div><div class="brand-sub">Multi-AI Consensus Trading</div></div>
+    </div>
+    <nav id="nav">
+      <a href="#dashboard" data-view="dashboard"><i>▦</i>대시보드</a>
+      <a href="#market" data-view="market"><i>◔</i>시장 분석</a>
+      <a href="#analysis" data-view="analysis"><i>◎</i>AI 종목 분석</a>
+      <a href="#portfolio" data-view="portfolio"><i>◑</i>포트폴리오</a>
+      <a href="#trades" data-view="trades"><i>⇄</i>거래 · 리스크 로그</a>
+      <a href="#news" data-view="news"><i>☰</i>뉴스 &amp; 공시</a>
+      <a href="#review" data-view="review"><i>✎</i>복기 · AI 성적표</a>
+      <a href="#models" data-view="models"><i>⬡</i>모델 레지스트리</a>
+      <a href="#settings" data-view="settings"><i>⚙</i>설정</a>
+    </nav>
+    <div class="side-foot">
+      <div class="quote">AI 는 신호를 낼 뿐,<br>주문은 리스크 엔진을 통과해야만 나간다.</div>
+      <div class="sys">
+        <div class="muted small">시스템 상태</div>
+        <div id="sys-status" class="sys-status"><span class="dot"></span>연결 중</div>
+        <div class="muted small" style="margin-top:8px">마지막 데이터</div>
+        <div id="sys-last" class="mono small">-</div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <header class="top">
+      <button class="menu-btn" id="menu-btn" aria-label="메뉴">☰</button>
+      <div class="search">
+        <span>⌕</span><input id="search" placeholder="종목명, 코드 검색…" autocomplete="off">
+        <div id="search-results" class="search-results"></div>
+      </div>
+      <div class="top-right">
+        <span id="demo-badge" class="pill warn" hidden>DEMO 가상 데이터</span>
+        <span id="mode-badge" class="pill">MODE</span>
+        <span id="market-badges"></span>
+        <button id="kill-btn" class="kill" title="킬스위치: 신규 매수 즉시 중단">KILL SWITCH</button>
+        <button id="theme-btn" class="icon-btn" title="테마">◐</button>
+      </div>
+    </header>
+    <section id="view" class="view"></section>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
