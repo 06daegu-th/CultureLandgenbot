@@ -161,6 +161,9 @@ def build_default_scheduler(app, mode) -> Scheduler:
                           + (f", 합의 정확도 {acc:.0%}" if acc is not None else "")
                           + "".join(f"\n· {x}" for x in (r.lessons or [])[:5]))
     sch.add("review", review, 6 * 3600, "closed")
+    if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "strategy_health"):
+        # 장 마감 후 하루 한 번 정도: 성과가 과거 검증 범위를 벗어나면(상태 변화 시) 알림
+        sch.add("strategy_health", lambda now: app.strategy_health(mode.value), 12 * 3600, "closed")
     sch.add("shadow_eval", lambda now: app.evaluate_shadow_models(), 12 * 3600, "closed")
     sch.add("retrain_candidate", lambda now: app.train_candidate(), 24 * 3600, "closed")
     return sch

@@ -59,6 +59,17 @@
   전부 청산하는 문제가 발견되어 분리했다 — 국면 기반 노출 조절은 연구에서 성과를 악화시켰다.
 - AI 기여도: `attr-core`(AI 없음) / `attr-veto`(+거부권) / `attr-full`(+위성) 가상 장부를 같은 가격·같은 코어로 운용해
   "AI 가 수익을 더했는가"를 전진(forward) 데이터로 측정한다.
+- **추세 필터:** 코어 리밸런싱 날 KOSPI 가 200일 이동평균 아래면 코어 비중 × 0.5 (나머지 현금). 결정은 다음 리밸런싱까지
+  유지된다 (`cs:{mode}.trend_scale`). 연구소 `simulate(index_close=...)` 와 같은 규칙 ([RESEARCH_KRX.md](RESEARCH_KRX.md) 8장).
+- **소액 계좌 대체:** 1주 가격 > (평가금액 × 코어비중 / 20) × 1.5 인 종목은 다음 순위로 대체해 20종목을 채운다.
+
+### 실전 운용 보조
+
+| 모듈 | 역할 |
+|---|---|
+| `strategy/order_sheet.py` · `QuantAI.order_sheet()` | 보유 종목·현금 → 매도/매수 수량·지정가 가이드·비용. 다른 증권사·ISA 수동 매매용 (CLI `orders`, `POST /api/order-sheet`, 대시보드 '리밸런싱 주문표') |
+| `strategy/health.py` · `QuantAI.strategy_health()` | 실제 자산곡선을 16년 백테스트 분포(`REFERENCE`)와 비교: 낙폭·1년 수익·KOSPI 대비·변동성·회복 기간·팩터 IC t값 → 정상/주의/위험. 스케줄러 `strategy_health` 가 상태 변화 시 알림 (CLI `checkup`) |
+| `research_lab.Costs.historical()` | 연도별 실제 증권거래세(0.30% → 0.15% → 0.20%)로 백테스트 비용 계산 |
 
 ## 2. 왜 이렇게 설계했나 (제안 반영 + 개선점)
 

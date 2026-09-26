@@ -38,7 +38,7 @@ class RiskLimits:
 class CostModelConfig:
     commission_bps: float = 1.5  # 증권사 수수료 (편도)
     slippage_bps: float = 5.0  # 체결 미끄러짐 가정
-    sell_tax_bps: float = 18.0  # 국내 매도 거래세 (연도별 변경되므로 확인 필요)
+    sell_tax_bps: float = 20.0  # 국내 매도 거래세+농특세. 2026년 0.20% (2025년 0.15%) — 매년 세법 확인, QUANT_SELL_TAX_BPS
 
 
 @dataclass(frozen=True)
@@ -88,6 +88,11 @@ class Settings:
             max_orders_per_day=int(f("QUANT_MAX_ORDERS_PER_DAY", RiskLimits.max_orders_per_day)),
             min_confidence=f("QUANT_MIN_CONFIDENCE", RiskLimits.min_confidence),
         )
+        costs = CostModelConfig(
+            commission_bps=f("QUANT_COMMISSION_BPS", CostModelConfig.commission_bps),
+            slippage_bps=f("QUANT_SLIPPAGE_BPS", CostModelConfig.slippage_bps),
+            sell_tax_bps=f("QUANT_SELL_TAX_BPS", CostModelConfig.sell_tax_bps),
+        )
         feeds = tuple(u.strip() for u in e.get("QUANT_NEWS_FEEDS", "").split(",") if u.strip())
         return cls(
             database_url=e.get("DATABASE_URL", cls.database_url),
@@ -95,6 +100,7 @@ class Settings:
             initial_cash=f("QUANT_INITIAL_CASH", cls.initial_cash),
             artifacts_dir=Path(e.get("QUANT_ARTIFACTS_DIR", "artifacts")),
             risk=risk,
+            costs=costs,
             live_enabled=e.get("QUANT_LIVE_ENABLED", "").lower() == "true",
             live_confirm=e.get("QUANT_LIVE_CONFIRM", ""),
             live_max_capital=f("QUANT_LIVE_MAX_CAPITAL", cls.live_max_capital),

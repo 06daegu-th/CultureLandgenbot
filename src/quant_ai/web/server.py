@@ -112,7 +112,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
             origin = self.headers.get("Origin")
             if origin and urlparse(origin).hostname not in allowed_hosts:
                 return self._json({"error": "cross-origin 거부"}, 403)
-            length = min(int(self.headers.get("Content-Length") or 0), 10_000)
+            length = min(int(self.headers.get("Content-Length") or 0), 200_000)
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")
             except json.JSONDecodeError:
@@ -121,6 +121,13 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                 api.app.set_kill_switch(bool(body.get("on")), str(body.get("reason", ""))[:200], by="dashboard")
                 api._cache = None  # 대시보드 캐시 무효화
                 return self._json({"kill_switch": api.app.kill_switch_on()})
+            if url.path == "/api/order-sheet":
+                try:
+                    return self._json(api.order_sheet(body))
+                except (ValueError, RuntimeError) as e:
+                    return self._json({"error": str(e)}, 400)
+            if url.path == "/api/strategy-health":
+                return self._json(api.strategy_health(refresh=True))
             self._json({"error": "not found"}, 404)
 
     return Handler

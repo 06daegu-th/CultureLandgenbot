@@ -402,7 +402,34 @@ class DashboardAPI:
             plan["names"] = {c: name(c) for c in {*plan.get("core", []), *plan.get("vetoed", {}),
                                                   *plan.get("exits", {}), *[x["symbol"] for x in plan.get("satellite", [])],
                                                   *list(plan.get("scores", {}))[:40]}}
-        return {"plan": plan, "books": books}
+        return {"plan": plan, "books": books, "health": self.strategy_health(mode)}
+
+    def strategy_health(self, mode: str | None = None, refresh: bool = False) -> dict:
+        """저장된 최근 건강검진 (없거나 refresh 면 계산 — IC 제외, 빠름)."""
+        from ..ops import get_state
+        mode = mode or (self.app.settings.mode.value if self.app.settings.mode.value in ("paper", "shadow", "live")
+                        else "paper")
+        h = get_state(self.engine, f"strategy_health:{mode}")
+        if h and not refresh:
+            return h
+        try:
+            return self.app.strategy_health(mode, with_ic=refresh, notify=False)
+        except Exception as e:  # noqa: BLE001 - 대시보드는 계속 떠야 한다
+            return {"status": "insufficient", "error": str(e), "checks": []}
+
+    def order_sheet(self, body: dict) -> dict:
+        """대시보드 주문표: {cash, holdings: "005930,10\n..." | {코드: 수량}, use_ai}."""
+        from ..strategy.order_sheet import parse_holdings
+        h = body.get("holdings") or {}
+        holdings = parse_holdings(h) if isinstance(h, str) else {str(k): int(v) for k, v in h.items()}
+        try:
+            cash = float(body.get("cash") or 0)
+        except (TypeError, ValueError) as e:
+            raise ValueError("현금은 숫자로 입력하세요") from e
+        if cash < 0 or len(holdings) > 300:
+            raise ValueError("현금은 0 이상, 보유 종목은 300개 이하")
+        sheet = self.app.order_sheet(holdings, cash, use_ai=bool(body.get("use_ai")))
+        return {**sheet.to_dict(), "csv": sheet.to_csv()}
 
     def research(self) -> dict:
         """가장 최근 실데이터 연구 리포트 (artifacts/research/*.json)."""

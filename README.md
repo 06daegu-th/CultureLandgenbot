@@ -19,6 +19,7 @@ Market Data ─┬─▶ Primary AI (Claude · 종합 분석)        ─┐
 
 - 설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 실제 KRX 데이터 연구: [docs/RESEARCH_KRX.md](docs/RESEARCH_KRX.md)
+- **실전 투자자 가이드 (기대 수익·최소 투자금·계좌·세금·월간 루틴·멈춤 규칙): [docs/INVESTOR_GUIDE.md](docs/INVESTOR_GUIDE.md)**
 - **KIS 모의투자 연결·운영 절차: [docs/KIS_DEMO_RUNBOOK.md](docs/KIS_DEMO_RUNBOOK.md)**
 - **서비스 출시 준비도 점검 · 부족한 점 · 법규제 · 로드맵: [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)**
 
@@ -81,6 +82,8 @@ quant-ai health                     # 헬스체크
 
 ```text
 코어 80%  검증된 팩터 (모멘텀 + 저변동성 + 52주 고점, 20거래일 리밸런싱, 상위 20 동일가중)
+          └ 추세 필터: 리밸런싱 날 KOSPI < 200일선이면 코어 비중 절반 (사전등록 시험 통과, 최대 낙폭 -55% → -43%)
+          └ 소액 계좌: 1주 가격이 목표 금액보다 훨씬 비싼 종목은 다음 순위로 대체
           └ AI 역할: 종목 고유 위험 거부권 (신규 편입 대신 다음 순위) · 상장폐지 시 즉시 청산
 위성 20%  멀티 AI 합의 BUY 상위 5 (AI 종목선택을 작은 비중으로 실전 검증)
           └ 시장 전체 위험(위기 국면·FOMC 임박)에는 위성 신규 매수 중단
@@ -92,7 +95,12 @@ quant-ai collect krx --marcap-dir marcap/data --years 3 --top 100   # 실제 KRX
 quant-ai cycle --mode paper                                         # 한 사이클
 quant-ai replay --days 60                                           # 최근 60거래일 재생
 quant-ai run --mode shadow                                          # 24시간 (QUANT_STRATEGY=core_satellite)
+quant-ai orders --cash 30000000 --holdings my.csv --no-ai --out orders.csv   # 다른 증권사·ISA 수동 매매용 주문표
+quant-ai checkup --mode paper                                       # 전략 건강검진 (손실이 과거 범위 안인가)
 ```
+
+16년 실데이터 기준 기대치는 **KOSPI 와 비슷한 수익, 더 작은 변동성**이다 (연 7.6% vs 8.3%, 변동성 15.7% vs 21.4%).
+지수를 이긴다는 증거는 없다 — 자세한 숫자와 실전 운용 규칙은 [투자자 가이드](docs/INVESTOR_GUIDE.md).
 
 ### 실제 KRX 데이터로 연구 (생존편향 제거)
 

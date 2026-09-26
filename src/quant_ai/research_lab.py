@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 import numpy as np
 import pandas as pd
@@ -102,12 +102,33 @@ class StrategyConfig:
     min_train_dates: int = 250
 
 
+# KRX 매도 증권거래세(+농특세) 연도별 변경 이력 (시행일, bps). 과거 백테스트에 현재 세율을 쓰면 비용을 과소평가한다.
+KRX_SELL_TAX_HISTORY: tuple[tuple[str, float], ...] = (
+    ("1900-01-01", 30.0), ("2019-06-03", 25.0), ("2021-01-01", 23.0), ("2023-01-01", 20.0),
+    ("2024-01-01", 18.0), ("2025-01-01", 15.0), ("2026-01-01", 20.0),
+)
+
+
 @dataclass
 class Costs:
     commission_bps: float = 1.5
     slippage_bps: float = 5.0
     sell_tax_bps: float = 18.0
     delist_haircut: float = 0.30
+    sell_tax_schedule: tuple[tuple[str, float], ...] | None = None  # 있으면 sell_tax_bps 대신 날짜별 세율
+
+    @classmethod
+    def historical(cls, **kw) -> Costs:
+        return cls(sell_tax_schedule=KRX_SELL_TAX_HISTORY, **kw)
+
+    def sell_tax_series(self, dates: pd.DatetimeIndex) -> np.ndarray:
+        if not self.sell_tax_schedule:
+            return np.full(len(dates), self.sell_tax_bps)
+        eff = pd.DatetimeIndex([pd.Timestamp(d) for d, _ in self.sell_tax_schedule])
+        if dates.tz is not None:
+            eff = eff.tz_localize(dates.tz)
+        pos = eff.searchsorted(dates, side="right") - 1
+        return np.array([self.sell_tax_schedule[max(i, 0)][1] for i in pos])
 
 
 def walk_forward_scores(p: Panel, cfg: StrategyConfig, embargo: int = 1) -> pd.DataFrame:
@@ -178,7 +199,7 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
     ret[:-1] = OP[1:] / OP[:-1] - 1  # d 시가 → d+1 시가
     last_idx = np.array([p.dates.searchsorted(p.last_date[s]) for s in p.symbols])
     buy_cost = (costs.commission_bps + costs.slippage_bps) / 1e4
-    sell_cost = buy_cost + costs.sell_tax_bps / 1e4
+    sell_cost_by_day = buy_cost + costs.sell_tax_series(p.dates) / 1e4
     first = int(np.argmax(np.isfinite(S).any(axis=1)))
     below_trend = None
     if cfg.trend_ma and index_close is not None:
@@ -234,7 +255,7 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
             tradable = np.isfinite(OP[d])
             target = np.where(tradable, target, w)  # 거래 불가 종목은 비중 유지
             delta = target - w
-            cost = np.sum(np.clip(delta, 0, None)) * buy_cost + np.sum(np.clip(-delta, 0, None)) * sell_cost
+            cost = np.sum(np.clip(delta, 0, None)) * buy_cost + np.sum(np.clip(-delta, 0, None)) * sell_cost_by_day[d]
             turnovers.append(np.abs(delta).sum() / 2)
             value *= 1 - cost
             w = target
@@ -292,15 +313,16 @@ def daily_ic(scores: pd.DataFrame, p: Panel, horizon: int, start=None, end=None)
 
 def run_lab(ds: KRXDataset, configs: list[StrategyConfig], dev_end: str = "2020-12-31",
             costs: Costs | None = None, prior_trials: int = 0, say=print) -> dict:
-    costs = costs or Costs()
+    costs = costs or Costs.historical()
     p = build_panel(ds)
     reg = regime_series(ds.benchmark)["regime"].reindex(p.dates)
     results = []
     for cfg in configs:
         scores = walk_forward_scores(p, cfg)
-        sim = simulate(p, scores, cfg, costs, reg)
-        stress = simulate(p, scores, cfg, Costs(costs.commission_bps * 2, costs.slippage_bps * 2,
-                                                costs.sell_tax_bps, costs.delist_haircut), reg)
+        ic = ds.benchmark["close"] if cfg.trend_ma else None
+        sim = simulate(p, scores, cfg, costs, reg, index_close=ic)
+        stress = simulate(p, scores, cfg, replace(costs, commission_bps=costs.commission_bps * 2,
+                                                  slippage_bps=costs.slippage_bps * 2), reg, index_close=ic)
         benches = benchmark_equity(p, ds.benchmark, sim["equity"].index)
         dev = summarize(sim["equity"], benches, None, dev_end)
         dev_stress = summarize(stress["equity"], {}, None, dev_end)["strategy"]
@@ -365,6 +387,9 @@ def default_configs() -> list[StrategyConfig]:
         # 6) 5) + 변동성 타깃팅 15% (모멘텀 급락 방어, Barroso & Santa-Clara 2015) — dev 에서 탈락
         StrategyConfig("factor-mom-lowvol-vt15", features=["mom_12_1", "vol_60", "dist_52w"], model="factor",
                        factor_weights={"mom_12_1": 1.0, "vol_60": -1.0, "dist_52w": 1.0}, vol_target=0.15),
+        # 7) 5) + 지수 200일선 추세 필터 (사전등록 시험 통과 → 실시간 코어 기본값, RESEARCH_KRX.md 8장)
+        StrategyConfig("factor-mom-lowvol-trend200", features=["mom_12_1", "vol_60", "dist_52w"], model="factor",
+                       factor_weights={"mom_12_1": 1.0, "vol_60": -1.0, "dist_52w": 1.0}, trend_ma=200),
     ]
 
 

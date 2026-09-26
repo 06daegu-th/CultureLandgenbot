@@ -203,3 +203,15 @@ table.tight td, table.tight th { padding: 7px 5px; } .chart-sm { height: 220px; 
 .watch-table { table-layout: fixed; }
 .watch-table th:nth-child(1), .watch-table td:nth-child(1) { width: 44%; overflow: hidden; text-overflow: ellipsis; }
 .watch-table th:nth-child(2), .watch-table td:nth-child(2) { width: 26%; }
+
+/* 폼 (주문표) */
+.input { width: 100%; margin-top: 6px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 10px;
+  color: var(--text); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 10px 12px; outline: 0; }
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+textarea.input { resize: vertical; min-height: 140px; }
+.btn { font: 600 13px/1 inherit; padding: 10px 16px; border-radius: 10px; cursor: pointer; color: #fff;
+  background: var(--accent); border: 1px solid var(--accent); }
+.btn:hover { filter: brightness(1.08); }
+.btn-sm { font: 600 11px/1 inherit; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--text);
+  background: var(--panel-2); border: 1px solid var(--line-2); }
+.btn:disabled, .btn-sm:disabled { opacity: .6; cursor: wait; }

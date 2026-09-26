@@ -8,6 +8,8 @@
     quant-ai run --mode paper         # 24시간 스케줄러 (장중/장외 작업)
     quant-ai review                   # 오늘 복기
     quant-ai kill on|off              # 킬스위치 (신규 매수 즉시 중단)
+    quant-ai orders --cash 10000000 --holdings my.csv --out orders.csv   # 수동 매매용 주문표
+    quant-ai checkup --mode live      # 전략 건강검진 (손실이 과거 검증 범위 안인가)
 """
 
 from __future__ import annotations
@@ -253,6 +255,37 @@ def cmd_health(args):
     sys.exit(0 if h["ok"] else 1)
 
 
+def cmd_orders(args):
+    """다른 증권사·ISA·수동 매매용 리밸런싱 주문표 (이 시스템의 장부·주문과 무관)."""
+    from pathlib import Path
+
+    from .strategy.order_sheet import parse_holdings
+    text = sys.stdin.read() if args.holdings == "-" else Path(args.holdings).read_text(encoding="utf-8-sig") \
+        if args.holdings else ""
+    holdings = parse_holdings(text)
+    sheet = _app(args).order_sheet(holdings, args.cash, use_ai=not args.no_ai)
+    print(sheet.to_text())
+    if args.out:
+        Path(args.out).write_text(sheet.to_csv(), encoding="utf-8-sig")  # 엑셀에서 한글이 깨지지 않도록 BOM
+        print(f"\nCSV 저장: {args.out}")
+
+
+def cmd_checkup(args):
+    """전략 건강검진: 실제 운용 성과가 과거 검증 범위 안인지."""
+    from .strategy.health import format_value
+    r = _app(args).strategy_health(args.mode, with_ic=not args.no_ic, notify=False)
+    icon = {"ok": "🟢", "warn": "🟡", "critical": "🔴", "insufficient": "⚪"}
+    print(f"{icon[r['status']]} 전략 건강검진 [{r['mode']}] {r['status'].upper()} · 운용 {r['days']}일 · 기준일 {r['as_of']}")
+    for c in r["checks"]:
+        vs = format_value(c)
+        print(f"  {icon[c['status']]} {c['label']:<22} {vs:>9}   ({c['note']})")
+    print(f"\n→ {r['action']}")
+    e = r["expectations"]
+    print(f"   참고: 과거 연평균 {e['cagr']:.1%}, 1년 보유 시 플러스였던 비율 {e['positive_1y_share']:.0%}, "
+          f"KOSPI 를 이긴 비율 {e['beat_kospi_1y_share']:.0%}")
+    sys.exit(2 if r["status"] == "critical" else 0)
+
+
 def cmd_kill(args):
     _app(args).set_kill_switch(args.state == "on", by="cli")
     print(f"킬스위치 {args.state.upper()}")
@@ -325,6 +358,16 @@ def main(argv: list[str] | None = None) -> None:
     kc.add_argument("--test-order", action="store_true", help="모의투자 전용: 1주 비체결 주문 후 즉시 취소")
     kc.set_defaults(fn=cmd_kis_check)
     sub.add_parser("health").set_defaults(fn=cmd_health)
+    od = sub.add_parser("orders", help="리밸런싱 주문표 (다른 증권사·ISA·수동 매매용, 주문은 내지 않음)")
+    od.add_argument("--cash", type=float, required=True, help="주문 가능 현금 (원)")
+    od.add_argument("--holdings", help="보유 종목 CSV (종목코드,수량). '-' 는 표준입력. 없으면 전액 현금에서 시작")
+    od.add_argument("--no-ai", action="store_true", help="AI 거부권·위성 없이 코어 팩터만 (LLM 비용 0)")
+    od.add_argument("--out", help="CSV 저장 경로")
+    od.set_defaults(fn=cmd_orders)
+    ck = sub.add_parser("checkup", help="전략 건강검진 (성과가 과거 검증 범위 안인지)")
+    ck.add_argument("--mode", default=None, help="paper / live / attr-core 등 장부 (기본: 현재 모드)")
+    ck.add_argument("--no-ic", action="store_true", help="팩터 IC 계산 생략 (빠름)")
+    ck.set_defaults(fn=cmd_checkup)
     cy = sub.add_parser("cycle", help="코어-위성 한 사이클 실행 (팩터 코어 + 멀티 AI)")
     cy.add_argument("--mode", default="paper", choices=["paper", "shadow", "live"])
     cy.set_defaults(fn=cmd_cycle)

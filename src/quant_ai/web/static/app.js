@@ -52,7 +52,11 @@ async function api(path, opts = {}) {
     const t = prompt("접속 토큰 (QUANT_WEB_TOKEN)");
     if (t) { S.token = t; safeSet("qa_token", t); return api(path, opts); }
   }
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
+  if (!r.ok) {
+    let msg = `${path} ${r.status}`;
+    try { const j = await r.json(); if (j.error) msg = j.error; } catch { /* 본문 없음 */ }
+    throw new Error(msg);
+  }
   return r.json();
 }
 
@@ -457,14 +461,16 @@ async function viewCore(el) {
     <td class="r num">${v.perf?.max_drawdown == null ? "-" : (v.perf.max_drawdown * 100).toFixed(1) + "%"}</td>
     <td class="r">${base == null || k === "attr-core" || k === "kospi" ? '<span class="dim">-</span>' : pct(v.return - base)}</td><td class="r num dim">${v.days}일</td></tr>`).join("");
   const ai = p.ai || {};
+  const tr = p.trend || {};
   el.innerHTML = `
+  ${healthCard(r.health)}
   <div class="card"><div class="card-h"><h3>코어-위성 전략</h3><div class="right"><span class="small dim">기준 ${date(p.as_of)} · ${esc(p.mode)} · 마지막 코어 리밸런싱 ${date(p.last_rebalance)} (${p.rebalances || 0}회)</span></div></div>
     <div class="stat-row">
       <div class="stat"><div class="l">코어 ${Math.round(p.config.core_weight * 100)}%</div><div class="big num">${p.core.length}종목</div><div class="small dim">모멘텀+저변동성+52주고점 · ${p.config.core_rebalance_days}거래일 리밸런싱</div></div>
       <div class="stat"><div class="l">위성 ${Math.round((1 - p.config.core_weight) * 100)}%</div><div class="big num">${p.satellite.length}/${p.config.satellite_k}</div><div class="small dim">AI 합의 BUY · 신뢰도 ≥ ${p.config.satellite_min_confidence}</div></div>
       <div class="stat"><div class="l">AI 분석</div><div class="big num">${ai.analyzed ?? "-"}종목</div><div class="small dim">BUY ${ai.buys ?? 0} · 거부권 ${ai.vetoes ?? 0} · 긴급청산 ${ai.exits ?? 0}</div></div>
       <div class="stat"><div class="l">유니버스</div><div class="big num">${p.universe_size}</div><div class="small dim">전월 말 시총 상위 (point-in-time)</div></div></div>
-    <div class="small muted" style="margin-top:10px">${(p.notes || []).map(esc).join(" · ")}</div></div>
+    <div class="small muted" style="margin-top:10px">${tr.index ? `추세 필터: KOSPI ${num(tr.index)} ${tr.below ? "&lt;" : "≥"} 200일선 ${num(tr.ma)} → 코어 비중 ×${tr.applied_scale ?? tr.scale} · ` : ""}${(p.notes || []).map(esc).join(" · ")}</div></div>
   ${card("AI 기여도 측정 <span class='small dim'>같은 가격·같은 코어로 굴린 가상 장부 비교 — AI 가 수익을 더했는가?</span>",
     `${bookRows ? `<table><thead><tr><th>장부</th><th class="r">수익률</th><th class="r">MDD</th><th class="r">코어만 대비</th><th class="r">기간</th></tr></thead><tbody>${bookRows}</tbody></table>` : empty()}
      <div id="cs-chart" class="chart" style="margin-top:12px"></div>
@@ -478,6 +484,84 @@ async function viewCore(el) {
   </div>`;
   const series = Object.entries(b).filter(([k]) => colors[k]).map(([k, v]) => ({ data: v.curve, color: colors[k], title: labels[k] }));
   if (series.length) lineChart($("#cs-chart"), series);
+}
+
+// ------------------------------------------------------------ 전략 건강검진
+const H_ICON = { ok: "🟢", warn: "🟡", critical: "🔴", insufficient: "⚪" };
+const H_LABEL = { ok: "정상 범위", warn: "주의 (과거 하위 5%)", critical: "위험 (과거에 없던 수준)", insufficient: "판단 보류" };
+function healthCard(h) {
+  if (!h) return "";
+  const fmt = (c) => c.value == null ? "-" : c.name === "underwater" ? `${Math.round(c.value)}일` : c.name === "factor_ic" ? "t " + Number(c.value).toFixed(2) : pct(c.value, 1);
+  const rows = (h.checks || []).map((c) => `<tr><td>${H_ICON[c.status]} <b>${esc(c.label)}</b></td><td class="r">${fmt(c)}</td><td class="small muted" style="white-space:normal">${esc(c.note)}</td></tr>`).join("");
+  const color = { ok: "var(--good)", warn: "var(--warn)", critical: "var(--bad)" }[h.status] || "var(--line-2)";
+  const e = h.expectations || {};
+  return card(`전략 건강검진 <span class="small dim">실제 성과가 16년 백테스트 범위 안인가 · ${esc(h.mode || "")} ${h.days ?? 0}일</span>`,
+    `<div class="lesson" style="border-left-color:${color};margin-bottom:12px"><b>${H_ICON[h.status]} ${H_LABEL[h.status] || esc(h.status)}</b> — ${esc(h.action || h.error || "")}</div>
+     ${rows ? `<table><thead><tr><th>항목</th><th class="r">현재</th><th>과거 기준</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+     ${e.cagr != null ? `<div class="small dim" style="margin-top:8px">기대치 참고: 과거 연평균 ${(e.cagr * 100).toFixed(1)}% · 1년 보유 시 플러스 ${Math.round(e.positive_1y_share * 100)}% · KOSPI 초과 ${Math.round(e.beat_kospi_1y_share * 100)}% (1년 단위로는 절반 가까이 지거나 잃습니다)</div>` : ""}`,
+    `<button class="btn-sm" id="health-refresh">다시 검사</button>`);
+}
+
+// ------------------------------------------------------------ 뷰: 주문표 (수동 매매 · 다른 증권사 · ISA)
+async function viewOrders(el) {
+  const saved = { cash: safeGet("qa_os_cash") || "", holdings: safeGet("qa_os_holdings") || "" };
+  el.innerHTML = `
+  ${card("리밸런싱 주문표 <span class='small dim'>자동매매 없이 이 전략을 따라 하는 방법 — 주문은 내지 않습니다</span>",
+    `<div class="grid g-2">
+      <div>
+        <label class="small muted">보유 종목 (한 줄에 하나: 종목코드,수량)</label>
+        <textarea id="os-holdings" class="input" rows="10" placeholder="005930,10&#10;000660,3">${esc(saved.holdings)}</textarea>
+      </div>
+      <div>
+        <label class="small muted">주문 가능 현금 (원)</label>
+        <input id="os-cash" class="input" inputmode="numeric" placeholder="10000000" value="${esc(saved.cash)}">
+        <label class="small" style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="os-ai"> AI 오버레이 (거부권 · 위성) — LLM 키가 있으면 비용 발생</label>
+        <button class="btn" id="os-run" style="margin-top:14px">주문표 만들기</button>
+        <ul class="plain small muted" style="margin-top:14px">
+          <li><span class="chk">①</span>월 1회(약 20거래일마다) 실행. 중간에는 손대지 않기</li>
+          <li><span class="chk">②</span>매도 먼저 → 체결 확인 → 매수. 09:10 이후 지정가로</li>
+          <li><span class="chk">③</span>지정가를 넘는 급변이면 그날은 건너뛰고 다음 날 다시 실행</li>
+          <li><span class="chk">④</span>입력한 값은 이 브라우저에만 저장됩니다</li></ul>
+      </div></div>`)}
+  <div id="os-result"></div>`;
+  $("#os-run").onclick = async () => {
+    const cash = $("#os-cash").value.replace(/[, 원]/g, "");
+    const holdings = $("#os-holdings").value;
+    safeSet("qa_os_cash", cash); safeSet("qa_os_holdings", holdings);
+    const out = $("#os-result");
+    out.innerHTML = card("계산 중", empty("팩터 점수·추세·목표 수량 계산 중…"));
+    try {
+      const r = await api("/api/order-sheet", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cash, holdings, use_ai: $("#os-ai").checked }) });
+      out.innerHTML = orderSheetView(r);
+      $("#os-csv").onclick = () => {
+        const blob = new Blob(["\ufeff" + r.csv], { type: "text/csv;charset=utf-8" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = `orders_${r.as_of}.csv`; a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      };
+    } catch (e) { out.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`); }
+  };
+}
+
+function orderSheetView(r) {
+  const sideKo = { BUY: "매수", SELL: "매도", HOLD: "유지" };
+  const cls = { BUY: "up", SELL: "down", HOLD: "dim" };
+  const rows = r.lines.map((l, i) => `<tr><td class="num dim">${l.side === "HOLD" ? "" : i + 1}</td><td><b class="${cls[l.side]}">${sideKo[l.side]}</b></td>
+    <td><b>${esc(l.name)}</b><span class="sub">${esc(l.symbol)}</span></td><td class="r num"><b>${l.side === "HOLD" ? "-" : num(l.qty)}</b></td>
+    <td class="r num">${l.limit_price ? num(l.limit_price) : "-"}</td><td class="r num">${num(l.ref_price)}</td><td class="r num">${l.side === "HOLD" ? "-" : num(l.value)}</td>
+    <td class="r num dim">${num(l.current_qty)} → ${num(l.target_qty)}</td><td class="r num">${(l.target_weight * 100).toFixed(1)}%</td>
+    <td class="small muted" style="white-space:normal">${esc(l.reason)}</td></tr>`).join("");
+  const t = r.totals, tr = r.trend || {};
+  return `
+  <div class="stat-row">
+    <div class="stat"><div class="l">평가금액</div><div class="big num">${num(r.equity)}</div><div class="small dim">기준일 ${esc(r.as_of)} 종가</div></div>
+    <div class="stat"><div class="l">매도 / 매수</div><div class="big num">${t.n_sell} / ${t.n_buy}</div><div class="small dim">${num(t.sell_value)}원 / ${num(t.buy_value)}원</div></div>
+    <div class="stat"><div class="l">예상 비용</div><div class="big num">${num(t.cost)}</div><div class="small dim">수수료 + 매도세 · 회전율 ${(t.turnover * 100).toFixed(0)}%</div></div>
+    <div class="stat"><div class="l">추세 필터</div><div class="big ${tr.below ? "down" : ""}">${tr.below ? "축소" : "정상"}</div><div class="small dim">${tr.index ? `KOSPI ${num(tr.index)} vs 200일선 ${num(tr.ma)}` : "지수 데이터 없음"}</div></div></div>
+  ${card("주문 목록 <span class='small dim'>위에서부터 순서대로 · 지정가는 상한(매수)/하한(매도)</span>",
+    `<div class="scroll"><table><thead><tr><th>#</th><th>구분</th><th>종목</th><th class="r">수량</th><th class="r">지정가</th><th class="r">기준가</th><th class="r">금액</th><th class="r">보유→목표</th><th class="r">목표비중</th><th>사유</th></tr></thead><tbody>${rows}</tbody></table></div>
+     ${(r.notes || []).length ? `<div class="small muted" style="margin-top:10px">${r.notes.map(esc).join("<br>")}</div>` : ""}
+     <div style="margin-top:12px;display:flex;gap:10px;align-items:center"><button class="btn" id="os-csv">CSV 다운로드</button><span class="small dim">주문 후 현금 ${num(r.cash_after)}원 (투자 비중 ${(t.invested_after * 100).toFixed(0)}%)</span></div>`)}`;
 }
 
 // ------------------------------------------------------------ 뷰: 실데이터 연구
@@ -623,7 +707,11 @@ async function render() {
     else if (S.view === "models") el.innerHTML = viewModels(d);
     else if (S.view === "ops") await viewOps(el);
     else if (S.view === "research") await viewResearch(el);
-    else if (S.view === "core") await viewCore(el);
+    else if (S.view === "core") {
+      await viewCore(el);
+      const hb = $("#health-refresh");
+      if (hb) hb.onclick = async () => { hb.disabled = true; hb.textContent = "검사 중…"; await api("/api/strategy-health", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); render(); };
+    } else if (S.view === "orders") await viewOrders(el);
     else if (S.view === "settings") el.innerHTML = viewSettings(d);
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);

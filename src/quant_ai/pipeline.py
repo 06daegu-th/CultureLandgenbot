@@ -464,6 +464,83 @@ class QuantAI:
     # ================================================================ 코어-위성
     ATTRIBUTION_BOOKS = {"attr-core": (False, False), "attr-veto": (True, False), "attr-full": (True, True)}
 
+    @staticmethod
+    def _trend(bench: pd.DataFrame | None, cfg: CoreSatelliteConfig) -> dict:
+        """지수가 N일 이동평균 아래면 코어 비중 축소 (research_lab 사전등록 시험 통과 규칙)."""
+        if not cfg.trend_ma or bench is None or len(bench) < cfg.trend_ma // 2:
+            return {"below": False, "scale": 1.0}
+        ic = bench["close"]
+        ma = float(ic.rolling(cfg.trend_ma, min_periods=cfg.trend_ma // 2).mean().iloc[-1])
+        below = bool(ic.iloc[-1] < ma)
+        return {"below": below, "index": round(float(ic.iloc[-1]), 2), "ma": round(ma, 2),
+                "scale": cfg.trend_off_scale if below else 1.0}
+
+    @staticmethod
+    def _ai_overlay(decisions: list[Decision]) -> tuple[dict[str, str], dict[str, str], list[dict]]:
+        """멀티 AI 의견 → (코어 신규편입 거부권, 보유 긴급청산, 위성 후보 BUY)."""
+        vetoes, exits, buys = {}, {}, []  # vetoes: 코어용 (종목 고유 위험만)
+        for d in decisions:
+            for o in d.opinions:
+                if o.veto and o.meta.get("veto_scope", "stock") == "stock":
+                    vetoes.setdefault(d.symbol, f"{o.analyst}: {o.veto_reason or 'veto'}")
+                if o.meta.get("exit"):
+                    exits[d.symbol] = o.meta.get("exit_reason") or "치명적 위험"
+            # 위성은 AI 재량 베팅 → 시장 전체 위험(위기 국면·FOMC 등)에도 신규 매수하지 않는다 (합의가 NO_TRADE)
+            if d.signal.action == "BUY":
+                buys.append({"symbol": d.symbol, "confidence": d.signal.confidence,
+                             "prob_up": round(d.signal.prob_up, 4), "consensus_id": d.consensus_id})
+        return vetoes, exits, buys
+
+    @staticmethod
+    def _unaffordable(scores: pd.Series, bars: dict, equity: float, cfg: CoreSatelliteConfig) -> set[str]:
+        """소액 계좌: 1주 가격이 종목당 목표 금액보다 훨씬 비싸면 매수 불가 → 다음 순위로 대체."""
+        per_name = equity * cfg.core_weight / cfg.core_top_k
+        return {s for s in scores.index[:cfg.core_buffer_k]
+                if s in bars and float(bars[s]["close"].iloc[-1]) > per_name * cfg.affordability_slack}
+
+    def order_sheet(self, holdings: dict[str, int], cash: float, use_ai: bool = True,
+                    cfg: CoreSatelliteConfig | None = None, prices: dict[str, float] | None = None):
+        """다른 증권사·ISA·수동 매매용 리밸런싱 주문표. 이 시스템의 장부·주문과는 무관 (읽기 전용).
+
+        보유 종목을 '이전 코어'로 보고 리밸런싱 규칙(버퍼 유지·거부권·추세 필터)을 그대로 적용한다."""
+        from .strategy.order_sheet import make_order_sheet
+        cfg = cfg or CoreSatelliteConfig()
+        bars, bench, _ = self.market_data()
+        last_ts = max(b.index.max() for b in bars.values())
+        scores = core_scores(bars, self.universe_at(last_ts), cfg.factor_weights)
+        if scores.empty:
+            raise RuntimeError("팩터 점수를 계산할 데이터가 부족합니다 (quant-ai collect krx 먼저)")
+        px = {s: float(b["close"].iloc[-1]) for s, b in bars.items() if s != "KOSPI" and len(b)}
+        px |= {s: float(v) for s, v in (prices or {}).items()}
+        trend = self._trend(bench, cfg)
+        prev_core = [s for s in holdings if s in scores.index]
+        vetoes, exits, buys = {}, {}, []
+        if use_ai:
+            shortlist = list(dict.fromkeys([*scores.index[:cfg.shortlist_k], *[s for s in holdings if s in bars]]))
+            vetoes, exits, buys = self._ai_overlay(self.decide(symbols=shortlist, scenarios=False))
+        equity = cash + sum(q * px[s] for s, q in holdings.items() if s in px)
+        plan = build_plan(scores, prev_core, True, cfg, vetoes, exits, buys, use_veto=use_ai, use_satellite=use_ai,
+                          core_scale=trend["scale"], unaffordable=self._unaffordable(scores, bars, equity, cfg))
+        with session_scope(self.engine) as s:
+            names = {i.symbol: i.name for i in s.scalars(select(Instrument))}
+        sat = {x["symbol"]: x for x in plan.satellite}
+        roles = {sym: "satellite" if sym in sat else "core" for sym in plan.weights}
+        roles |= {sym: "exit" for sym in plan.exits}
+        reasons = {sym: (f"위성 · AI 합의 BUY 신뢰도 {sat[sym]['confidence']:.0f}" if sym in sat
+                         else f"코어 #{plan.ranks[sym] + 1}" + (" (보유 유지)" if sym in holdings else " (신규)"))
+                   for sym in plan.weights}
+        reasons |= {sym: f"긴급 제외: {why}" for sym, why in plan.exits.items()}
+        for sym in holdings:
+            if sym not in plan.weights and sym not in plan.exits and sym in plan.ranks:
+                reasons[sym] = f"순위 {plan.ranks[sym] + 1}위 → 유지 기준({cfg.core_buffer_k}위) 밖, 코어 제외"
+            elif sym not in plan.weights and sym not in plan.exits and sym in px:
+                reasons[sym] = "전략 유니버스(시총 상위) 밖 종목 → 코어 제외"
+        notes = [n for n in plan.notes if "리밸런싱" not in n]
+        notes += [f"신규 편입 거부 (AI 리스크): {sym} {why}" for sym, why in plan.vetoed.items()]
+        return make_order_sheet(plan.weights, holdings, cash, px, names=names, roles=roles, reasons=reasons,
+                                costs=self.settings.costs, as_of=str(last_ts.date()), trend=trend, notes=notes)
+
+
     def run_core_satellite(self, mode: Mode, as_of: datetime | None = None, ts: datetime | None = None,
                            quotes: dict[str, MarketQuote] | None = None, cfg: CoreSatelliteConfig | None = None,
                            attribution: bool = True) -> dict:
@@ -478,14 +555,7 @@ class QuantAI:
         last_ts = max(b.index.max() for b in bars.values())
         universe = self.universe_at(last_ts)
         scores = core_scores(bars, universe, cfg.factor_weights)
-        # 추세 필터 (코어 리밸런싱 때만 판단 → 월 1회, 연구와 동일)
-        trend = {"below": False, "scale": 1.0}
-        if cfg.trend_ma and bench is not None and len(bench) >= cfg.trend_ma // 2:
-            ic = bench["close"]
-            ma = float(ic.rolling(cfg.trend_ma, min_periods=cfg.trend_ma // 2).mean().iloc[-1])
-            below = bool(ic.iloc[-1] < ma)
-            trend = {"below": below, "index": round(float(ic.iloc[-1]), 2), "ma": round(ma, 2),
-                     "scale": cfg.trend_off_scale if below else 1.0}
+        trend = self._trend(bench, cfg)  # 추세 필터 (코어 리밸런싱 때만 적용 → 월 1회, 연구와 동일)
         if scores.empty:
             raise RuntimeError("팩터 점수를 계산할 데이터가 부족합니다 (종목당 최소 130거래일)")
         calendar = max(bars.values(), key=len).index
@@ -499,17 +569,7 @@ class QuantAI:
         shortlist = list(dict.fromkeys([*scores.index[:cfg.shortlist_k], *prev_core,
                                         *[s for s in held if s in bars]]))
         decisions = self.decide(as_of=as_of, symbols=shortlist, scenarios=False)
-        vetoes, exits, buys = {}, {}, []  # vetoes: 코어용 (종목 고유 위험만)
-        for d in decisions:
-            for o in d.opinions:
-                if o.veto and o.meta.get("veto_scope", "stock") == "stock":
-                    vetoes.setdefault(d.symbol, f"{o.analyst}: {o.veto_reason or 'veto'}")
-                if o.meta.get("exit"):
-                    exits[d.symbol] = o.meta.get("exit_reason") or "치명적 위험"
-            # 위성은 AI 재량 베팅 → 시장 전체 위험(위기 국면·FOMC 등)에도 신규 매수하지 않는다 (합의가 NO_TRADE)
-            if d.signal.action == "BUY":
-                buys.append({"symbol": d.symbol, "confidence": d.signal.confidence,
-                             "prob_up": round(d.signal.prob_up, 4), "consensus_id": d.consensus_id})
+        vetoes, exits, buys = self._ai_overlay(decisions)
         by_sym = {d.symbol: d for d in decisions}
 
         def due(st: dict) -> bool:
@@ -539,9 +599,7 @@ class QuantAI:
         # 소액 계좌: 목표 금액보다 훨씬 비싼 종목은 1주도 못 산다 → 다음 순위로 대체
         equity_est = self.load_portfolio(mode.value).equity(
             {s: float(b["close"].iloc[-1]) for s, b in bars.items() if len(b)})
-        per_name = equity_est * cfg.core_weight / cfg.core_top_k
-        unaffordable = {s for s in scores.index[:cfg.core_buffer_k]
-                        if s in bars and float(bars[s]["close"].iloc[-1]) > per_name * cfg.affordability_slack}
+        unaffordable = self._unaffordable(scores, bars, equity_est, cfg)
 
         def scale_for(st: dict) -> float:
             return trend["scale"] if due(st) or "trend_scale" not in st else st["trend_scale"]
@@ -590,6 +648,34 @@ class QuantAI:
             self.notifier.send(f"[{mode.value}] AI 긴급 청산: " + ", ".join(f"{k}({v})" for k, v in plan.exits.items()),
                                "warn")
         return {"plan": plan, "fills": fills, "decisions": decisions}
+
+    def strategy_health(self, mode: str | None = None, with_ic: bool = True, notify: bool = True) -> dict:
+        """실제 운용 자산곡선이 과거 검증 범위 안인지 판정 (strategy/health.py). 상태가 바뀌면 알림."""
+        from .strategy.health import evaluate, factor_ic_history, format_value
+        mode = mode or (self.settings.mode.value if self.settings.mode.value in ("paper", "shadow", "live") else "paper")
+        with session_scope(self.engine) as s:
+            snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
+                              .order_by(PortfolioSnapshot.ts, PortfolioSnapshot.id)).all()
+            eq = pd.Series([x.equity for x in snaps], index=pd.DatetimeIndex([x.ts for x in snaps]), dtype=float)
+        bars, bench, _ = self.market_data()
+        ic = None
+        if with_ic:
+            try:
+                ic = factor_ic_history(bars, CoreSatelliteConfig().factor_weights, universe_fn=self.universe_at)
+            except Exception as e:  # noqa: BLE001 - IC 는 보조 지표
+                log.warning("팩터 IC 계산 실패: %s", e)
+        res = evaluate(eq, bench["close"] if bench is not None else None, factor_ic=ic)
+        res |= {"mode": mode, "factor_ic": ic, "checked_at": datetime.now(UTC).isoformat()}
+        prev = ops.get_state(self.engine, f"strategy_health:{mode}")
+        ops.set_state(self.engine, f"strategy_health:{mode}", res)
+        worse = res["status"] in ("warn", "critical")
+        recovered = prev.get("status") in ("warn", "critical") and res["status"] == "ok"
+        if notify and prev.get("status") != res["status"] and (worse or recovered):
+            bad = [f"{c['label']} {format_value(c)}" for c in res["checks"] if c["status"] in ("warn", "critical")]
+            self.notifier.send(f"[{mode}] 전략 건강검진: {prev.get('status', '-')} → {res['status']}"
+                               + (f" ({', '.join(bad)})" if bad else "") + f"\n{res['action']}",
+                               "critical" if res["status"] == "critical" else "warn")
+        return res
 
     def reconcile_live(self, ts: datetime | None = None) -> dict:
         """증권사 잔고 = 진실의 원천. DB 장부와 다르면 증권사 기준으로 스냅샷을 남기고 알린다."""
