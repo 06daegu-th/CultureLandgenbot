@@ -18,6 +18,8 @@ Market Data ─┬─▶ Primary AI (Claude · 종합 분석)        ─┐
 ```
 
 - 설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- 실제 KRX 데이터 연구: [docs/RESEARCH_KRX.md](docs/RESEARCH_KRX.md)
+- **KIS 모의투자 연결·운영 절차: [docs/KIS_DEMO_RUNBOOK.md](docs/KIS_DEMO_RUNBOOK.md)**
 - **서비스 출시 준비도 점검 · 부족한 점 · 법규제 · 로드맵: [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)**
 
 ## 구성 (요청한 16단계 대응)
@@ -70,7 +72,7 @@ quant-ai collect macro && quant-ai collect disclosures
 quant-ai train                      # walk-forward 검증 → 게이트 통과 시 shadow
 quant-ai decide                     # 멀티 AI 합의 신호 확인 (주문 없음)
 quant-ai run --mode shadow          # 24시간: 장중 판단/Shadow 매매, 장외 수집·채점·복기·재학습
-quant-ai kis-check                  # 한국투자증권 연결 점검 (QUANT_BROKER=kis, KIS_ENV=demo 먼저!)
+quant-ai kis-check --test-order     # 한국투자증권 모의투자 점검 (docs/KIS_DEMO_RUNBOOK.md)
 quant-ai kill on                    # 킬스위치 (모든 프로세스 공유)
 quant-ai health                     # 헬스체크
 ```

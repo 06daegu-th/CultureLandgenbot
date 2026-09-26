@@ -90,14 +90,16 @@ def urllib_transport(method: str, url: str, headers: dict, params: dict | None, 
 
 class KISClient:
     def __init__(self, app_key: str, app_secret: str, account: str, env: str = "demo",
-                 token_cache: Path | None = None, transport: Transport | None = None):
+                 token_cache: Path | None = None, transport: Transport | None = None, base_url: str | None = None):
         if env not in BASE_URL:
             raise ValueError("KIS_ENV 는 demo 또는 real")
+        if base_url and urllib.parse.urlparse(base_url).hostname not in ("127.0.0.1", "localhost"):
+            raise ValueError("KIS_BASE_URL 재정의는 로컬 테스트 서버(127.0.0.1)만 허용")
         cano, _, prdt = account.partition("-")
         if len(cano) != 8 or len(prdt) != 2:
             raise ValueError("KIS_ACCOUNT 형식: 12345678-01")
         self.app_key, self.app_secret, self.cano, self.prdt, self.env = app_key, app_secret, cano, prdt, env
-        self.base = BASE_URL[env]
+        self.base = base_url or BASE_URL[env]
         self.token_cache = token_cache
         self.transport = transport or urllib_transport
         self._token: tuple[str, datetime] | None = None
@@ -112,7 +114,7 @@ class KISClient:
             raise KISError("config", f"환경변수 누락: {', '.join(missing)}")
         kis_env = e.get("KIS_ENV", "demo")
         return cls(e["KIS_APP_KEY"], e["KIS_APP_SECRET"], e["KIS_ACCOUNT"], kis_env,
-                   Path(artifacts_dir) / f"kis_token_{kis_env}.json", transport)
+                   Path(artifacts_dir) / f"kis_token_{kis_env}.json", transport, e.get("KIS_BASE_URL") or None)
 
     # -------------------------------------------------------------- 공통
     def _throttle(self) -> None:
@@ -269,7 +271,7 @@ class KISBroker(Broker):
             if code:
                 try:
                     out[sym] = self.client.quote(code)
-                except KISError as exc:
+                except Exception as exc:  # noqa: BLE001 - 한 종목 조회 실패(네트워크 포함)가 사이클을 멈추면 안 됨
                     log.warning("%s 호가 조회 실패: %s", sym, exc)
         return out
 

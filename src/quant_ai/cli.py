@@ -112,8 +112,12 @@ def cmd_run(args):
     app = _app(args)
     mode = Mode(args.mode)
     if mode is Mode.LIVE:
-        champ = app.registry.champion()
-        app.settings.assert_live_allowed(champ is not None and champ.shadow_metrics is not None)
+        st = app.settings
+        if st.broker == "kis" and st.kis_env == "demo":
+            print("KIS 모의투자 계좌로 LIVE 파이프라인 실행 (실제 돈 아님) — 실전 안전장치는 KIS_ENV=real 에서 적용")
+        else:
+            champ = app.registry.champion()
+            st.assert_live_allowed(champ is not None and champ.shadow_metrics is not None)
     build_default_scheduler(app, mode).run_forever()
 
 
@@ -136,6 +140,20 @@ def cmd_kis_check(args):
         print(f"  {code} {p.qty}주 @ {p.avg_price:,.0f}")
     q = c.quote(args.symbol)
     print(f"{args.symbol} 현재가 {q.last:,.0f} / 매수1 {q.bid} / 매도1 {q.ask}")
+    if args.test_order:
+        # 모의투자 전용: 체결되지 않을 가격(매수1호가 -10%)으로 1주 주문 → 접수 확인 → 즉시 취소
+        from .trading.kis import round_to_tick
+        from .trading.portfolio import Side
+        if c.env != "demo":
+            sys.exit("--test-order 는 KIS_ENV=demo(모의투자)에서만 허용")
+        px = round_to_tick((q.bid or q.last) * 0.9, Side.SELL)
+        placed = c.order(args.symbol, Side.BUY, 1, px)
+        print(f"테스트 주문 접수: 주문번호 {placed['odno']} ({px:,}원 × 1주, 체결 안 될 가격)")
+        print("  주문 상태:", c.order_status(placed["odno"]))
+        c.cancel(placed["odno"], placed["orgno"])
+        st = c.order_status(placed["odno"])
+        print("  취소 후 상태:", st)
+        print("✅ 주문·조회·취소 경로 정상" if st["filled"] == 0 else "⚠ 체결됨 — 모의투자 계좌에서 확인 필요")
 
 
 def cmd_research(args):
@@ -302,8 +320,9 @@ def main(argv: list[str] | None = None) -> None:
     k = sub.add_parser("kill")
     k.add_argument("state", choices=["on", "off"])
     k.set_defaults(fn=cmd_kill)
-    kc = sub.add_parser("kis-check", help="한국투자증권 API 연결 점검 (주문 없음)")
+    kc = sub.add_parser("kis-check", help="한국투자증권 API 연결 점검 (기본: 주문 없음)")
     kc.add_argument("--symbol", default="005930")
+    kc.add_argument("--test-order", action="store_true", help="모의투자 전용: 1주 비체결 주문 후 즉시 취소")
     kc.set_defaults(fn=cmd_kis_check)
     sub.add_parser("health").set_defaults(fn=cmd_health)
     cy = sub.add_parser("cycle", help="코어-위성 한 사이클 실행 (팩터 코어 + 멀티 AI)")

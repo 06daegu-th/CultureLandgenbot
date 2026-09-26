@@ -238,7 +238,7 @@ class QuantAI:
                     AnalystOpinionRecord.correct.is_not(None))).all()
                 ops = [o for o in ops if (o.payload or {}).get("model_version") == rec.version]
                 snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == "shadow")
-                                  .order_by(PortfolioSnapshot.ts)).all()
+                                  .order_by(PortfolioSnapshot.ts, PortfolioSnapshot.id)).all()
             days = len({o.as_of.date() for o in ops})
             acc = sum(o.correct for o in ops) / len(ops) if ops else 0.0
             eq = pd.Series([x.equity for x in snaps], dtype=float)
@@ -328,7 +328,7 @@ class QuantAI:
     def load_portfolio(self, mode: str) -> Portfolio:
         with session_scope(self.engine) as s:
             snap = s.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
-                            .order_by(PortfolioSnapshot.ts.desc()))
+                            .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()))
         if snap is None:
             return Portfolio(cash=self.settings.initial_cash)
         return Portfolio(cash=snap.cash, positions={
@@ -401,7 +401,11 @@ class QuantAI:
             broker = self._live_broker(pf)
             if hasattr(broker, "sync_portfolio"):
                 broker.sync_portfolio(self.symbols())  # 진실의 원천 = 증권사 잔고
-                quotes = broker.live_quotes(sorted(set(self.symbols()) | set(pf.positions)))
+                if quotes is None:
+                    # 필요한 종목만 실시간 조회 (전 종목 조회는 모의투자 기준 사이클당 수 분)
+                    want = {x.symbol for x in signals_override} if signals_override is not None \
+                        else {d.symbol for d in decisions}
+                    quotes = broker.live_quotes(sorted(want | set(pf.positions)))
         if quotes is None:
             bars, _, _ = self.market_data(ts)
             quotes = {}
@@ -480,6 +484,8 @@ class QuantAI:
 
         state_key = f"cs:{mode.value}"
         state = ops.get_state(self.engine, state_key)
+        if mode is Mode.LIVE and self.settings.broker == "kis":
+            self.reconcile_live(ts)  # 계획을 세우기 전에 증권사 잔고로 장부를 맞춘다
         held = set(self.load_portfolio(mode.value).positions)
         prev_core = state.get("core", [])
         shortlist = list(dict.fromkeys([*scores.index[:cfg.shortlist_k], *prev_core,
@@ -523,6 +529,13 @@ class QuantAI:
             return out
 
         plan = build_plan(scores, prev_core, due(state), cfg, vetoes, exits, buys)
+        if quotes is None and mode is Mode.LIVE and self.settings.broker == "kis":
+            # 실제 장부와 측정용 가상 장부가 같은 실시간 가격을 쓰도록 한 번만 조회
+            from .trading.kis import KISBroker, KISClient
+            held_live = set(self.load_portfolio(mode.value).positions)
+            books_core = {s for b in self.ATTRIBUTION_BOOKS for s in ops.get_state(self.engine, f"cs:{b}").get("core", [])}
+            want = set(plan.weights) | held_live | books_core | set(scores.index[:cfg.core_top_k])
+            quotes = KISBroker(Portfolio(cash=0), KISClient.from_env(self.settings.artifacts_dir)).live_quotes(sorted(want))
         fills = self.trade(decisions, mode, ts=ts, quotes=dict(quotes) if quotes else None,
                            signals=to_signals(plan))
         if plan.core_rebalanced:
@@ -554,6 +567,28 @@ class QuantAI:
                                "warn")
         return {"plan": plan, "fills": fills, "decisions": decisions}
 
+    def reconcile_live(self, ts: datetime | None = None) -> dict:
+        """증권사 잔고 = 진실의 원천. DB 장부와 다르면 증권사 기준으로 스냅샷을 남기고 알린다."""
+        from .trading.kis import KISBroker, KISClient
+        ts = ts or datetime.now(UTC)
+        db = self.load_portfolio("live")
+        broker = KISBroker(Portfolio(cash=db.cash, positions=dict(db.positions)),
+                           KISClient.from_env(self.settings.artifacts_dir))
+        before = {s: p.qty for s, p in db.positions.items() if p.qty}
+        pf = broker.sync_portfolio(self.symbols())
+        after = {s: p.qty for s, p in pf.positions.items() if p.qty}
+        drift = {s: (before.get(s, 0), after.get(s, 0)) for s in set(before) | set(after)
+                 if before.get(s, 0) != after.get(s, 0)}
+        prices = {s: p.avg_price for s, p in pf.positions.items()}
+        with session_scope(self.engine) as s:
+            s.add(PortfolioSnapshot(mode="live", ts=ts, **pf.snapshot(prices)))
+        if drift and before:
+            DBJournal("live", self.engine).note(ts, "reconcile", f"장부 불일치 {len(drift)}종목 → 증권사 기준으로 수정",
+                                                drift={k: list(v) for k, v in drift.items()})
+            self.notifier.send(f"[live] 장부 불일치 {len(drift)}종목을 증권사 잔고로 수정: "
+                               + ", ".join(f"{k} {a}→{b}" for k, (a, b) in list(drift.items())[:5]), "warn")
+        return {"drift": drift, "cash": pf.cash, "positions": after}
+
     def _orders_today(self, mode: str, ts: datetime) -> int:
         start = datetime.combine(ts.date(), datetime.min.time(), UTC)
         with session_scope(self.engine) as s:
@@ -566,7 +601,7 @@ class QuantAI:
         with session_scope(self.engine) as s:
             snap = s.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode,
                                                             PortfolioSnapshot.ts < start)
-                            .order_by(PortfolioSnapshot.ts.desc()))
+                            .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()))
         return snap.equity if snap else default
 
     # ================================================================ 복기
@@ -584,7 +619,7 @@ class QuantAI:
 def equity_metrics(mode: str, engine) -> dict:
     with session_scope(engine) as s:
         snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
-                          .order_by(PortfolioSnapshot.ts)).all()
+                          .order_by(PortfolioSnapshot.ts, PortfolioSnapshot.id)).all()
     if not snaps:
         return {}
     eq = pd.Series([x.equity for x in snaps], index=[x.ts for x in snaps])

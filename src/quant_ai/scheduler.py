@@ -10,12 +10,18 @@
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from datetime import time as dtime
+from pathlib import Path
 
 from .clock import MARKETS, MarketCalendar, Phase, any_market_open
+
+KRX_TRADE_START, KRX_TRADE_END = dtime(9, 10), dtime(15, 10)
 
 log = logging.getLogger("quant_ai.scheduler")
 
@@ -99,8 +105,6 @@ def build_default_scheduler(app, mode) -> Scheduler:
     from .data.db import session_scope
 
     st = app.settings
-    from pathlib import Path
-
     from .clock import load_holidays
     sch = Scheduler(load_holidays(Path(st.artifacts_dir) / "holidays.json"), notifier=app.notifier, engine=app.engine)
 
@@ -122,8 +126,25 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("macro", fred, 3 * 3600, "closed")
 
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and st.strategy == "core_satellite":
-        # 코어는 20거래일마다, AI 거부권·긴급청산·위성은 매 사이클 점검 (일봉 기반이라 하루 몇 번이면 충분)
-        sch.add("core_satellite", lambda now: app.run_core_satellite(mode, ts=now), 2 * 3600, "open")
+        # 코어는 20거래일마다, AI 거부권·긴급청산·위성은 매 사이클 점검 (일봉 기반이라 한 시간에 한 번이면 충분)
+        krx = sch.markets.get("KRX", MARKETS["KRX"])
+
+        def core_satellite(now):
+            local = krx.local(now).time()
+            # 국내 정규장 안에서만, 시가 직후 급변(09:00~09:10)과 종가 동시호가(15:20~) 는 피한다
+            if krx.phase(now) is not Phase.OPEN or not (KRX_TRADE_START <= local <= KRX_TRADE_END):
+                return
+            app.run_core_satellite(mode, ts=now)
+        sch.add("core_satellite", core_satellite, 3600, "open")
+
+    marcap_dir = os.environ.get("QUANT_MARCAP_DIR")
+    if marcap_dir:
+        def krx_data(now):
+            # FinanceData/marcap 은 매일 장 마감 후 갱신 → 받아서 DB 반영 (수정주가 재계산 포함)
+            subprocess.run(["git", "-C", str(Path(marcap_dir).parent), "pull", "--ff-only", "-q"],  # noqa: S603, S607
+                           check=False, timeout=600)
+            app.ingest_krx(marcap_dir, years=3)
+        sch.add("krx_data", krx_data, 6 * 3600, "closed")
     elif mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
         def cycle(now):
             decisions = app.decide()

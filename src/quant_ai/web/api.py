@@ -159,7 +159,7 @@ class DashboardAPI:
                 prio: dict[str, int] = {}
                 for m in ("live", "shadow", "paper"):
                     snap = s.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == m)
-                                    .order_by(PortfolioSnapshot.ts.desc()))
+                                    .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()))
                     for sym in (snap.positions or {}) if snap else {}:
                         prio.setdefault(sym, 0)
                     plan = get_state(self.engine, f"cs-plan:{m}")
@@ -259,7 +259,7 @@ class DashboardAPI:
 
     def _portfolio(self, s, mode, bars, inst) -> dict:
         snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
-                          .order_by(PortfolioSnapshot.ts)).all()
+                          .order_by(PortfolioSnapshot.ts, PortfolioSnapshot.id)).all()
         if not snaps:
             return {}
         last = snaps[-1]
@@ -380,7 +380,7 @@ class DashboardAPI:
             books = {}
             for book in ("attr-core", "attr-veto", "attr-full", plan.get("mode", "paper") if plan else "paper"):
                 snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == book)
-                                  .order_by(PortfolioSnapshot.ts)).all()
+                                  .order_by(PortfolioSnapshot.ts, PortfolioSnapshot.id)).all()
                 if not snaps:
                     continue
                 eq = pd.Series([x.equity for x in snaps], index=pd.DatetimeIndex([x.ts for x in snaps]))
