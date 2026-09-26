@@ -147,11 +147,11 @@ def walk_forward_scores(p: Panel, cfg: StrategyConfig, embargo: int = 1) -> pd.D
 def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
              regime: pd.Series | None = None) -> dict:
     """t 종가 점수 → t+1 시가 체결, 시가→시가 수익률로 보유, 비중은 가격 변동에 따라 표류."""
-    O = p.open.to_numpy(float)
+    OP = p.open.to_numpy(float)
     S = scores.to_numpy(float)
-    T, N = O.shape
+    T, N = OP.shape
     ret = np.full((T, N), np.nan)
-    ret[:-1] = O[1:] / O[:-1] - 1  # d 시가 → d+1 시가
+    ret[:-1] = OP[1:] / OP[:-1] - 1  # d 시가 → d+1 시가
     last_idx = np.array([p.dates.searchsorted(p.last_date[s]) for s in p.symbols])
     buy_cost = (costs.commission_bps + costs.slippage_bps) / 1e4
     sell_cost = buy_cost + costs.sell_tax_bps / 1e4
@@ -163,7 +163,7 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
         # ---- 리밸런싱: d-1 종가 점수로 d 시가에 체결
         if (d - first - 1) % cfg.rebalance_every == 0:
             s = S[d - 1]
-            ok = np.isfinite(s) & np.isfinite(O[d])
+            ok = np.isfinite(s) & np.isfinite(OP[d])
             target = np.zeros(N)
             if ok.sum() >= cfg.top_k:
                 order = np.argsort(-np.where(ok, s, -np.inf))
@@ -181,7 +181,7 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
                     r = regime.iloc[d - 1] if d - 1 < len(regime) else None
                     g *= EXPOSURE_MULTIPLIER[Regime(r)] if isinstance(r, str) else 1.0
                 target[picks] = g / len(picks)
-            tradable = np.isfinite(O[d])
+            tradable = np.isfinite(OP[d])
             target = np.where(tradable, target, w)  # 거래 불가 종목은 비중 유지
             delta = target - w
             cost = np.sum(np.clip(delta, 0, None)) * buy_cost + np.sum(np.clip(-delta, 0, None)) * sell_cost
