@@ -190,9 +190,10 @@ function viewDashboard(d) {
 
   const summary = d.ai_summary.length ? `<ul class="plain">${d.ai_summary.map((s) => `<li><span class="chk">◉</span><span>${esc(s)}</span></li>`).join("")}</ul>` : empty();
 
-  const watch = d.watchlist.length ? `<div class="scroll"><table class="tight"><thead><tr><th>종목명</th><th class="r">현재가</th><th class="r">등락률</th><th class="r">AI 신호</th></tr></thead><tbody>
-    ${d.watchlist.map((w) => `<tr class="click" data-sym="${esc(w.symbol)}"><td><b>${esc(w.name)}</b><span class="sub">${esc(w.symbol)}</span></td><td class="r num">${price(w.last, w.symbol)}</td><td class="r">${pct(w.chg_pct)}</td>
-      <td class="r">${badge(w.action)}<span class="sub num">${w.prob_up === null ? "" : "P " + (w.prob_up * 100).toFixed(0) + "%"}</span></td></tr>`).join("")}</tbody></table></div>` : empty();
+  const watch = d.watchlist.length ? `<div class="scroll" style="max-height:600px"><table class="tight watch-table"><thead><tr><th>종목명</th><th class="r">AI 신호</th><th class="r">현재가</th></tr></thead><tbody>
+    ${d.watchlist.map((w) => `<tr class="click" data-sym="${esc(w.symbol)}"><td><b>${esc(w.name)}</b><span class="sub">${esc(w.symbol)}</span></td>
+      <td class="r">${badge(w.action)}<span class="sub num">${w.prob_up === null ? "" : "P " + (w.prob_up * 100).toFixed(0) + "%"}</span></td>
+      <td class="r num">${price(w.last, w.symbol)}<span class="sub">${pct(w.chg_pct)}</span></td></tr>`).join("")}</tbody></table></div>` : empty();
 
   const pf = d.portfolios[S.pfMode] || {};
   const pfBody = pf.equity ? portfolioSummary(pf) : empty(`${S.pfMode} 포트폴리오 기록 없음`);
@@ -268,7 +269,7 @@ function scoreMatrix(d, compactDirection = false) {
 }
 function heatColor(a) { if (a === null || a === undefined) return css("--line-2"); return a >= 0.58 ? "#22c55e" : a >= 0.52 ? "#84cc16" : a >= 0.48 ? "#f59e0b" : "#ef4444"; }
 
-function nameOf(sym) { const w = S.data?.watchlist.find((x) => x.symbol === sym); return w ? `${w.name} (${w.symbol})` : sym || ""; }
+function nameOf(sym) { const w = (S.data?.all_symbols || S.data?.watchlist || []).find((x) => x.symbol === sym); return w ? `${w.name} (${w.symbol})` : sym || ""; }
 
 // ------------------------------------------------------------ 뷰: AI 종목 분석
 async function viewAnalysis(el) {
@@ -276,7 +277,8 @@ async function viewAnalysis(el) {
   const sym = S.symbol || d.watchlist[0]?.symbol;
   if (!sym) { el.innerHTML = card("AI 종목 분석", empty()); return; }
   const a = await api(`/api/analysis?symbol=${encodeURIComponent(sym)}`);
-  const sel = `<select class="sym-select" id="sym-select">${d.watchlist.map((w) => `<option value="${esc(w.symbol)}" ${w.symbol === sym ? "selected" : ""}>${esc(w.name)} (${esc(w.symbol)})</option>`).join("")}</select>`;
+  const selList = (d.all_symbols || d.watchlist);
+  const sel = `<select class="sym-select" id="sym-select">${selList.map((w) => `<option value="${esc(w.symbol)}" ${w.symbol === sym ? "selected" : ""}>${esc(w.name)} (${esc(w.symbol)})</option>`).join("")}</select>`;
   const c = a.consensus;
   const labels = d.analyst_labels;
   const ops = c ? (c.contributions || []).map((v) => {
@@ -676,7 +678,7 @@ $("#search").addEventListener("input", (e) => {
   const q = e.target.value.trim().toLowerCase();
   const box = $("#search-results");
   if (!q || !S.data) { box.classList.remove("open"); return; }
-  const hits = S.data.watchlist.filter((w) => w.name.toLowerCase().includes(q) || w.symbol.toLowerCase().includes(q)).slice(0, 8);
+  const hits = (S.data.all_symbols || S.data.watchlist).filter((w) => w.name.toLowerCase().includes(q) || w.symbol.toLowerCase().includes(q)).slice(0, 8);
   box.innerHTML = hits.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span>${badge(w.action)}</a>`).join("") || '<div class="empty">결과 없음</div>';
   box.classList.add("open");
   box.querySelectorAll("a").forEach((a) => a.onclick = () => { S.symbol = a.dataset.sym; box.classList.remove("open"); e.target.value = ""; location.hash = "#analysis"; route(); });

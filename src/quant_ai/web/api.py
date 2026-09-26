@@ -152,6 +152,23 @@ class DashboardAPI:
                     "action": c.action if c else None, "prob_up": _f(c.prob_up) if c else None,
                     "confidence": c.confidence if c else None, "conflict": c.conflict if c else None,
                 })
+            # 종목이 많으면(실제 KRX 유니버스) 보유·코어·위성·AI 분석 종목 우선 40개만 관심 종목으로
+            all_symbols = [{"symbol": w["symbol"], "name": w["name"], "action": w["action"]} for w in watch]
+            if len(watch) > 40:
+                from ..ops import get_state
+                prio: dict[str, int] = {}
+                for m in ("live", "shadow", "paper"):
+                    snap = s.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == m)
+                                    .order_by(PortfolioSnapshot.ts.desc()))
+                    for sym in (snap.positions or {}) if snap else {}:
+                        prio.setdefault(sym, 0)
+                    plan = get_state(self.engine, f"cs-plan:{m}")
+                    for sym in plan.get("core", []):
+                        prio.setdefault(sym, 1)
+                    for x in plan.get("satellite", []):
+                        prio.setdefault(x["symbol"], 0)
+                watch.sort(key=lambda w: (prio.get(w["symbol"], 2 if w["action"] else 3), w["name"]))
+                watch = watch[:40]
 
             # ---- 신호 / AI 요약
             recent = s.scalars(select(ConsensusRecord).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc())
@@ -186,7 +203,8 @@ class DashboardAPI:
             # ---- 포트폴리오 / 체결 / 리스크 로그
             portfolios = {m: self._portfolio(s, m, bars, inst) for m in ("paper", "shadow", "live")}
             trades, risk_log = [], []
-            for j in s.scalars(select(JournalEntry).where(JournalEntry.kind == "order")
+            for j in s.scalars(select(JournalEntry).where(JournalEntry.kind == "order",
+                                                          ~JournalEntry.mode.startswith("attr-"))  # 가상 측정 장부 제외
                                .order_by(JournalEntry.ts.desc(), JournalEntry.id.desc()).limit(200)):
                 d = j.data or {}
                 row = {"ts": _ts(j.ts), "mode": j.mode, "symbol": j.symbol,
@@ -226,7 +244,7 @@ class DashboardAPI:
             "markets": {k: m.phase(now).value for k, m in MARKETS.items()},
             "indices": indices, "market": market, "macro": macro, "ai_summary": summary,
             "summary_time": _ts(recent[0].as_of) if recent else None,
-            "watchlist": watch, "signals": signals, "news": news[:30], "portfolios": portfolios,
+            "watchlist": watch, "all_symbols": all_symbols, "signals": signals, "news": news[:30], "portfolios": portfolios,
             "trades": trades[:100], "risk_log": risk_log[:100], "scoreboard": board,
             "category_labels": CATEGORY_LABELS, "analyst_labels": ANALYST_LABELS, "models": models,
             "system": {
