@@ -75,6 +75,19 @@ quant-ai kill on                    # 킬스위치 (모든 프로세스 공유)
 quant-ai health                     # 헬스체크
 ```
 
+### 실제 KRX 데이터로 연구 (생존편향 제거)
+
+```bash
+git clone --depth 1 --filter=blob:none --sparse https://github.com/FinanceData/marcap.git
+cd marcap && git sparse-checkout set --no-cone $(for y in $(seq 2010 2026); do printf "/data/marcap-$y.parquet "; done) && cd ..
+quant-ai research krx --marcap-dir marcap/data --start 2010 --top 100 --register
+```
+
+- 월말 시가총액 상위 N 을 **그 시점 기준**으로 선정 (나중에 상장폐지된 종목 포함), 보통주만
+- KRX 전일대비(기준가 대비)로 **수정주가 복원** (액면분할·병합 자동 반영)
+- 시도한 모든 설정을 공개하고 DSR 로 다중검정 보정, KOSPI·유니버스 동일가중 두 벤치마크와 비교
+- 결과는 대시보드 **실데이터 연구** 화면에서 확인
+
 API 키가 없으면 해당 AI 는 오프라인 휴리스틱으로 대체되어 시스템은 계속 동작한다 (대시보드 설정 화면에 표시).
 
 ## 안전 원칙

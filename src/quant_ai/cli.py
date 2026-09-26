@@ -133,6 +133,24 @@ def cmd_kis_check(args):
     print(f"{args.symbol} 현재가 {q.last:,.0f} / 매수1 {q.bid} / 매도1 {q.ask}")
 
 
+def cmd_research(args):
+    from .research import DEFAULT_TRIALS, register_best, run_krx_research
+    trials = [t for t in DEFAULT_TRIALS if not args.trials or t.name in args.trials.split(",")]
+    app = _app(args) if args.register else None
+    prior = app.registry.n_trials() if app else 0
+    rep = run_krx_research(args.marcap_dir, args.start, args.end, args.top, trials, args.out, prior_trials=prior)
+    print("\n설정별 결과 (DSR 은 시도 횟수 보정):")
+    for t in rep["trials"]:
+        s = t["metrics"]["strategy"]
+        print(f"  {t['trial']['name']:<22} Sharpe {s['sharpe']:.2f}  PSR {s['psr']:.2f}  DSR {t['dsr']:.2f}  "
+              f"CAGR {s['cagr']:.1%}  MDD {s['max_drawdown']:.1%}  IR(vs 유니버스EW) {t['information_ratio_vs_ew']:.2f}")
+    if app:
+        rec, gate = register_best(app, rep)
+        print(f"\n등록: {rec.name}-{rec.version} → {'shadow (게이트 통과)' if gate.passed else '탈락'}")
+        for f in gate.failures:
+            print("  -", f)
+
+
 def cmd_health(args):
     from .web.api import DashboardAPI
     app = _app(args)
@@ -210,6 +228,16 @@ def main(argv: list[str] | None = None) -> None:
     kc.add_argument("--symbol", default="005930")
     kc.set_defaults(fn=cmd_kis_check)
     sub.add_parser("health").set_defaults(fn=cmd_health)
+    rs = sub.add_parser("research", help="실제 KRX 데이터 walk-forward 연구 (생존편향 제거)")
+    rs.add_argument("dataset", choices=["krx"])
+    rs.add_argument("--marcap-dir", required=True, help="FinanceData/marcap 의 data 폴더")
+    rs.add_argument("--start", type=int, default=2010)
+    rs.add_argument("--end", type=int, default=datetime.now().year)
+    rs.add_argument("--top", type=int, default=100)
+    rs.add_argument("--trials", default="", help="쉼표로 구분한 설정 이름 (기본: 전부)")
+    rs.add_argument("--out", default="artifacts/research")
+    rs.add_argument("--register", action="store_true", help="최고 설정을 레지스트리에 등록하고 게이트 평가")
+    rs.set_defaults(fn=cmd_research)
 
     args = p.parse_args(argv)
     args.fn(args)

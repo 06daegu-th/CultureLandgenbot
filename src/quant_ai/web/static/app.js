@@ -436,6 +436,41 @@ function viewModels(d) {
   </div>`;
 }
 
+// ------------------------------------------------------------ 뷰: 실데이터 연구
+async function viewResearch(el) {
+  const r = await api("/api/research");
+  if (!r.trials) { el.innerHTML = card("실데이터 연구", empty("리포트 없음 — quant-ai research krx --marcap-dir ... 실행")); return; }
+  const f2 = (v) => v == null ? "-" : Number(v).toFixed(2);
+  const rows = r.trials.map((t) => { const s = t.metrics.strategy, p = t.metrics.prediction; return `<tr class="${t.trial.name === r.best ? "" : ""}">
+    <td><b>${esc(t.trial.name)}</b>${t.trial.name === r.best ? ' <span class="chip pos">최고</span>' : ""}</td>
+    <td class="r num">${f2(s.sharpe)}<span class="sub">95% ${f2(s.sharpe_ci95[0])}~${f2(s.sharpe_ci95[1])}</span></td>
+    <td class="r num">${f2(s.psr)}</td><td class="r num ${t.dsr < 0.5 ? "conflict-high" : "conflict-low"}">${f2(t.dsr)}</td>
+    <td class="r">${pct(s.cagr, 1)}</td><td class="r">${pct(s.max_drawdown, 1)}</td>
+    <td class="r num">${f2(p.ic * 100)}%<span class="sub">t=${f2(p.ic_t)}</span></td>
+    <td class="r num">${f2(t.stress.sharpe)}</td><td class="r num ${t.information_ratio_vs_ew < 0 ? "down" : "up"}">${f2(t.information_ratio_vs_ew)}</td>
+    <td class="r num">${t.metrics.avg_exposure == null ? "-" : Math.round(t.metrics.avg_exposure * 100) + "%"}</td></tr>`; }).join("");
+  const best = r.trials.find((t) => t.trial.name === r.best) || r.trials[0];
+  const years = Object.keys(best.yearly.strategy);
+  const yrows = years.map((y) => `<tr><td class="mono">${y}</td><td class="r">${pct(best.yearly.strategy[y], 1)}</td><td class="r">${pct(best.yearly.kospi[y], 1)}</td><td class="r">${pct(best.yearly.universe_ew[y], 1)}</td>
+    <td class="r num">${best.ic_by_year[y] == null ? "-" : (best.ic_by_year[y] * 100).toFixed(2) + "%"}</td></tr>`).join("");
+  const ks = best.metrics.benchmark, ew = best.universe_ew, s = best.metrics.strategy;
+  el.innerHTML = `
+  ${card(`실제 KRX 데이터 walk-forward 연구 <span class="small dim">${esc(r.data.source)} · ${r.data.start}~${r.data.end} · 월말 시총 상위 ${r.data.top_n} (상장폐지 포함 ${r.data.symbols}종목) · 시도 ${r.n_trials}회</span>`,
+    `<div class="stat-row">
+      <div class="stat"><div class="l">전략 (${esc(r.best)})</div><div class="big num">${f2(s.sharpe)}</div><div class="small dim">Sharpe · CAGR ${(s.cagr * 100).toFixed(1)}% · MDD ${(s.max_drawdown * 100).toFixed(1)}%</div></div>
+      <div class="stat"><div class="l">KOSPI (시총가중)</div><div class="big num">${f2(ks.sharpe)}</div><div class="small dim">CAGR ${(ks.cagr * 100).toFixed(1)}% · MDD ${(ks.max_drawdown * 100).toFixed(1)}%</div></div>
+      <div class="stat"><div class="l">유니버스 동일가중</div><div class="big num">${f2(ew.sharpe)}</div><div class="small dim">CAGR ${(ew.cagr * 100).toFixed(1)}% · MDD ${(ew.max_drawdown * 100).toFixed(1)}%</div></div>
+      <div class="stat"><div class="l">DSR (시도 ${r.n_trials}회 보정)</div><div class="big num ${best.dsr < 0.5 ? "down" : ""}">${f2(best.dsr)}</div><div class="small dim">0.5 미만이면 우연일 가능성이 큼</div></div></div>
+    <div id="rs-chart" class="chart" style="margin-top:14px"></div>`)}
+  ${card("설정별 결과 <span class='small dim'>가장 좋은 것만 고르지 않고 전부 공개</span>", `<div class="scroll"><table><thead><tr><th>설정</th><th class="r">Sharpe</th><th class="r">PSR</th><th class="r">DSR</th><th class="r">CAGR</th><th class="r">MDD</th><th class="r">IC</th><th class="r">비용2배</th><th class="r" title="유니버스 동일가중 대비 정보비율">IR</th><th class="r">평균 노출</th></tr></thead><tbody>${rows}</tbody></table></div>`)}
+  ${card("연도별 수익률", `<div class="scroll"><table><thead><tr><th>연도</th><th class="r">전략</th><th class="r">KOSPI</th><th class="r">유니버스 EW</th><th class="r">IC</th></tr></thead><tbody>${yrows}</tbody></table></div>`)}`;
+  lineChart($("#rs-chart"), [
+    { data: best.equity, color: "#3b82f6", title: "전략" },
+    { data: best.benchmark, color: "#94a3b8", title: "KOSPI" },
+    { data: best.universe_ew_curve, color: "#f59e0b", title: "유니버스 EW" },
+  ]);
+}
+
 // ------------------------------------------------------------ 뷰: 운영
 async function viewOps(el) {
   const o = await api("/api/ops");
@@ -512,6 +547,7 @@ async function render() {
     else if (S.view === "review") await viewReview(el);
     else if (S.view === "models") el.innerHTML = viewModels(d);
     else if (S.view === "ops") await viewOps(el);
+    else if (S.view === "research") await viewResearch(el);
     else if (S.view === "settings") el.innerHTML = viewSettings(d);
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);

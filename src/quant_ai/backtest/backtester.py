@@ -38,6 +38,7 @@ class BacktestConfig:
     top_k: int | None = 5
     initial_cash: float = 10_000_000
     use_regime: bool = True
+    delist_haircut: float = 0.30  # 상장폐지 보유분 강제 청산 시 할인 (정리매매 등 보수적 가정)
     risk: RiskLimits = field(default_factory=RiskLimits)
     costs: CostModelConfig = field(default_factory=CostModelConfig)
 
@@ -77,13 +78,23 @@ class Backtester:
         self.cfg = config or BacktestConfig()
 
     def run(self, bars_by_symbol: dict[str, pd.DataFrame], benchmark: pd.DataFrame | None = None,
-            sentiment: pd.DataFrame | None = None) -> BacktestResult:
+            sentiment: pd.DataFrame | None = None, eligible: pd.DataFrame | None = None,
+            progress=None) -> BacktestResult:
+        """eligible: index=일자, columns=종목, bool. 그 시점에 실제로 투자 대상이었던 종목만
+        학습·예측·신규매수에 쓴다 (생존편향·선택편향 제거). None 이면 전 종목."""
         cfg = self.cfg
         bench = benchmark if benchmark is not None else equal_weight_index(bars_by_symbol)
         reg = regime_series(bench)
         data = build_dataset(bars_by_symbol, cfg.horizon,
                              regime=reg["score"] if cfg.use_regime else None, sentiment=sentiment)
+        if eligible is not None:
+            stacked = eligible.stack()
+            ok = stacked[stacked].index
+            data = data[data.index.isin(ok)]
         feats = feature_columns(data)
+        last_bar = {s: b.index.max() for s, b in bars_by_symbol.items()}
+        data_end = max(last_bar.values())
+        delisted_exits = 0
         dates = data.index.get_level_values(0).unique().sort_values()
         opens = pd.DataFrame({s: b["open"] for s, b in bars_by_symbol.items()}).reindex(dates)
         closes = pd.DataFrame({s: b["close"] for s, b in bars_by_symbol.items()}).reindex(dates)
@@ -97,6 +108,7 @@ class Backtester:
         model: Predictor | None = None
         last_train = -10**9
         equity_points: dict[pd.Timestamp, float] = {}
+        exposures: list[float] = []
         pred_rows = []
         start = cfg.min_train_dates + cfg.horizon + cfg.embargo
 
@@ -131,10 +143,23 @@ class Backtester:
             ref = open_px.fillna(mark.loc[t])  # 거래 안 된 종목은 직전 종가로 평가만
             quotes = {s: MarketQuote(last=float(px)) for s, px in ref.items() if pd.notna(px)}
             tradable = {s for s in quotes if pd.notna(open_px.get(s))}
+            # 상장폐지(데이터 종료) 종목 보유분: 마지막 가격에서 할인(보수적)해 강제 청산
+            for sym, pos in list(pf.positions.items()):
+                if pos.qty and last_bar[sym] < t_next and last_bar[sym] < data_end - pd.Timedelta(days=7):
+                    quotes[sym] = MarketQuote(last=float(mark.loc[t, sym]) * (1 - cfg.delist_haircut))
+                    tradable.add(sym)
+                    delisted_exits += 1
             risk.start_day(t_next.date(), pf.equity({s: q.last for s, q in quotes.items()}))
             engine.rebalance(signals, quotes, t_next, mult, tradable=tradable)
 
-            equity_points[t_next] = pf.equity(mark.loc[t_next].dropna().to_dict())
+            marks = mark.loc[t_next].dropna().to_dict()
+            for sym, pos in pf.positions.items():
+                if pos.qty and sym not in marks:
+                    marks[sym] = pos.avg_price
+            equity_points[t_next] = pf.equity(marks)
+            exposures.append(pf.market_value(marks) / equity_points[t_next] if equity_points[t_next] > 0 else 0.0)
+            if progress and i % 250 == 0:
+                progress(t_next, equity_points[t_next])
 
         equity = pd.Series(equity_points, name="equity").sort_index()
         if equity.empty:
@@ -154,6 +179,8 @@ class Backtester:
             "n_fills": sum(1 for e in journal.of_kind("order") if e.data["status"] == "filled"),
             "fees_paid": pf.fees_paid,
             "n_days": len(equity),
+            "delisted_exits": delisted_exits,
+            "avg_exposure": float(np.mean(exposures)) if exposures else None,
         }
         metrics["excess_return"] = metrics["strategy"]["total_return"] - metrics["benchmark"]["total_return"]
         metrics["daily_returns"] = [float(x) for x in equity.pct_change().dropna()]  # DSR 계산용

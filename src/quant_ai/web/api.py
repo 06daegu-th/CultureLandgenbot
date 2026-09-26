@@ -352,6 +352,16 @@ class DashboardAPI:
             "broker": self.app.settings.broker, "kis_env": self.app.settings.kis_env,
         }
 
+    def research(self) -> dict:
+        """가장 최근 실데이터 연구 리포트 (artifacts/research/*.json)."""
+        from pathlib import Path
+        d = Path(self.app.settings.artifacts_dir) / "research"
+        files = sorted(d.glob("*.json")) if d.exists() else []
+        if not files:
+            return {}
+        import json
+        return json.loads(files[-1].read_text(encoding="utf-8"))
+
     def reviews(self, limit: int = 10) -> list[dict]:
         with session_scope(self.engine) as s:
             return [{"date": str(r.review_date), "created_at": _ts(r.created_at), "summary": r.summary,
