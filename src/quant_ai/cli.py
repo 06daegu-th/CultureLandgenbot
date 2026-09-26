@@ -64,6 +64,11 @@ def cmd_collect(args):
                     s.add(Instrument(symbol=sym, market=market, name=sym))
         n = app.ingest_prices(src, syms, now - timedelta(days=365 * args.years), now)
         print(f"가격 {n}봉 저장")
+    elif args.what == "krx":
+        if not args.marcap_dir:
+            sys.exit("--marcap-dir 필요 (FinanceData/marcap 의 data 폴더)")
+        r = app.ingest_krx(args.marcap_dir, years=args.years, top_n=args.top)
+        print(f"KRX: 종목 {r['symbols']} · 봉 {r['bars']:,} · 월별 유니버스 {r['months']}개월 · 마지막 {r['last_date']}")
     elif args.what == "news":
         from .data.collectors.news import NewsCollector
         with session_scope(app.engine) as s:
@@ -170,6 +175,58 @@ def cmd_lab(args):
     print(f"\n리포트: {path}")
 
 
+def _print_plan(plan, names):
+    print(f"코어 {len(plan.core)}종목 ({'리밸런싱' if plan.core_rebalanced else '유지'}):")
+    for s in plan.core:
+        print(f"  #{plan.ranks.get(s, -1) + 1:<3} {s} {names.get(s, '')}  {plan.weights[s]:.1%}")
+    for s, why in plan.vetoed.items():
+        print(f"  ⛔ 거부 {s} {names.get(s, '')}: {why}")
+    for s, why in plan.exits.items():
+        print(f"  🚨 긴급 청산 {s} {names.get(s, '')}: {why}")
+    print(f"위성 {len(plan.satellite)}종목:")
+    for x in plan.satellite:
+        print(f"  {x['symbol']} {names.get(x['symbol'], '')}  신뢰도 {x['confidence']:.0f}  {x['weight']:.1%}")
+    for n in plan.notes:
+        print("  ·", n)
+
+
+def _names(app):
+    from .data.db import session_scope
+    from .data.models import Instrument
+    with session_scope(app.engine) as s:
+        return {i.symbol: i.name for i in s.query(Instrument)}
+
+
+def cmd_cycle(args):
+    app = _app(args)
+    r = app.run_core_satellite(Mode(args.mode))
+    _print_plan(r["plan"], _names(app))
+    print(f"체결 {len(r['fills'])}건")
+
+
+def cmd_replay(args):
+    """최근 N 거래일을 하루씩 재생: 그날 종가까지의 정보로 판단 → 종가 체결 (가상 장부)."""
+    from datetime import timedelta
+
+    from .trading.broker import MarketQuote
+    app = _app(args)
+    mode = Mode(args.mode)
+    bars, _, _ = app.market_data()
+    cal = max(bars.values(), key=len).index[-args.days:]
+    for i, t in enumerate(cal):
+        quotes = {s: MarketQuote(last=float(b.loc[t, "close"]), bid=float(b.loc[t, "close"]) * 0.9995,
+                                 ask=float(b.loc[t, "close"]) * 1.0005, bid_qty=1e9, ask_qty=1e9)
+                  for s, b in bars.items() if t in b.index}
+        r = app.run_core_satellite(mode, as_of=t.to_pydatetime(), ts=t.to_pydatetime() + timedelta(hours=6, minutes=20),
+                                   quotes=quotes)
+        p = r["plan"]
+        print(f"{t.date()} 코어 {len(p.core)}{' (리밸런싱)' if p.core_rebalanced else ''} · 위성 {len(p.satellite)} · "
+              f"거부 {len(p.vetoed)} · 긴급청산 {len(p.exits)} · 체결 {len(r['fills'])}")
+        if i % 10 == 9 or i == len(cal) - 1:
+            rep = app.review(t.date())
+            print(f"   복기: 채점 {rep.summary.get('n_resolved', 0)}건")
+
+
 def cmd_health(args):
     from .web.api import DashboardAPI
     app = _app(args)
@@ -228,7 +285,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--port", type=int, default=8050)
     s.set_defaults(fn=cmd_serve)
     c = sub.add_parser("collect")
-    c.add_argument("what", choices=["prices", "news", "disclosures", "macro"])
+    c.add_argument("what", choices=["prices", "krx", "news", "disclosures", "macro"])
+    c.add_argument("--marcap-dir", default="")
+    c.add_argument("--top", type=int, default=100)
     c.add_argument("--source", default="yahoo", choices=["yahoo", "synthetic"])
     c.add_argument("--symbols", default="")
     c.add_argument("--years", type=int, default=5)
@@ -247,6 +306,13 @@ def main(argv: list[str] | None = None) -> None:
     kc.add_argument("--symbol", default="005930")
     kc.set_defaults(fn=cmd_kis_check)
     sub.add_parser("health").set_defaults(fn=cmd_health)
+    cy = sub.add_parser("cycle", help="코어-위성 한 사이클 실행 (팩터 코어 + 멀티 AI)")
+    cy.add_argument("--mode", default="paper", choices=["paper", "shadow", "live"])
+    cy.set_defaults(fn=cmd_cycle)
+    rp = sub.add_parser("replay", help="최근 N 거래일 코어-위성 재생 (가상 장부 + AI 기여도)")
+    rp.add_argument("--days", type=int, default=60)
+    rp.add_argument("--mode", default="paper", choices=["paper", "shadow"])
+    rp.set_defaults(fn=cmd_replay)
     rs = sub.add_parser("research", help="실제 KRX 데이터 walk-forward 연구 (생존편향 제거)")
     rs.add_argument("dataset", choices=["krx"])
     rs.add_argument("--marcap-dir", required=True, help="FinanceData/marcap 의 data 폴더")

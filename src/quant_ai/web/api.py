@@ -352,6 +352,40 @@ class DashboardAPI:
             "broker": self.app.settings.broker, "kis_env": self.app.settings.kis_env,
         }
 
+    def core_satellite(self) -> dict:
+        """코어-위성 현재 계획 + AI 기여도 (가상 장부 3개 비교)."""
+        from ..ops import get_state
+        mode = self.app.settings.mode.value if self.app.settings.mode.value in ("paper", "shadow", "live") else "paper"
+        plan = get_state(self.engine, f"cs-plan:{mode}") or get_state(self.engine, "cs-plan:paper")
+        with session_scope(self.engine) as s:
+            inst = self._instruments(s)
+            books = {}
+            for book in ("attr-core", "attr-veto", "attr-full", plan.get("mode", "paper") if plan else "paper"):
+                snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == book)
+                                  .order_by(PortfolioSnapshot.ts)).all()
+                if not snaps:
+                    continue
+                eq = pd.Series([x.equity for x in snaps], index=pd.DatetimeIndex([x.ts for x in snaps]))
+                eq = eq.groupby(eq.index.date).last()
+                eq.index = pd.DatetimeIndex(eq.index)
+                from ..backtest.backtester import performance
+                perf = performance(eq) if len(eq) > 2 else {}
+                books[book] = {"curve": [[_ts(t), _f(v, 0)] for t, v in eq.items()],
+                               "return": _f(eq.iloc[-1] / eq.iloc[0] - 1), "perf": perf, "days": len(eq)}
+            bars = self._bars(s, ["KOSPI"]).get("KOSPI")
+        if bars is not None and books:
+            first = min(pd.Timestamp(v["curve"][0][0]) for v in books.values())
+            k = bars["close"][bars.index >= first.normalize()]
+            if len(k) > 1:
+                books["kospi"] = {"curve": [[_ts(t), _f(v / k.iloc[0] * 1e7, 0)] for t, v in k.items()],
+                                  "return": _f(k.iloc[-1] / k.iloc[0] - 1), "perf": {}, "days": len(k)}
+        name = lambda c: inst[c].name if c in inst else c  # noqa: E731
+        if plan:
+            plan["names"] = {c: name(c) for c in {*plan.get("core", []), *plan.get("vetoed", {}),
+                                                  *plan.get("exits", {}), *[x["symbol"] for x in plan.get("satellite", [])],
+                                                  *list(plan.get("scores", {}))[:40]}}
+        return {"plan": plan, "books": books}
+
     def research(self) -> dict:
         """가장 최근 실데이터 연구 리포트 (artifacts/research/*.json)."""
         from pathlib import Path

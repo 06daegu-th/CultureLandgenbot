@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 FEATURE_COLUMNS = [
-    "ret_1", "ret_5", "ret_20", "vol_20", "vol_ratio", "rsi_14", "macd_hist", "bb_pctb",
+    "ret_1", "ret_5", "ret_20", "vol_20", "vol_ratio", "jump_sigma", "rsi_14", "macd_hist", "bb_pctb",
     "dist_ma20", "dist_ma60", "atr_14", "volume_z", "high_20_dist", "low_20_dist",
 ]
 
@@ -31,7 +31,10 @@ def technical_features(bars: pd.DataFrame) -> pd.DataFrame:
     f["ret_5"] = c.pct_change(5)
     f["ret_20"] = c.pct_change(20)
     f["vol_20"] = logret.rolling(20).std()
-    f["vol_ratio"] = logret.rolling(5).std() / f["vol_20"]
+    # 최근 5일 변동성 ÷ 그 '이전' 60일 변동성. (같은 구간으로 나누면 비율이 최대 ~2.2 로 묶여 급증을 못 잡는다)
+    f["vol_ratio"] = logret.rolling(5).std() / logret.rolling(60, min_periods=20).std().shift(5)
+    # 당일 움직임 ÷ 전일까지의 20일 변동성 (당일을 포함하면 최대 ~4.4σ 로 묶인다)
+    f["jump_sigma"] = logret.abs() / logret.rolling(20).std().shift(1)
     f["rsi_14"] = _rsi(c)
     ema12, ema26 = c.ewm(span=12, adjust=False).mean(), c.ewm(span=26, adjust=False).mean()
     macd = ema12 - ema26

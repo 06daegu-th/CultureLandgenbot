@@ -83,6 +83,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.reviews())
                     if url.path == "/api/ops":
                         return self._json(api.ops())
+                    if url.path == "/api/core-satellite":
+                        return self._json(api.core_satellite())
                     if url.path == "/api/research":
                         return self._json(api.research())
                 except Exception as exc:  # noqa: BLE001

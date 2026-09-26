@@ -182,12 +182,18 @@ class RiskAnalyst(Analyst):
         self.max_jump_sigma = max_jump_sigma
         self.stale_minutes = stale_minutes
 
+    MARKET_PREFIX = ("[시장]",)
+
     def rule_flags(self, ctx: MarketContext) -> tuple[list[str], list[str]]:
-        """(hard veto 사유, soft 경고)"""
+        """(hard veto 사유, soft 경고). 시장 전체 위험은 사유 앞에 '[시장]' 을 붙인다.
+
+        종목 고유 위험(변동성 급증·급변·시세 정지·상장폐지·종목 이벤트)과 시장 전체 위험(위기 국면·FOMC 등)을
+        구분한다. 코어(검증된 팩터)는 종목 고유 위험에만 반응하고, 위성(AI 재량)은 둘 다에 반응한다.
+        """
         hard, soft = [], []
         p, dq = ctx.price, ctx.data_quality
         if ctx.regime.get("regime") == Regime.CRISIS.value:
-            hard.append("시장 국면 CRISIS")
+            hard.append("[시장] 국면 CRISIS")
         vr = p.get("vol_ratio")
         if vr and vr >= self.vol_spike:
             (hard if vr >= 1.5 * self.vol_spike else soft).append(f"단기 변동성 급증 (5일/20일 = {vr:.1f}배)")
@@ -197,7 +203,8 @@ class RiskAnalyst(Analyst):
             ts = ts.tz_localize("UTC") if ts.tz is None else ts
             hours = (ts - pd.Timestamp(now)).total_seconds() / 3600
             if 0 <= hours <= self.event_window_hours and ev.get("importance", 0) >= 0.7:
-                hard.append(f"중요 이벤트 임박: {ev['name']} ({hours:.0f}시간 후)")
+                tag = "[시장] " if ev.get("symbol") is None else ""
+                hard.append(f"{tag}중요 이벤트 임박: {ev['name']} ({hours:.0f}시간 후)")
         if dq.get("stale"):
             hard.append(f"시세 데이터 지연/정지: {dq['stale']}")
         if dq.get("jump_sigma") and dq["jump_sigma"] >= self.max_jump_sigma:
@@ -224,14 +231,19 @@ class RiskAnalyst(Analyst):
                 backend = f"rules+{op.backend}"
         veto = bool(hard) or llm_veto
         reason = "; ".join(hard) if hard else (llm_reason if llm_veto else None)
-        # 보유 중이어도 즉시 정리해야 하는 치명적 위험 (신규 진입 금지만으로는 부족)
-        severe = [h for h in hard if h.startswith(("시장 국면 CRISIS", "상장폐지"))]
+        # 보유 중이어도 즉시 정리해야 하는 치명적 '종목' 위험. 시장 국면으로 전 종목을 파는 것은
+        # 검증되지 않은 마켓 타이밍이라 하지 않는다 (docs/RESEARCH_KRX.md: 국면 노출 조절은 성과 악화)
+        severe = [h for h in hard if h.startswith("상장폐지")]
+        stock_hard = [h for h in hard if not h.startswith(self.MARKET_PREFIX)]
+        scope = "stock" if (stock_hard or llm_veto) else ("market" if hard else None)
         severity = min(1.0, 0.5 * len(hard) + 0.15 * len(soft) + (0.4 if llm_veto else 0.0))
         return Opinion(
             analyst=self.name, symbol=ctx.symbol, prob_up=prob, confidence=conf,
             reasons=hard, risks=soft, sub_scores={RISK: -severity}, veto=veto, veto_reason=reason,
             summary=summary or ("위험 요인 없음" if not (hard or soft) else f"경고 {len(hard) + len(soft)}건"),
-            backend=backend, meta={"exit": bool(severe), "exit_reason": "; ".join(severe)} if severe else {},
+            backend=backend,
+            meta={**({"exit": True, "exit_reason": "; ".join(severe)} if severe else {}),
+                  **({"veto_scope": scope} if scope else {})},
         )
 
 

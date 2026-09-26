@@ -16,7 +16,7 @@ from ..data.models import Disclosure, Instrument, MacroObservation, NewsArticle
 from .base import MarketContext
 from .memory import Memory
 
-PRICE_KEYS = ["ret_1", "ret_5", "ret_20", "vol_20", "vol_ratio", "rsi_14", "dist_ma20", "dist_ma60",
+PRICE_KEYS = ["ret_1", "ret_5", "ret_20", "vol_20", "vol_ratio", "jump_sigma", "rsi_14", "dist_ma20", "dist_ma60",
               "volume_z", "high_20_dist", "atr_14"]
 RISK_ON_SERIES = {"VIXCLS": -1.0, "DGS10": -0.5, "DEXKOUS": -0.5, "DCOILWTICO": 0.0}
 
@@ -99,9 +99,8 @@ def build_context(
 
     # 데이터 품질: 급변(σ) / 정지
     dq = {}
-    if f.get("ret_1") is not None and f.get("vol_20"):
-        with np.errstate(all="ignore"):
-            dq["jump_sigma"] = _r(abs(np.log1p(f["ret_1"])) / f["vol_20"], 2)
+    if f.get("jump_sigma") is not None and not pd.isna(f.get("jump_sigma")):
+        dq["jump_sigma"] = _r(f["jump_sigma"], 2)
     if last is not None and (pd.Timestamp(as_of) - hist.index[-1]) > pd.Timedelta(days=5):
         dq["stale"] = f"마지막 봉 {hist.index[-1].date()}"
 

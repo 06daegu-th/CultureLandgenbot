@@ -75,6 +75,23 @@ quant-ai kill on                    # 킬스위치 (모든 프로세스 공유)
 quant-ai health                     # 헬스체크
 ```
 
+### 코어-위성 전략 (기본 전략)
+
+```text
+코어 80%  검증된 팩터 (모멘텀 + 저변동성 + 52주 고점, 20거래일 리밸런싱, 상위 20 동일가중)
+          └ AI 역할: 종목 고유 위험 거부권 (신규 편입 대신 다음 순위) · 상장폐지 시 즉시 청산
+위성 20%  멀티 AI 합의 BUY 상위 5 (AI 종목선택을 작은 비중으로 실전 검증)
+          └ 시장 전체 위험(위기 국면·FOMC 임박)에는 위성 신규 매수 중단
+AI 기여도  가상 장부 3개(코어만 / +거부권 / +위성)를 같은 가격으로 나란히 굴려 비교
+```
+
+```bash
+quant-ai collect krx --marcap-dir marcap/data --years 3 --top 100   # 실제 KRX 데이터 적재
+quant-ai cycle --mode paper                                         # 한 사이클
+quant-ai replay --days 60                                           # 최근 60거래일 재생
+quant-ai run --mode shadow                                          # 24시간 (QUANT_STRATEGY=core_satellite)
+```
+
 ### 실제 KRX 데이터로 연구 (생존편향 제거)
 
 ```bash

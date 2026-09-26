@@ -436,6 +436,48 @@ function viewModels(d) {
   </div>`;
 }
 
+// ------------------------------------------------------------ 뷰: 코어-위성
+async function viewCore(el) {
+  const r = await api("/api/core-satellite");
+  const p = r.plan;
+  if (!p || !p.core) { el.innerHTML = card("코어-위성 전략", empty("아직 실행 기록 없음 — quant-ai cycle 또는 replay 실행")); return; }
+  const nm = (c) => esc((p.names || {})[c] || c);
+  const f1 = (v) => v == null ? "-" : (v * 100).toFixed(1) + "%";
+  const coreRows = p.core.map((c) => `<tr class="click" data-sym="${esc(c)}"><td class="num dim">#${(p.ranks[c] ?? -1) + 1}</td><td><b>${nm(c)}</b><span class="sub">${esc(c)}</span></td><td class="r num">${f1(p.weights[c])}</td><td class="r num">${p.scores[c] == null ? "-" : Number(p.scores[c]).toFixed(2)}</td></tr>`).join("");
+  const sat = p.satellite.map((x) => `<tr class="click" data-sym="${esc(x.symbol)}"><td><b>${nm(x.symbol)}</b><span class="sub">${esc(x.symbol)}</span></td><td class="r num">${Math.round(x.confidence)}</td><td class="r num">${(x.prob_up * 100).toFixed(0)}%</td><td class="r num">${f1(x.weight)}</td></tr>`).join("");
+  const vet = Object.entries(p.vetoed).map(([c, w]) => `<tr><td><b>${nm(c)}</b><span class="sub">#${(p.ranks[c] ?? -1) + 1} 순위였으나 편입 거부</span></td><td class="small" style="white-space:normal">${esc(w)}</td></tr>`).join("")
+    + Object.entries(p.exits).map(([c, w]) => `<tr><td><b>${nm(c)}</b><span class="sub down">보유 중 긴급 청산</span></td><td class="small" style="white-space:normal">${esc(w)}</td></tr>`).join("");
+  const labels = { "attr-core": "① 코어만 (AI 없음)", "attr-veto": "② 코어 + AI 거부권", "attr-full": "③ 코어 + 거부권 + 위성", paper: "실제 장부 (PAPER)", shadow: "실제 장부 (SHADOW)", live: "실제 장부 (LIVE)", kospi: "KOSPI" };
+  const colors = { "attr-core": "#94a3b8", "attr-veto": "#22c55e", "attr-full": "#3b82f6", kospi: "#f59e0b" };
+  const b = r.books;
+  const base = b["attr-core"]?.return;
+  const bookRows = Object.entries(b).map(([k, v]) => `<tr><td><b>${esc(labels[k] || k)}</b></td><td class="r">${pct(v.return)}</td>
+    <td class="r num">${v.perf?.max_drawdown == null ? "-" : (v.perf.max_drawdown * 100).toFixed(1) + "%"}</td>
+    <td class="r">${base == null || k === "attr-core" || k === "kospi" ? '<span class="dim">-</span>' : pct(v.return - base)}</td><td class="r num dim">${v.days}일</td></tr>`).join("");
+  const ai = p.ai || {};
+  el.innerHTML = `
+  <div class="card"><div class="card-h"><h3>코어-위성 전략</h3><div class="right"><span class="small dim">기준 ${date(p.as_of)} · ${esc(p.mode)} · 마지막 코어 리밸런싱 ${date(p.last_rebalance)} (${p.rebalances || 0}회)</span></div></div>
+    <div class="stat-row">
+      <div class="stat"><div class="l">코어 ${Math.round(p.config.core_weight * 100)}%</div><div class="big num">${p.core.length}종목</div><div class="small dim">모멘텀+저변동성+52주고점 · ${p.config.core_rebalance_days}거래일 리밸런싱</div></div>
+      <div class="stat"><div class="l">위성 ${Math.round((1 - p.config.core_weight) * 100)}%</div><div class="big num">${p.satellite.length}/${p.config.satellite_k}</div><div class="small dim">AI 합의 BUY · 신뢰도 ≥ ${p.config.satellite_min_confidence}</div></div>
+      <div class="stat"><div class="l">AI 분석</div><div class="big num">${ai.analyzed ?? "-"}종목</div><div class="small dim">BUY ${ai.buys ?? 0} · 거부권 ${ai.vetoes ?? 0} · 긴급청산 ${ai.exits ?? 0}</div></div>
+      <div class="stat"><div class="l">유니버스</div><div class="big num">${p.universe_size}</div><div class="small dim">전월 말 시총 상위 (point-in-time)</div></div></div>
+    <div class="small muted" style="margin-top:10px">${(p.notes || []).map(esc).join(" · ")}</div></div>
+  ${card("AI 기여도 측정 <span class='small dim'>같은 가격·같은 코어로 굴린 가상 장부 비교 — AI 가 수익을 더했는가?</span>",
+    `${bookRows ? `<table><thead><tr><th>장부</th><th class="r">수익률</th><th class="r">MDD</th><th class="r">코어만 대비</th><th class="r">기간</th></tr></thead><tbody>${bookRows}</tbody></table>` : empty()}
+     <div id="cs-chart" class="chart" style="margin-top:12px"></div>
+     <div class="small dim" style="margin-top:8px">기간이 짧으면 차이는 대부분 우연입니다. 최소 수개월 누적 후 판단하세요 (LLM 은 과거로 백테스트할 수 없어 전진 성과만 유효).</div>`)}
+  <div class="grid g-2">
+    ${card(`코어 구성 <span class="small dim">${p.core_rebalanced ? "이번에 리밸런싱" : "유지 중"}</span>`, `<div class="scroll" style="max-height:520px"><table><thead><tr><th>순위</th><th>종목</th><th class="r">비중</th><th class="r">점수</th></tr></thead><tbody>${coreRows}</tbody></table></div>`)}
+    <div style="display:grid;gap:16px;align-content:start">
+      ${card("위성 (AI 종목 선택)", sat ? `<table><thead><tr><th>종목</th><th class="r">신뢰도</th><th class="r">P(상승)</th><th class="r">비중</th></tr></thead><tbody>${sat}</tbody></table>` : empty("확신 있는 AI 합의 BUY 없음 → 위성 비중은 현금"))}
+      ${card("AI 거부권 · 긴급 청산", vet ? `<table><tbody>${vet}</tbody></table>` : empty("이번 사이클 거부 없음"))}
+    </div>
+  </div>`;
+  const series = Object.entries(b).filter(([k]) => colors[k]).map(([k, v]) => ({ data: v.curve, color: colors[k], title: labels[k] }));
+  if (series.length) lineChart($("#cs-chart"), series);
+}
+
 // ------------------------------------------------------------ 뷰: 실데이터 연구
 async function viewResearch(el) {
   const r = await api("/api/research");
@@ -579,6 +621,7 @@ async function render() {
     else if (S.view === "models") el.innerHTML = viewModels(d);
     else if (S.view === "ops") await viewOps(el);
     else if (S.view === "research") await viewResearch(el);
+    else if (S.view === "core") await viewCore(el);
     else if (S.view === "settings") el.innerHTML = viewSettings(d);
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);

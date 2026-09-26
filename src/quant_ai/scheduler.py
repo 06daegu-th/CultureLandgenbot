@@ -121,7 +121,10 @@ def build_default_scheduler(app, mode) -> Scheduler:
                 FredCollector(st.fred_api_key).collect(s, date.today() - timedelta(days=30))
         sch.add("macro", fred, 3 * 3600, "closed")
 
-    if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
+    if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and st.strategy == "core_satellite":
+        # 코어는 20거래일마다, AI 거부권·긴급청산·위성은 매 사이클 점검 (일봉 기반이라 하루 몇 번이면 충분)
+        sch.add("core_satellite", lambda now: app.run_core_satellite(mode, ts=now), 2 * 3600, "open")
+    elif mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
         def cycle(now):
             decisions = app.decide()
             app.trade(decisions, mode, ts=now)

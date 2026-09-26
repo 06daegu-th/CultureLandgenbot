@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC
 
 import pandas as pd
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -64,22 +64,20 @@ def upsert_bars(session: Session, symbol: str, bars: pd.DataFrame, interval: str
             )
         )
     }
-    n = 0
-    for ts, row in bars.iterrows():
+    new_rows = []
+    for ts, o, h, lo, c, v in zip(bars.index, bars["open"], bars["high"], bars["low"], bars["close"],
+                                  bars["volume"], strict=True):
         py_ts = ts.to_pydatetime()
-        key = _naive_utc(py_ts)
-        values = dict(
-            open=float(row["open"]), high=float(row["high"]), low=float(row["low"]),
-            close=float(row["close"]), volume=float(row["volume"]),
-        )
-        bar = existing.get(key)
+        values = dict(open=float(o), high=float(h), low=float(lo), close=float(c), volume=float(v))
+        bar = existing.get(_naive_utc(py_ts))
         if bar is None:
-            session.add(PriceBar(symbol=symbol, interval=interval, ts=py_ts, source=source, **values))
-            n += 1
-        else:
-            for k, v in values.items():
-                setattr(bar, k, v)
-    return n
+            new_rows.append(dict(symbol=symbol, interval=interval, ts=py_ts, source=source, **values))
+        else:  # 수정주가는 새 분할이 생기면 과거 값이 바뀐다 → 갱신
+            for k, val in values.items():
+                setattr(bar, k, val)
+    if new_rows:
+        session.execute(insert(PriceBar), new_rows)  # 대량 삽입
+    return len(new_rows)
 
 
 def load_bars(session: Session, symbols: Iterable[str], interval: str = "1d") -> dict[str, pd.DataFrame]:

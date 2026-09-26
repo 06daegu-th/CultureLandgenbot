@@ -49,6 +49,7 @@ from .ensemble.engine import ConsensusSignal, EnsembleEngine, records_for
 from .ensemble.tracker import resolve, save_consensus, scoreboard
 from .registry.model_registry import ModelRegistry
 from .review.review import daily_review
+from .strategy.core_satellite import CoreSatelliteConfig, Plan, build_plan, core_scores
 from .trading.broker import LiveBroker, MarketQuote, PaperBroker, ShadowBroker
 from .trading.execution import ExecutionEngine, Signal
 from .trading.journal import DBJournal
@@ -113,6 +114,49 @@ class QuantAI:
                 n += upsert_bars(s, sym, bars, interval, source.name)
         ops.set_state(self.engine, "data_quality", reports)
         return n
+
+    def ingest_krx(self, marcap_dir, years: int = 3, top_n: int = 100, end_year: int | None = None) -> dict:
+        """실제 KRX 데이터 적재: 최근 N년 동안 시총 상위 N 에 들었던 종목(상장폐지 포함) + 월별 유니버스."""
+        from .data.collectors.marcap import build_krx_dataset
+
+        end_year = end_year or datetime.now(UTC).year
+        ds = build_krx_dataset(marcap_dir, end_year - years, end_year, top_n)
+        with session_scope(self.engine) as s:
+            have = {i.symbol for i in s.scalars(select(Instrument))}
+            for code in ds.bars:
+                if code not in have:
+                    s.add(Instrument(symbol=code, market="KRX", name=ds.names.get(code, code), currency="KRW"))
+            if "KOSPI" not in have:
+                s.add(Instrument(symbol="KOSPI", market=BENCHMARK_MARKET, name="코스피(시총가중 대용)", currency=""))
+
+        class _Src:
+            name = "marcap"
+
+            def fetch_bars(self, sym, start, end, interval="1d"):
+                b = ds.benchmark if sym == "KOSPI" else ds.bars[sym]
+                return b[["open", "high", "low", "close", "volume"]]
+
+        n = self.ingest_prices(_Src(), [*ds.bars, "KOSPI"], None, None)
+        months = ds.eligible.index.tz_convert(None).to_period("M")
+        universe = {}
+        for m in sorted(set(months)):
+            row = ds.eligible[months == m].iloc[0]
+            codes = sorted(row[row].index)
+            if codes:
+                universe[str(m)] = codes
+        ops.set_state(self.engine, "krx_universe", universe)
+        return {"bars": n, "symbols": len(ds.bars), "months": len(universe),
+                "last_date": str(ds.eligible.index.max().date())}
+
+    def universe_at(self, ts: datetime) -> list[str] | None:
+        """그 시점 매매 대상 (전월 말 시총 상위 N). 없으면 None → 전 종목."""
+        uni = ops.get_state(self.engine, "krx_universe")
+        if not uni:
+            return None
+        key = pd.Timestamp(ts).tz_localize(None).to_period("M") if pd.Timestamp(ts).tz is None \
+            else pd.Timestamp(ts).tz_convert(None).to_period("M")
+        months = sorted(k for k in uni if k <= str(key))
+        return uni[months[-1]] if months else None
 
     def market_data(self, as_of: datetime | None = None):
         syms = self.symbols()
@@ -318,12 +362,20 @@ class QuantAI:
         return out
 
     def trade(self, decisions: list[Decision], mode: Mode, ts: datetime | None = None,
-              quotes: dict[str, MarketQuote] | None = None) -> list:
-        """합의 신호로 한 번의 매매 사이클 실행. 같은 모드의 사이클은 동시에 하나만 돈다."""
+              quotes: dict[str, MarketQuote] | None = None, signals: list[Signal] | None = None,
+              book: str | None = None) -> list:
+        """한 번의 매매 사이클. 같은 장부의 사이클은 동시에 하나만 돈다.
+
+        signals 를 주면 합의 신호 대신 그 목표 비중을 쓴다 (코어-위성).
+        book 을 주면 별도의 가상 장부(Paper)로 실행한다 (AI 기여도 측정용).
+        """
         if mode not in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
             raise ValueError(f"{mode} 모드는 주문을 내지 않습니다")
-        with ops.trading_lock(self.engine, f"trade-{mode.value}", Path(self.settings.artifacts_dir) / "locks"):
-            return self._trade(decisions, mode, ts or datetime.now(UTC), quotes)
+        if book is not None and mode is not Mode.PAPER:
+            raise ValueError("가상 장부는 PAPER 로만 실행")
+        name = book or mode.value
+        with ops.trading_lock(self.engine, f"trade-{name}", Path(self.settings.artifacts_dir) / "locks"):
+            return self._trade(decisions, mode, ts or datetime.now(UTC), quotes, signals, book)
 
     def _live_broker(self, pf: Portfolio):
         st = self.settings
@@ -339,9 +391,11 @@ class QuantAI:
             log.warning("KIS 모의투자 계좌로 LIVE 파이프라인 실행 (실제 돈 아님)")
         return KISBroker(pf, KISClient.from_env(st.artifacts_dir), CostModel(st.costs))
 
-    def _trade(self, decisions: list[Decision], mode: Mode, ts: datetime, quotes) -> list:
+    def _trade(self, decisions: list[Decision], mode: Mode, ts: datetime, quotes,
+               signals_override: list[Signal] | None = None, book: str | None = None) -> list:
         st = self.settings
-        pf = self.load_portfolio(mode.value)
+        name = book or mode.value
+        pf = self.load_portfolio(name)
         broker = None
         if mode is Mode.LIVE:
             broker = self._live_broker(pf)
@@ -370,13 +424,17 @@ class QuantAI:
 
         risk = RiskEngine(st.risk)
         risk.kill_switch = self.kill_switch_on()
-        risk.start_day(ts.date(), self._day_start_equity(mode.value, ts, equity),
-                       self._orders_today(mode.value, ts))
-        journal = DBJournal(mode.value, self.engine)
+        risk.start_day(ts.date(), self._day_start_equity(name, ts, equity), self._orders_today(name, ts))
+        journal = DBJournal(name, self.engine)
         regime = next((d.context.regime.get("regime") for d in decisions if d.context.regime.get("regime")), None)
         mult = (EXPOSURE_MULTIPLIER[Regime(regime)] if regime else 1.0) * budget_ratio
-        signals = self.signals_from_decisions(decisions, pf, prices, budget_ratio)
-        for d in decisions:
+        if signals_override is not None:
+            signals = [Signal(x.symbol, x.target_weight * budget_ratio, x.prob_up, x.reason, x.prediction_id)
+                       for x in signals_override]
+            mult = budget_ratio  # 코어-위성은 국면 배수를 쓰지 않는다 (실데이터 검증에서 효과 없음)
+        else:
+            signals = self.signals_from_decisions(decisions, pf, prices, budget_ratio)
+        for d in decisions if book is None else []:
             journal.note(ts, "signal", f"{d.symbol} {d.signal.action} P(up)={d.signal.prob_up:.2f} "
                          f"신뢰도 {d.signal.confidence:.0f} 충돌 {d.signal.conflict}", d.symbol,
                          consensus_id=d.consensus_id, vetoes=d.signal.vetoes)
@@ -384,7 +442,9 @@ class QuantAI:
         fills = engine.rebalance(signals, quotes, ts, mult)
         with session_scope(self.engine) as s:
             snap = pf.snapshot(prices)
-            s.add(PortfolioSnapshot(mode=mode.value, ts=ts, **snap))
+            s.add(PortfolioSnapshot(mode=name, ts=ts, **snap))
+        if book is not None:
+            return fills
 
         # ---- 자동 킬스위치: 일 손실 한도의 1.5배를 넘으면 전체 정지 + 알림
         dd = risk.daily_pnl_pct(pf.equity(prices))
@@ -396,6 +456,103 @@ class QuantAI:
         if engine.errors:
             self.notifier.send(f"[{mode.value}] 주문 오류 {len(engine.errors)}건: {'; '.join(engine.errors[:3])}", "critical")
         return fills
+
+    # ================================================================ 코어-위성
+    ATTRIBUTION_BOOKS = {"attr-core": (False, False), "attr-veto": (True, False), "attr-full": (True, True)}
+
+    def run_core_satellite(self, mode: Mode, as_of: datetime | None = None, ts: datetime | None = None,
+                           quotes: dict[str, MarketQuote] | None = None, cfg: CoreSatelliteConfig | None = None,
+                           attribution: bool = True) -> dict:
+        """코어(검증된 팩터) + 멀티 AI(거부권·긴급청산·위성) 한 사이클.
+
+        같은 입력으로 가상 장부 3개도 굴린다 → AI 가 실제로 가치를 더했는지 측정:
+          attr-core: AI 없음 / attr-veto: 코어+AI 거부권 / attr-full: 코어+거부권+위성
+        """
+        cfg = cfg or CoreSatelliteConfig()
+        ts = ts or datetime.now(UTC)
+        bars, _, _ = self.market_data(as_of)
+        last_ts = max(b.index.max() for b in bars.values())
+        universe = self.universe_at(last_ts)
+        scores = core_scores(bars, universe, cfg.factor_weights)
+        if scores.empty:
+            raise RuntimeError("팩터 점수를 계산할 데이터가 부족합니다 (종목당 최소 130거래일)")
+        calendar = max(bars.values(), key=len).index
+
+        state_key = f"cs:{mode.value}"
+        state = ops.get_state(self.engine, state_key)
+        held = set(self.load_portfolio(mode.value).positions)
+        prev_core = state.get("core", [])
+        shortlist = list(dict.fromkeys([*scores.index[:cfg.shortlist_k], *prev_core,
+                                        *[s for s in held if s in bars]]))
+        decisions = self.decide(as_of=as_of, symbols=shortlist, scenarios=False)
+        vetoes, exits, buys = {}, {}, []  # vetoes: 코어용 (종목 고유 위험만)
+        for d in decisions:
+            for o in d.opinions:
+                if o.veto and o.meta.get("veto_scope", "stock") == "stock":
+                    vetoes.setdefault(d.symbol, f"{o.analyst}: {o.veto_reason or 'veto'}")
+                if o.meta.get("exit"):
+                    exits[d.symbol] = o.meta.get("exit_reason") or "치명적 위험"
+            # 위성은 AI 재량 베팅 → 시장 전체 위험(위기 국면·FOMC 등)에도 신규 매수하지 않는다 (합의가 NO_TRADE)
+            if d.signal.action == "BUY":
+                buys.append({"symbol": d.symbol, "confidence": d.signal.confidence,
+                             "prob_up": round(d.signal.prob_up, 4), "consensus_id": d.consensus_id})
+        by_sym = {d.symbol: d for d in decisions}
+
+        def due(st: dict) -> bool:
+            last = st.get("last_rebalance")
+            if not last:
+                return True
+            days = int(((calendar > pd.Timestamp(last)) & (calendar <= last_ts)).sum())
+            return days >= cfg.core_rebalance_days
+
+        def to_signals(plan: Plan) -> list[Signal]:
+            sat = {x["symbol"] for x in plan.satellite}
+            out = []
+            for sym, w in plan.weights.items():
+                d = by_sym.get(sym)
+                # 코어는 검증된 팩터가 고른 종목 → AI 확률 최소치로 막지 않는다 (prob_up=None).
+                # 위성만 AI 합의 확률이 리스크 엔진의 최소 확신도 검사를 받는다.
+                if sym in sat:
+                    out.append(Signal(sym, w, d.signal.prob_up if d else None,
+                                      f"SATELLITE AI {d.signal.confidence:.0f}" if d else "SATELLITE",
+                                      d.consensus_id if d else None))
+                else:
+                    ai = f" · AI {d.signal.action} {d.signal.prob_up:.2f}" if d else ""
+                    out.append(Signal(sym, w, None, f"CORE #{plan.ranks.get(sym, -1) + 1}{ai}",
+                                      d.consensus_id if d else None))
+            return out
+
+        plan = build_plan(scores, prev_core, due(state), cfg, vetoes, exits, buys)
+        fills = self.trade(decisions, mode, ts=ts, quotes=dict(quotes) if quotes else None,
+                           signals=to_signals(plan))
+        if plan.core_rebalanced:
+            state = {"core": plan.core, "last_rebalance": str(last_ts), "rebalances": state.get("rebalances", 0) + 1}
+        else:
+            state = {**state, "core": plan.core}
+        ops.set_state(self.engine, state_key, state)
+        pd_plan = plan.to_dict()
+        pd_plan["scores"] = dict(list(plan.scores.items())[:60])
+        pd_plan["ranks"] = {k: v for k, v in plan.ranks.items() if v < 60}
+        ops.set_state(self.engine, f"cs-plan:{mode.value}", {
+            **pd_plan, "as_of": str(last_ts), "ts": ts.isoformat(), "mode": mode.value,
+            "universe_size": len(scores), "config": dict(cfg.__dict__),
+            "last_rebalance": state.get("last_rebalance"), "rebalances": state.get("rebalances", 0),
+            "ai": {"analyzed": len(decisions), "buys": len(buys), "vetoes": len(vetoes), "exits": len(exits)}})
+
+        if attribution:
+            for book, (use_veto, use_sat) in self.ATTRIBUTION_BOOKS.items():
+                bst = ops.get_state(self.engine, f"cs:{book}")
+                bplan = build_plan(scores, bst.get("core", []), due(bst), cfg, vetoes, exits, buys,
+                                   use_veto=use_veto, use_satellite=use_sat)
+                self.trade(decisions, Mode.PAPER, ts=ts, quotes=dict(quotes) if quotes else None,
+                           signals=to_signals(bplan), book=book)
+                ops.set_state(self.engine, f"cs:{book}", {
+                    "core": bplan.core,
+                    "last_rebalance": str(last_ts) if bplan.core_rebalanced else bst.get("last_rebalance")})
+        if plan.exits:
+            self.notifier.send(f"[{mode.value}] AI 긴급 청산: " + ", ".join(f"{k}({v})" for k, v in plan.exits.items()),
+                               "warn")
+        return {"plan": plan, "fills": fills, "decisions": decisions}
 
     def _orders_today(self, mode: str, ts: datetime) -> int:
         start = datetime.combine(ts.date(), datetime.min.time(), UTC)

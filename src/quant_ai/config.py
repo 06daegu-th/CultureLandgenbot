@@ -69,6 +69,7 @@ class Settings:
     llm_daily_budget_usd: float = 20.0  # 하루 LLM 비용 상한 (넘으면 LLM 기권, 시스템은 계속 동작)
     llm_cache_minutes: float = 60.0
     # 증권사
+    strategy: str = "core_satellite"  # core_satellite (검증된 팩터 코어 + AI) / consensus (AI 합의만)
     broker: str = "none"  # none / kis
     kis_env: str = "demo"  # demo(모의투자) / real
 
@@ -111,6 +112,7 @@ class Settings:
             llm_daily_budget_usd=f("QUANT_LLM_DAILY_BUDGET_USD", cls.llm_daily_budget_usd),
             llm_cache_minutes=f("QUANT_LLM_CACHE_MINUTES", cls.llm_cache_minutes),
             broker=e.get("QUANT_BROKER", cls.broker),
+            strategy=e.get("QUANT_STRATEGY", cls.strategy),
             kis_env=e.get("KIS_ENV", cls.kis_env),
         )
 

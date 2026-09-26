@@ -21,11 +21,12 @@ import pandas as pd
 from .backtest.backtester import performance
 from .backtest.stats import deflated_sharpe
 from .data.collectors.marcap import KRXDataset
+from .engines.factors import price_factors
 from .engines.features import technical_features
 from .engines.prediction import MODEL_FACTORIES
 from .engines.regime import EXPOSURE_MULTIPLIER, Regime, regime_series
 
-TECH = ["ret_1", "ret_5", "ret_20", "vol_20", "vol_ratio", "rsi_14", "macd_hist", "bb_pctb",
+TECH = ["ret_1", "ret_5", "ret_20", "vol_20", "vol_ratio", "jump_sigma", "rsi_14", "macd_hist", "bb_pctb",
         "dist_ma20", "dist_ma60", "atr_14", "volume_z", "high_20_dist", "low_20_dist"]
 FACTORS = ["log_mcap", "turnover_20", "illiq_20", "mom_12_1", "mom_6_1", "dist_52w", "vol_60", "max_ret_20"]
 
@@ -38,10 +39,9 @@ def factor_features(b: pd.DataFrame) -> pd.DataFrame:
     f["log_mcap"] = np.log(b["marcap"].clip(lower=1))
     f["turnover_20"] = (b["amount"] / b["marcap"]).rolling(20).mean()
     f["illiq_20"] = np.log1p((lr.abs() / (b["amount"] / 1e8).clip(lower=1e-3)).rolling(20).mean())
-    f["mom_12_1"] = c.shift(21) / c.shift(252) - 1  # 최근 1개월 제외 12개월 모멘텀
-    f["mom_6_1"] = c.shift(21) / c.shift(126) - 1
-    f["dist_52w"] = c / c.rolling(252, min_periods=120).max() - 1
-    f["vol_60"] = lr.rolling(60).std()
+    pf = price_factors(c)  # 실시간 코어 전략과 같은 함수
+    for k in pf.columns:
+        f[k] = pf[k]
     f["max_ret_20"] = lr.rolling(20).max()  # 복권형 종목(최대수익) — 역효과 알려짐
     return f
 
@@ -146,11 +146,22 @@ def walk_forward_scores(p: Panel, cfg: StrategyConfig, embargo: int = 1) -> pd.D
     return scores.where(mask)
 
 
+def risk_veto_mask(p: Panel, vol_spike: float = 3.0, jump_sigma: float = 6.0) -> pd.DataFrame:
+    """실시간 Risk AI 의 하드 규칙 중 과거 데이터로 재현 가능한 것 (t 종가까지 정보).
+
+    - 단기 변동성 급증: 5일/20일 변동성 비율 ≥ vol_spike
+    - 가격 이상 급변: |당일 로그수익률| / 20일 변동성 ≥ jump_sigma
+    """
+    return ((p.feats["vol_ratio"] >= vol_spike) | (p.feats["jump_sigma"] >= jump_sigma)).fillna(False)
+
+
 def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
-             regime: pd.Series | None = None) -> dict:
+             regime: pd.Series | None = None, veto: pd.DataFrame | None = None) -> dict:
+    """veto: True 인 (날짜, 종목)은 신규 편입 금지 (보유 중이면 유지 — 실시간 Risk AI 와 동일)."""
     """t 종가 점수 → t+1 시가 체결, 시가→시가 수익률로 보유, 비중은 가격 변동에 따라 표류."""
     OP = p.open.to_numpy(float)
     S = scores.to_numpy(float)
+    V = veto.reindex(index=p.dates, columns=p.symbols, fill_value=False).to_numpy(bool) if veto is not None else None
     T, N = OP.shape
     C = p.close.to_numpy(float)
     CR = np.full((T, N), np.nan)
@@ -179,7 +190,7 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
                 for i in order:
                     if len(picks) >= cfg.top_k:
                         break
-                    if ok[i] and i not in picks:
+                    if ok[i] and i not in picks and not (V is not None and V[d - 1, i]):
                         picks.append(i)
                 g = cfg.gross
                 if cfg.regime_scaling and regime is not None:
