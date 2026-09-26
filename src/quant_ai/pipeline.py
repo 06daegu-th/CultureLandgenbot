@@ -474,10 +474,18 @@ class QuantAI:
         """
         cfg = cfg or CoreSatelliteConfig()
         ts = ts or datetime.now(UTC)
-        bars, _, _ = self.market_data(as_of)
+        bars, bench, _ = self.market_data(as_of)
         last_ts = max(b.index.max() for b in bars.values())
         universe = self.universe_at(last_ts)
         scores = core_scores(bars, universe, cfg.factor_weights)
+        # 추세 필터 (코어 리밸런싱 때만 판단 → 월 1회, 연구와 동일)
+        trend = {"below": False, "scale": 1.0}
+        if cfg.trend_ma and bench is not None and len(bench) >= cfg.trend_ma // 2:
+            ic = bench["close"]
+            ma = float(ic.rolling(cfg.trend_ma, min_periods=cfg.trend_ma // 2).mean().iloc[-1])
+            below = bool(ic.iloc[-1] < ma)
+            trend = {"below": below, "index": round(float(ic.iloc[-1]), 2), "ma": round(ma, 2),
+                     "scale": cfg.trend_off_scale if below else 1.0}
         if scores.empty:
             raise RuntimeError("팩터 점수를 계산할 데이터가 부족합니다 (종목당 최소 130거래일)")
         calendar = max(bars.values(), key=len).index
@@ -528,7 +536,18 @@ class QuantAI:
                                       d.consensus_id if d else None))
             return out
 
-        plan = build_plan(scores, prev_core, due(state), cfg, vetoes, exits, buys)
+        # 소액 계좌: 목표 금액보다 훨씬 비싼 종목은 1주도 못 산다 → 다음 순위로 대체
+        equity_est = self.load_portfolio(mode.value).equity(
+            {s: float(b["close"].iloc[-1]) for s, b in bars.items() if len(b)})
+        per_name = equity_est * cfg.core_weight / cfg.core_top_k
+        unaffordable = {s for s in scores.index[:cfg.core_buffer_k]
+                        if s in bars and float(bars[s]["close"].iloc[-1]) > per_name * cfg.affordability_slack}
+
+        def scale_for(st: dict) -> float:
+            return trend["scale"] if due(st) or "trend_scale" not in st else st["trend_scale"]
+
+        plan = build_plan(scores, prev_core, due(state), cfg, vetoes, exits, buys,
+                          core_scale=scale_for(state), unaffordable=unaffordable)
         if quotes is None and mode is Mode.LIVE and self.settings.broker == "kis":
             # 실제 장부와 측정용 가상 장부가 같은 실시간 가격을 쓰도록 한 번만 조회
             from .trading.kis import KISBroker, KISClient
@@ -539,7 +558,8 @@ class QuantAI:
         fills = self.trade(decisions, mode, ts=ts, quotes=dict(quotes) if quotes else None,
                            signals=to_signals(plan))
         if plan.core_rebalanced:
-            state = {"core": plan.core, "last_rebalance": str(last_ts), "rebalances": state.get("rebalances", 0) + 1}
+            state = {"core": plan.core, "last_rebalance": str(last_ts), "rebalances": state.get("rebalances", 0) + 1,
+                     "trend_scale": trend["scale"]}
         else:
             state = {**state, "core": plan.core}
         ops.set_state(self.engine, state_key, state)
@@ -549,6 +569,8 @@ class QuantAI:
         ops.set_state(self.engine, f"cs-plan:{mode.value}", {
             **pd_plan, "as_of": str(last_ts), "ts": ts.isoformat(), "mode": mode.value,
             "universe_size": len(scores), "config": dict(cfg.__dict__),
+            "trend": {**trend, "applied_scale": state.get("trend_scale", 1.0)},
+            "unaffordable": sorted(unaffordable),
             "last_rebalance": state.get("last_rebalance"), "rebalances": state.get("rebalances", 0),
             "ai": {"analyzed": len(decisions), "buys": len(buys), "vetoes": len(vetoes), "exits": len(exits)}})
 
@@ -556,12 +578,14 @@ class QuantAI:
             for book, (use_veto, use_sat) in self.ATTRIBUTION_BOOKS.items():
                 bst = ops.get_state(self.engine, f"cs:{book}")
                 bplan = build_plan(scores, bst.get("core", []), due(bst), cfg, vetoes, exits, buys,
-                                   use_veto=use_veto, use_satellite=use_sat)
+                                   use_veto=use_veto, use_satellite=use_sat, core_scale=scale_for(bst),
+                                   unaffordable=unaffordable)
                 self.trade(decisions, Mode.PAPER, ts=ts, quotes=dict(quotes) if quotes else None,
                            signals=to_signals(bplan), book=book)
                 ops.set_state(self.engine, f"cs:{book}", {
                     "core": bplan.core,
-                    "last_rebalance": str(last_ts) if bplan.core_rebalanced else bst.get("last_rebalance")})
+                    "last_rebalance": str(last_ts) if bplan.core_rebalanced else bst.get("last_rebalance"),
+                    "trend_scale": trend["scale"] if bplan.core_rebalanced else bst.get("trend_scale", 1.0)})
         if plan.exits:
             self.notifier.send(f"[{mode.value}] AI 긴급 청산: " + ", ".join(f"{k}({v})" for k, v in plan.exits.items()),
                                "warn")

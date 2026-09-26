@@ -27,6 +27,11 @@ class CoreSatelliteConfig:
     satellite_k: int = 5
     satellite_min_confidence: float = 60.0
     shortlist_k: int = 40  # AI 가 분석할 후보 수 (LLM 비용 통제)
+    # 추세 필터: 코어 리밸런싱 시점에 지수가 N일 이동평균 아래면 코어 비중을 trend_off_scale 배로 축소.
+    # 실데이터 사전등록 시험 통과 (dev MDD -55% → -43%, Sharpe 0.20 → 0.25; docs/RESEARCH_KRX.md 8장)
+    trend_ma: int | None = 200
+    trend_off_scale: float = 0.5
+    affordability_slack: float = 1.5  # 1주 가격이 목표 금액의 이 배수를 넘으면 매수 불가로 보고 다음 순위로
     factor_weights: dict = field(default_factory=lambda: dict(CORE_FACTOR_WEIGHTS))
 
 
@@ -64,12 +69,14 @@ def core_scores(bars: dict[str, pd.DataFrame], universe: list[str] | None,
 def build_plan(scores: pd.Series, prev_core: list[str], rebalance_due: bool, cfg: CoreSatelliteConfig,
                vetoes: dict[str, str] | None = None, exits: dict[str, str] | None = None,
                ai_buys: list[dict] | None = None, use_veto: bool = True, use_satellite: bool = True,
-               core_weight: float | None = None) -> Plan:
+               core_weight: float | None = None, core_scale: float = 1.0,
+               unaffordable: set[str] | None = None) -> Plan:
     """vetoes: {종목: 사유} 신규 편입 거부 / exits: {종목: 사유} 보유 중 즉시 제외 /
     ai_buys: [{symbol, confidence, prob_up, consensus_id}] 합의 BUY (신뢰도 내림차순 정렬 불필요)."""
     vetoes = vetoes if use_veto else {}
     exits = exits if use_veto else {}
     vetoes, exits = vetoes or {}, exits or {}
+    unaffordable = unaffordable or set()
     ranks = {s: i for i, s in enumerate(scores.index)}
     plan = Plan(core=[], core_rebalanced=False, weights={}, ranks=ranks,
                 scores={k: round(float(v), 4) for k, v in scores.items()})
@@ -79,6 +86,9 @@ def build_plan(scores: pd.Series, prev_core: list[str], rebalance_due: bool, cfg
             if len(core) >= cfg.core_top_k:
                 break
             if s in core or s in exits:
+                continue
+            if s in unaffordable:  # 소액 계좌: 1주도 살 수 없는 종목은 다음 순위로
+                plan.notes.append(f"{s} 1주 가격이 목표 금액 초과 → 다음 순위로 대체")
                 continue
             if s in vetoes:
                 plan.vetoed[s] = vetoes[s]
@@ -104,8 +114,10 @@ def build_plan(scores: pd.Series, prev_core: list[str], rebalance_due: bool, cfg
     cw = cfg.core_weight if core_weight is None else core_weight
     if not use_satellite:
         cw = 1.0 if core_weight is None else core_weight
+    if core_scale < 1.0:
+        plan.notes.append(f"추세 필터: 지수가 이동평균 아래 → 코어 비중 {core_scale:.0%} 로 축소 (나머지 현금)")
     for s in plan.core:
-        plan.weights[s] = cw / max(len(plan.core), 1)
+        plan.weights[s] = cw * core_scale / max(len(plan.core), 1)
 
     if use_satellite and ai_buys:
         sat_w = (1 - cw) / cfg.satellite_k

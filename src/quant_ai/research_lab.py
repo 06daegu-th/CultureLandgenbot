@@ -93,6 +93,10 @@ class StrategyConfig:
     regime_scaling: bool = False
     vol_target: float | None = None  # 연 변동성 목표 (예: 0.15). 보유 묶음의 최근 60일 변동성이 크면 비중 축소
     vol_lookback: int = 60
+    max_corr: float | None = None  # 이미 고른 종목과 상관계수가 이보다 높은 후보는 건너뜀 (쏠림 방지)
+    corr_lookback: int = 120
+    trend_ma: int | None = None  # 지수가 N일 이동평균 아래면 노출을 trend_off_gross 로 축소 (월 1회 판단)
+    trend_off_gross: float = 0.5
     train_window: int = 750
     retrain_every: int = 20
     min_train_dates: int = 250
@@ -156,9 +160,13 @@ def risk_veto_mask(p: Panel, vol_spike: float = 3.0, jump_sigma: float = 6.0) ->
 
 
 def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
-             regime: pd.Series | None = None, veto: pd.DataFrame | None = None) -> dict:
-    """veto: True 인 (날짜, 종목)은 신규 편입 금지 (보유 중이면 유지 — 실시간 Risk AI 와 동일)."""
-    """t 종가 점수 → t+1 시가 체결, 시가→시가 수익률로 보유, 비중은 가격 변동에 따라 표류."""
+             regime: pd.Series | None = None, veto: pd.DataFrame | None = None,
+             index_close: pd.Series | None = None) -> dict:
+    """t 종가 점수 → t+1 시가 체결, 시가→시가 수익률로 보유, 비중은 가격 변동에 따라 표류.
+
+    veto: True 인 (날짜, 종목)은 신규 편입 금지 (보유 중이면 유지 — 실시간 Risk AI 와 동일).
+    index_close: trend_ma 사용 시 지수 종가 (p.dates 로 정렬).
+    """
     OP = p.open.to_numpy(float)
     S = scores.to_numpy(float)
     V = veto.reindex(index=p.dates, columns=p.symbols, fill_value=False).to_numpy(bool) if veto is not None else None
@@ -172,6 +180,22 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
     buy_cost = (costs.commission_bps + costs.slippage_bps) / 1e4
     sell_cost = buy_cost + costs.sell_tax_bps / 1e4
     first = int(np.argmax(np.isfinite(S).any(axis=1)))
+    below_trend = None
+    if cfg.trend_ma and index_close is not None:
+        ic = index_close.reindex(p.dates).ffill()
+        below_trend = (ic < ic.rolling(cfg.trend_ma, min_periods=cfg.trend_ma // 2).mean()).to_numpy()
+
+    def too_correlated(i: int, picks: list[int], d: int) -> bool:
+        if not cfg.max_corr or not picks or d <= cfg.corr_lookback:
+            return False
+        win = np.nan_to_num(CR[d - cfg.corr_lookback:d], nan=0.0)
+        x = win[:, i]
+        if x.std() == 0:
+            return False
+        ys = win[:, picks]
+        sd = ys.std(axis=0)
+        corr = ((x - x.mean())[:, None] * (ys - ys.mean(axis=0))).mean(axis=0) / (x.std() * np.where(sd > 0, sd, np.inf))
+        return bool(np.max(corr) > cfg.max_corr)
     w = np.zeros(N)
     value = 1.0
     values, dates, turnovers, exposures = [], [], [], []
@@ -190,9 +214,12 @@ def simulate(p: Panel, scores: pd.DataFrame, cfg: StrategyConfig, costs: Costs,
                 for i in order:
                     if len(picks) >= cfg.top_k:
                         break
-                    if ok[i] and i not in picks and not (V is not None and V[d - 1, i]):
+                    if ok[i] and i not in picks and not (V is not None and V[d - 1, i]) \
+                            and not too_correlated(i, picks, d):
                         picks.append(i)
                 g = cfg.gross
+                if below_trend is not None and below_trend[d - 1]:
+                    g *= cfg.trend_off_gross
                 if cfg.regime_scaling and regime is not None:
                     r = regime.iloc[d - 1] if d - 1 < len(regime) else None
                     g *= EXPOSURE_MULTIPLIER[Regime(r)] if isinstance(r, str) else 1.0
