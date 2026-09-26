@@ -71,6 +71,7 @@ class Settings:
     # 증권사
     strategy: str = "core_satellite"  # core_satellite (검증된 팩터 코어 + AI) / consensus (AI 합의만)
     broker: str = "none"  # none / kis
+    core_only: bool = False  # QUANT_CORE_ONLY=true → 코어-위성 전략에서 AI 오버레이 끔 (코어 100%)
     kis_env: str = "demo"  # demo(모의투자) / real
 
     @classmethod
@@ -120,6 +121,7 @@ class Settings:
             broker=e.get("QUANT_BROKER", cls.broker),
             strategy=e.get("QUANT_STRATEGY", cls.strategy),
             kis_env=e.get("KIS_ENV", cls.kis_env),
+            core_only=e.get("QUANT_CORE_ONLY", "").lower() == "true",
         )
 
     def assert_live_allowed(self, champion_ready: bool) -> None:

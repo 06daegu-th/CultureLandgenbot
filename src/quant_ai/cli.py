@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from datetime import UTC, datetime, timedelta
 
@@ -219,7 +220,9 @@ def _names(app):
 
 def cmd_cycle(args):
     app = _app(args)
-    r = app.run_core_satellite(Mode(args.mode))
+    from .strategy.core_satellite import CoreSatelliteConfig
+    use_ai = not (args.core_only or app.settings.core_only)
+    r = app.run_core_satellite(Mode(args.mode), cfg=CoreSatelliteConfig(use_ai=use_ai))
     _print_plan(r["plan"], _names(app))
     print(f"체결 {len(r['fills'])}건")
 
@@ -304,7 +307,11 @@ def load_dotenv(path: str = ".env") -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        v = v.strip().strip('"').strip("'")
+        v = v.strip()
+        if v[:1] in ('"', "'"):
+            v = v[1:].split(v[0], 1)[0]  # 따옴표 안은 그대로 (# 포함 가능)
+        else:
+            v = re.split(r"\s+#", v, maxsplit=1)[0].strip()  # 줄 끝 주석 제거: KIS_ENV=demo  # 모의투자
         if v:
             os.environ.setdefault(k.strip(), v)
 
@@ -370,6 +377,7 @@ def main(argv: list[str] | None = None) -> None:
     ck.set_defaults(fn=cmd_checkup)
     cy = sub.add_parser("cycle", help="코어-위성 한 사이클 실행 (팩터 코어 + 멀티 AI)")
     cy.add_argument("--mode", default="paper", choices=["paper", "shadow", "live"])
+    cy.add_argument("--core-only", action="store_true", help="AI 오버레이 없이 팩터 코어만 (QUANT_CORE_ONLY=true 와 같음)")
     cy.set_defaults(fn=cmd_cycle)
     rp = sub.add_parser("replay", help="최근 N 거래일 코어-위성 재생 (가상 장부 + AI 기여도)")
     rp.add_argument("--days", type=int, default=60)

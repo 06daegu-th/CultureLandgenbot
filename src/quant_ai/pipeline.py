@@ -377,6 +377,10 @@ class QuantAI:
         with ops.trading_lock(self.engine, f"trade-{name}", Path(self.settings.artifacts_dir) / "locks"):
             return self._trade(decisions, mode, ts or datetime.now(UTC), quotes, signals, book)
 
+    def _live_capital_capped(self) -> bool:
+        """소액 상한(QUANT_LIVE_MAX_CAPITAL)은 실제 돈에만 적용. 모의투자(KIS_ENV=demo)는 계좌 전체로 운용."""
+        return not (self.settings.broker == "kis" and self.settings.kis_env == "demo")
+
     def _live_broker(self, pf: Portfolio):
         st = self.settings
         if st.broker != "kis":
@@ -423,8 +427,8 @@ class QuantAI:
         if broker is None:
             broker = PaperBroker(pf, costs) if mode is Mode.PAPER else ShadowBroker(pf, costs)
         budget_ratio = 1.0
-        if mode is Mode.LIVE and equity > 0:
-            budget_ratio = min(1.0, st.live_max_capital / equity)  # 소액 상한만큼만 운용
+        if mode is Mode.LIVE and equity > 0 and self._live_capital_capped():
+            budget_ratio = min(1.0, st.live_max_capital / equity)  # 실전 계좌: 소액 상한만큼만 운용
 
         risk = RiskEngine(st.risk)
         risk.kill_switch = self.kill_switch_on()
@@ -549,8 +553,9 @@ class QuantAI:
         같은 입력으로 가상 장부 3개도 굴린다 → AI 가 실제로 가치를 더했는지 측정:
           attr-core: AI 없음 / attr-veto: 코어+AI 거부권 / attr-full: 코어+거부권+위성
         """
-        cfg = cfg or CoreSatelliteConfig()
+        cfg = cfg or CoreSatelliteConfig(use_ai=not self.settings.core_only)
         ts = ts or datetime.now(UTC)
+        attribution = attribution and cfg.use_ai  # 코어 전용이면 세 장부가 같으므로 측정 불필요
         bars, bench, _ = self.market_data(as_of)
         last_ts = max(b.index.max() for b in bars.values())
         universe = self.universe_at(last_ts)
@@ -568,7 +573,7 @@ class QuantAI:
         prev_core = state.get("core", [])
         shortlist = list(dict.fromkeys([*scores.index[:cfg.shortlist_k], *prev_core,
                                         *[s for s in held if s in bars]]))
-        decisions = self.decide(as_of=as_of, symbols=shortlist, scenarios=False)
+        decisions = self.decide(as_of=as_of, symbols=shortlist, scenarios=False) if cfg.use_ai else []
         vetoes, exits, buys = self._ai_overlay(decisions)
         by_sym = {d.symbol: d for d in decisions}
 
@@ -599,13 +604,18 @@ class QuantAI:
         # 소액 계좌: 목표 금액보다 훨씬 비싼 종목은 1주도 못 산다 → 다음 순위로 대체
         equity_est = self.load_portfolio(mode.value).equity(
             {s: float(b["close"].iloc[-1]) for s, b in bars.items() if len(b)})
+        if mode is Mode.LIVE and self._live_capital_capped():
+            equity_est = min(equity_est, self.settings.live_max_capital)  # 실제로 운용할 금액 기준
         unaffordable = self._unaffordable(scores, bars, equity_est, cfg)
 
         def scale_for(st: dict) -> float:
             return trend["scale"] if due(st) or "trend_scale" not in st else st["trend_scale"]
 
         plan = build_plan(scores, prev_core, due(state), cfg, vetoes, exits, buys,
+                          use_veto=cfg.use_ai, use_satellite=cfg.use_ai,
                           core_scale=scale_for(state), unaffordable=unaffordable)
+        if not cfg.use_ai:
+            plan.notes.append("코어 전용 모드 (AI 오버레이 꺼짐 · 코어 100%)")
         if quotes is None and mode is Mode.LIVE and self.settings.broker == "kis":
             # 실제 장부와 측정용 가상 장부가 같은 실시간 가격을 쓰도록 한 번만 조회
             from .trading.kis import KISBroker, KISClient

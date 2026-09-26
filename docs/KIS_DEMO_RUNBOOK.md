@@ -27,6 +27,8 @@ KIS_APP_KEY=...                   # 모의투자 App Key
 KIS_APP_SECRET=...
 KIS_ACCOUNT=12345678-01
 QUANT_STRATEGY=core_satellite
+# 권장 시작: AI 오버레이 없이 팩터 코어 100% (LLM 비용 0). AI 는 나중에 켠다
+QUANT_CORE_ONLY=true
 QUANT_MARCAP_DIR=/data/marcap/data  # 장 마감 후 자동 git pull + DB 갱신
 QUANT_DISCORD_WEBHOOK=https://...   # 체결·긴급청산·장부불일치·작업실패 알림 (권장)
 ```
@@ -40,8 +42,25 @@ QUANT_DISCORD_WEBHOOK=https://...   # 체결·긴급청산·장부불일치·작
 quant-ai collect krx --marcap-dir /data/marcap/data --years 3 --top 100   # 실제 KRX 데이터 적재
 quant-ai kis-check                    # 토큰 → 잔고 → 삼성전자 현재가/호가 (주문 없음)
 quant-ai kis-check --test-order       # 모의 전용: 체결 안 될 가격 1주 주문 → 조회 → 즉시 취소
-quant-ai cycle --mode live            # 코어-위성 1사이클: 잔고대조 → AI 분석 → 리스크 → 주문 → 체결확인
+quant-ai cycle --mode live --core-only   # 코어 전용 1사이클: 잔고대조 → 팩터 코어 → 리스크 → 주문 → 체결확인
+quant-ai cycle --mode live            # (나중에) 코어-위성: + AI 거부권·위성·AI 기여도 장부
 ```
+
+`QUANT_LIVE_MAX_CAPITAL`(소액 상한)은 **실전 계좌에만** 적용된다. 모의투자는 계좌 전체(예: 1억 원)로 운용한다.
+
+### 리허설 결과 (실제 KRX 데이터 + 로컬 가짜 KIS 서버, 2026-09-23 종가 기준, 모의계좌 1억 원)
+
+실제 모의계좌 대신 가짜 서버를 쓴 것 외에는 위 명령과 똑같은 경로다 (`tests/kis_mock.py`).
+
+| 단계 | 결과 |
+|---|---|
+| `kis-check --test-order` | 토큰 → 잔고 → 현재가·호가 → 체결 안 될 가격 1주 주문 → 조회 → 취소 정상 |
+| 1차 `cycle --core-only` | 코어 20종목 리밸런싱, 20건 체결, 투자 비중 98.5% (현금 153만 원) |
+| 2차 `cycle --core-only` | 이미 목표 비중 → 추가 주문 0건 (중복 매수 없음) |
+| 장부 대조 | DB 장부 = 증권사 잔고, 모의 TR(`VTTC0012U` 매수 · `VTTC0013U` 취소)만 사용 |
+
+코어 20종목: 신한지주, 하나금융지주, KT&G, KB금융, S-Oil, 우리금융지주, 에이피알, 한국타이어앤테크놀로지, GS, 대한항공,
+DB손해보험, 셀트리온, 아모레퍼시픽, 삼성화재, LG유플러스, KT, 가온전선, 코웨이, LG, HMM (KOSPI ≥ 200일선 → 축소 없음).
 
 `cycle` 출력의 코어 20종목과 증권사 앱(모의투자)의 보유 종목이 일치하는지 눈으로 확인한다.
 
@@ -91,7 +110,7 @@ quant-ai run --mode live            # KIS_ENV=demo 면 실전 안전장치 없�
 
 - [ ] 모의투자 **최소 3개월** 무사고 운영 (작업 실패·장부 불일치·주문 오류 알림 원인 모두 해소)
 - [ ] 모의 실측 슬리피지로 백테스트 재실행 → 여전히 양의 Sharpe
-- [ ] AI 기여도 장부: `attr-veto`·`attr-full` 이 `attr-core` 대비 나쁘지 않음 (나쁘면 위성/거부권 끄고 코어만)
+- [ ] (AI 를 켤 경우만) AI 기여도 장부: `attr-veto`·`attr-full` 이 `attr-core` 대비 6개월 이상 나쁘지 않음 — 아니면 `QUANT_CORE_ONLY=true` 유지
 - [ ] `QUANT_LIVE_ENABLED=true`, `QUANT_LIVE_CONFIRM=I_UNDERSTAND_REAL_MONEY`, `QUANT_LIVE_MAX_CAPITAL`=감당 가능한 소액
 - [ ] Shadow 게이트를 통과한 champion 모델 존재 (Quant 애널리스트용)
 - [ ] 알림 채널 연결, 킬스위치 동작 확인

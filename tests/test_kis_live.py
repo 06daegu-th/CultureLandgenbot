@@ -139,3 +139,57 @@ def test_scheduler_trades_only_in_krx_window():
         calls.clear()
         job.fn(kst(h, m))
         assert bool(calls) is expect, (h, m)
+
+
+def test_core_only_live_cycle_skips_ai_and_attribution(live, monkeypatch):
+    """코어 전용: AI 분석(LLM) 호출 없음, 위성·거부권 없음, 코어가 100% (추세 필터 축소만 적용)."""
+    from quant_ai import ops
+    from quant_ai.strategy.core_satellite import CoreSatelliteConfig
+    app, mock = live
+    app.settings = replace(app.settings, core_only=True)
+    monkeypatch.setattr(app, "decide", lambda *a, **k: pytest.fail("코어 전용인데 AI 분석 호출"))
+    r = app.run_core_satellite(Mode.LIVE, ts=datetime.now(UTC),
+                               cfg=CoreSatelliteConfig(core_top_k=4, core_buffer_k=6, use_ai=False))
+    p = r["plan"]
+    assert len(p.core) == 4 and not p.satellite and not p.vetoed
+    scale = ops.get_state(app.engine, "cs:live")["trend_scale"]
+    assert sum(p.weights.values()) == pytest.approx(scale)  # 위성 몫 없이 코어 100% × 추세 배수
+    assert any("코어 전용" in n for n in p.notes)
+    assert not ops.get_state(app.engine, "cs:attr-core")  # 가상 장부 측정 생략
+    held = {c for c, v in mock.positions.items() if v[0] > 0}
+    assert held and held <= set(p.core)
+    assert all(c[2] is None or c[2].startswith(("V", "F")) for c in mock.calls)  # 모의 TR 만
+
+
+def test_core_only_from_env():
+    assert Settings.from_env({"QUANT_CORE_ONLY": "true"}).core_only
+    assert not Settings.from_env({}).core_only
+
+
+def test_demo_account_is_not_limited_by_real_money_cap(live):
+    """QUANT_LIVE_MAX_CAPITAL(실전 소액 상한, 기본 100만원)이 모의계좌 운용 규모를 1% 로 줄이던 문제 회귀 방지."""
+    from quant_ai.strategy.core_satellite import CoreSatelliteConfig
+    app, mock = live
+    assert app.settings.live_max_capital < mock.cash / 5
+    app.run_core_satellite(Mode.LIVE, ts=datetime.now(UTC),
+                           cfg=CoreSatelliteConfig(core_top_k=4, core_buffer_k=6, use_ai=False))
+    invested = sum(v[0] * mock.prices[c] for c, v in mock.positions.items())
+    # 4종목 × 종목 한도 10% ≈ 40% (수정 전에는 상한 100만/1,000만 = 10% 로 묶였다)
+    assert invested / (invested + mock.cash) > 0.3
+    app.settings = replace(app.settings, kis_env="real")
+    assert app._live_capital_capped()
+
+
+def test_dotenv_strips_inline_comments(tmp_path, monkeypatch):
+    from quant_ai.cli import load_dotenv
+    f = tmp_path / ".env"
+    f.write_text('KIS_ENV=demo                      # 모의투자\nQUANT_CORE_ONLY=true  # 코어만\n'
+                 'X_TOKEN="ab#cd"  # 따옴표 안의 # 는 유지\nX_URL=https://a.b/c#frag\n', encoding="utf-8")
+    for k in ("KIS_ENV", "QUANT_CORE_ONLY", "X_TOKEN", "X_URL"):
+        monkeypatch.delenv(k, raising=False)
+    load_dotenv(str(f))
+    import os
+    assert os.environ["KIS_ENV"] == "demo" and os.environ["QUANT_CORE_ONLY"] == "true"
+    assert os.environ["X_TOKEN"] == "ab#cd" and os.environ["X_URL"] == "https://a.b/c#frag"
+    for k in ("KIS_ENV", "QUANT_CORE_ONLY", "X_TOKEN", "X_URL"):
+        monkeypatch.delenv(k, raising=False)

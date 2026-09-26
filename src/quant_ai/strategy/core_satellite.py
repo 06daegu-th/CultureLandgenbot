@@ -31,6 +31,8 @@ class CoreSatelliteConfig:
     # 실데이터 사전등록 시험 통과 (dev MDD -55% → -43%, Sharpe 0.20 → 0.25; docs/RESEARCH_KRX.md 8장)
     trend_ma: int | None = 200
     trend_off_scale: float = 0.5
+    # False = 코어 전용: AI 분석(LLM 호출)·거부권·위성 없이 팩터 코어가 100%. AI 기여도가 검증되기 전 실전 기본 권장
+    use_ai: bool = True
     affordability_slack: float = 1.5  # 1주 가격이 목표 금액의 이 배수를 넘으면 매수 불가로 보고 다음 순위로
     factor_weights: dict = field(default_factory=lambda: dict(CORE_FACTOR_WEIGHTS))
 
