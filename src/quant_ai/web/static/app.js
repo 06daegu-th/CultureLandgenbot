@@ -472,7 +472,7 @@ async function viewCore(el) {
       <div class="stat"><div class="l">유니버스</div><div class="big num">${p.universe_size}</div><div class="small dim">전월 말 시총 상위 (point-in-time)</div></div></div>
     <div class="small muted" style="margin-top:10px">${tr.index ? `추세 필터: KOSPI ${num(tr.index)} ${tr.below ? "&lt;" : "≥"} 200일선 ${num(tr.ma)} → 코어 비중 ×${tr.applied_scale ?? tr.scale} · ` : ""}${(p.notes || []).map(esc).join(" · ")}</div></div>
   ${card("AI 기여도 측정 <span class='small dim'>같은 가격·같은 코어로 굴린 가상 장부 비교 — AI 가 수익을 더했는가?</span>",
-    `${bookRows ? `<table><thead><tr><th>장부</th><th class="r">수익률</th><th class="r">MDD</th><th class="r">코어만 대비</th><th class="r">기간</th></tr></thead><tbody>${bookRows}</tbody></table>` : empty()}
+    `${bookRows ? `<div class="scroll"><table><thead><tr><th>장부</th><th class="r">수익률</th><th class="r">MDD</th><th class="r">코어만 대비</th><th class="r">기간</th></tr></thead><tbody>${bookRows}</tbody></table></div>` : empty()}
      <div id="cs-chart" class="chart" style="margin-top:12px"></div>
      <div class="small dim" style="margin-top:8px">기간이 짧으면 차이는 대부분 우연입니다. 최소 수개월 누적 후 판단하세요 (LLM 은 과거로 백테스트할 수 없어 전진 성과만 유효).</div>`)}
   <div class="grid g-2">
@@ -497,7 +497,7 @@ function healthCard(h) {
   const e = h.expectations || {};
   return card(`전략 건강검진 <span class="small dim">실제 성과가 16년 백테스트 범위 안인가 · ${esc(h.mode || "")} ${h.days ?? 0}일</span>`,
     `<div class="lesson" style="border-left-color:${color};margin-bottom:12px"><b>${H_ICON[h.status]} ${H_LABEL[h.status] || esc(h.status)}</b> — ${esc(h.action || h.error || "")}</div>
-     ${rows ? `<table><thead><tr><th>항목</th><th class="r">현재</th><th>과거 기준</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+     ${rows ? `<div class="scroll"><table><thead><tr><th>항목</th><th class="r">현재</th><th>과거 기준</th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}
      ${e.cagr != null ? `<div class="small dim" style="margin-top:8px">기대치 참고: 과거 연평균 ${(e.cagr * 100).toFixed(1)}% · 1년 보유 시 플러스 ${Math.round(e.positive_1y_share * 100)}% · KOSPI 초과 ${Math.round(e.beat_kospi_1y_share * 100)}% (1년 단위로는 절반 가까이 지거나 잃습니다)</div>` : ""}`,
     `<button class="btn-sm" id="health-refresh">다시 검사</button>`);
 }
@@ -523,7 +523,7 @@ async function viewOrders(el) {
           <li><span class="chk">③</span>지정가를 넘는 급변이면 그날은 건너뛰고 다음 날 다시 실행</li>
           <li><span class="chk">④</span>입력한 값은 이 브라우저에만 저장됩니다</li></ul>
       </div></div>`)}
-  <div id="os-result"></div>`;
+  <div id="os-result" style="display:grid;gap:16px;min-width:0"></div>`;
   $("#os-run").onclick = async () => {
     const cash = $("#os-cash").value.replace(/[, 원]/g, "");
     const holdings = $("#os-holdings").value;

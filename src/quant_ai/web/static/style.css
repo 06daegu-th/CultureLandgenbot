@@ -87,7 +87,7 @@ main { min-width: 0; }
 .kill.on { color: #fff; background: var(--bad); border-color: var(--bad); box-shadow: 0 0 0 4px rgba(239,68,68,.18); }
 .icon-btn { background: var(--panel); border: 1px solid var(--line-2); color: var(--text); border-radius: 8px; padding: 6px 9px; cursor: pointer; }
 
-.view { padding: 18px 22px 40px; display: grid; gap: 16px; }
+.view { padding: 18px 22px 40px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .grid { display: grid; gap: 16px; }
 .g-top { grid-template-columns: 1.45fr 1.05fr 1.1fr; }
 .g-mid { grid-template-columns: 1.45fr 1.05fr 1.1fr; }
@@ -96,8 +96,8 @@ main { min-width: 0; }
 .g-3 { grid-template-columns: repeat(3, 1fr); }
 .g-21 { grid-template-columns: 2fr 1fr; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; min-width: 0; }
-.card-h { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.card-h h3 { margin: 0; font-size: 15px; font-weight: 700; white-space: nowrap; }
+.card-h { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.card-h h3 { margin: 0; font-size: 15px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
 .card-h .right { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 .tabs { display: inline-flex; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
 .tabs button { background: none; border: 0; color: var(--muted); font: 600 12px inherit; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
