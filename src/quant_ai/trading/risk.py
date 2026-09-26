@@ -27,10 +27,11 @@ class RiskEngine:
         self._day_start_equity = 0.0
         self._orders_today = 0
 
-    def start_day(self, day: date, equity: float) -> None:
+    def start_day(self, day: date, equity: float, orders_so_far: int = 0) -> None:
+        """orders_so_far: 오늘 이미 낸 주문 수 (프로세스 재시작/여러 사이클에 걸쳐 한도 유지)."""
         self._day = day
         self._day_start_equity = equity
-        self._orders_today = 0
+        self._orders_today = orders_so_far
 
     def daily_pnl_pct(self, equity: float) -> float:
         if self._day_start_equity <= 0:

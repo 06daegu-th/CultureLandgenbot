@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -14,6 +14,7 @@ from ..data.models import (
     ConsensusRecord,
     Disclosure,
     Instrument,
+    JobRun,
     JournalEntry,
     MacroObservation,
     ModelRecord,
@@ -56,6 +57,7 @@ class DashboardAPI:
     def __init__(self, app):
         self.app = app
         self.engine = app.engine
+        self._cache: tuple[float, dict] | None = None
 
     # ------------------------------------------------------------------ 공통
     def _instruments(self, s):
@@ -72,8 +74,18 @@ class DashboardAPI:
 
     # ------------------------------------------------------------------ 대시보드
     def dashboard(self) -> dict:
+        """여러 탭/사용자가 동시에 열어도 DB 를 두드리지 않도록 10초 캐시."""
+        import time
+        now = time.monotonic()
+        if self._cache and now - self._cache[0] < 10:
+            return self._cache[1]
+        out = self._dashboard()
+        self._cache = (now, out)
+        return out
+
+    def _dashboard(self) -> dict:
         app = self.app
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with session_scope(self.engine) as s:
             inst = self._instruments(s)
             demo = s.scalar(select(func.count()).select_from(PriceBar).where(PriceBar.source == "synthetic-demo")) > 0
@@ -198,6 +210,12 @@ class DashboardAPI:
                        "mdd": _f((m.metrics or {}).get("strategy", {}).get("max_drawdown")),
                        "accuracy": _f((m.metrics or {}).get("prediction", {}).get("accuracy")),
                        "ic": _f((m.metrics or {}).get("prediction", {}).get("ic")),
+                       "psr": _f((m.metrics or {}).get("strategy", {}).get("psr"), 3),
+                       "dsr": _f((m.metrics or {}).get("dsr"), 3),
+                       "sharpe_ci": (m.metrics or {}).get("strategy", {}).get("sharpe_ci95"),
+                       "stress_sharpe": _f((m.metrics or {}).get("stress", {}).get("sharpe"), 2),
+                       "benchmark_return": _f((m.metrics or {}).get("benchmark", {}).get("total_return")),
+                       "calibration": (m.metrics or {}).get("calibration"),
                        "shadow": m.shadow_metrics}
                       for m in s.scalars(select(ModelRecord).order_by(ModelRecord.created_at.desc()).limit(20))]
             last_bar = s.scalar(select(func.max(PriceBar.ts)))
@@ -298,6 +316,40 @@ class DashboardAPI:
             "details": details, "scenario": scen.payload if scen else None, "news": news, "similar": similar,
             "history": [{"ts": _ts(h.as_of), "action": h.action, "prob_up": _f(h.prob_up), "confidence": h.confidence,
                          "correct": h.correct, "realized": _f(h.realized_return)} for h in hist],
+        }
+
+    # ------------------------------------------------------------------ 운영
+    def health(self) -> dict:
+        """DB 연결 + 최근 작업 실패 여부. 외부 노출용이므로 상세 정보는 넣지 않는다."""
+        try:
+            with session_scope(self.engine) as s:
+                s.execute(select(1))
+                recent_fail = s.scalar(select(func.count()).select_from(JobRun).where(
+                    JobRun.ok.is_(False), JobRun.started_at >= datetime.now(UTC) - pd.Timedelta(hours=1)))
+            return {"ok": True, "db": "ok", "recent_job_failures": int(recent_fail or 0),
+                    "kill_switch": self.app.kill_switch_on()}
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "db": "error"}
+
+    def ops(self) -> dict:
+        from ..analysts.guard import llm_usage_summary
+        from ..ops import get_state
+        with session_scope(self.engine) as s:
+            jobs = {}
+            for r in s.scalars(select(JobRun).order_by(JobRun.started_at.desc()).limit(300)):
+                j = jobs.setdefault(r.job, {"job": r.job, "last_run": _ts(r.started_at), "ok": r.ok,
+                                             "error": r.error, "runs": 0, "failures": 0})
+                j["runs"] += 1
+                j["failures"] += int(r.ok is False)
+        return {
+            "jobs": sorted(jobs.values(), key=lambda x: x["job"]),
+            "llm": llm_usage_summary(self.engine),
+            "llm_budget_usd": self.app.settings.llm_daily_budget_usd,
+            "data_quality": get_state(self.engine, "data_quality"),
+            "kill_switch": get_state(self.engine, "kill_switch"),
+            "notifications": [{"level": lv, "message": m} for lv, m in self.app.notifier.sent[-20:]][::-1],
+            "notifier_enabled": self.app.notifier.enabled,
+            "broker": self.app.settings.broker, "kis_env": self.app.settings.kis_env,
         }
 
     def reviews(self, limit: int = 10) -> list[dict]:

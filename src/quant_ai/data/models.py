@@ -276,3 +276,43 @@ class MemoryDoc(Base):
     embedding: Mapped[list] = mapped_column(JSONType)
     embed_model: Mapped[str] = mapped_column(String(64))
     meta: Mapped[dict | None] = mapped_column(JSONType)
+
+
+# ------------------------------------------------------------------ 운영
+class SystemState(Base):
+    """여러 프로세스(스케줄러·웹·CLI)가 공유하는 운영 상태 (킬스위치 등)."""
+
+    __tablename__ = "system_state"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSONType)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class JobRun(Base):
+    __tablename__ = "job_runs"
+    id: Mapped[int] = mapped_column(BigId, primary_key=True)
+    job: Mapped[str] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ok: Mapped[bool | None] = mapped_column(Boolean)
+    error: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (Index("ix_jobrun_job_started", "job", "started_at"),)
+
+
+class LLMCall(Base):
+    """모든 LLM 호출 감사 로그 (비용·지연·실패 추적, 응답 캐시, 설명가능성)."""
+
+    __tablename__ = "llm_calls"
+    id: Mapped[int] = mapped_column(BigId, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    provider: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(128))
+    analyst: Mapped[str | None] = mapped_column(String(32))
+    prompt_hash: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16))  # ok / error / cached / budget
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    response: Mapped[dict | None] = mapped_column(JSONType)
+    error: Mapped[str | None] = mapped_column(Text)

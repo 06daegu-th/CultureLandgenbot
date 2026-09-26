@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 from sqlalchemy import select
@@ -100,21 +100,33 @@ def resolve(session: Session, bars_by_symbol: dict[str, pd.DataFrame], benchmark
     return n
 
 
-def scoreboard(session: Session, since: datetime | None = None,
-               regime: str | None = None) -> dict[tuple[str, str], TrackRecord]:
-    """(analyst, category) → TrackRecord. regime 을 주면 해당 국면에서의 성적만."""
-    q = select(AnalystOpinionRecord).where(AnalystOpinionRecord.correct.is_not(None))
+def scoreboard(session: Session, since: datetime | None = None, regime: str | None = None,
+               window_days: int | None = 365, backends: dict[str, str] | None = None
+               ) -> dict[tuple[str, str], TrackRecord]:
+    """(analyst, category) → TrackRecord.
+
+    - window_days: 최근 N일 성적만 (시장이 바뀌면 과거 성적의 의미도 바뀐다). None = 전체
+    - regime: 해당 국면에서의 성적만
+    - backends: {analyst: model} — 해당 백엔드로 낸 의견만 집계 (모델 교체 시 성적 분리)
+    """
+    q = select(AnalystOpinionRecord.analyst, AnalystOpinionRecord.category, AnalystOpinionRecord.prob_up,
+               AnalystOpinionRecord.correct, AnalystOpinionRecord.realized_return,
+               AnalystOpinionRecord.payload).where(AnalystOpinionRecord.correct.is_not(None))
     if since is not None:
         q = q.where(AnalystOpinionRecord.as_of >= since)
+    elif window_days is not None:
+        q = q.where(AnalystOpinionRecord.as_of >= datetime.now(UTC) - timedelta(days=window_days))
     acc: dict[tuple[str, str], list] = defaultdict(lambda: [0, 0, 0.0])
-    for op in session.scalars(q):
-        if regime and (op.payload or {}).get("regime") != regime:
+    for analyst, cat, prob, correct, rr, payload in session.execute(q):
+        p = payload or {}
+        if regime and p.get("regime") != regime:
             continue
-        a = acc[(op.analyst, op.category)]
+        if backends and analyst in backends and p.get("backend") not in (None, backends[analyst]):
+            continue
+        a = acc[(analyst, cat)]
         a[0] += 1
-        a[1] += int(bool(op.correct))
-        y = 1.0 if (op.realized_return or 0) > 0 else 0.0
-        a[2] += ((op.prob_up or 0.5) - y) ** 2
+        a[1] += int(bool(correct))
+        a[2] += ((prob if prob is not None else 0.5) - (1.0 if (rr or 0) > 0 else 0.0)) ** 2
     return {k: TrackRecord(n=v[0], hits=v[1], brier=v[2] / v[0] if v[0] else None) for k, v in acc.items()}
 
 

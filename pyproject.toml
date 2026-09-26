@@ -12,13 +12,14 @@ dependencies = [
     "pandas>=2.1",
     "sqlalchemy>=2.0",
     "scikit-learn>=1.4",
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
 ai = ["anthropic>=1.0"]
 yahoo = ["yfinance>=0.2"]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 quant-ai = "quant_ai.cli:main"
@@ -32,3 +33,15 @@ quant_ai = ["web/static/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["main.py", "migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "S", "UP", "I"]
+ignore = ["E501", "B008", "B905", "S101", "S311", "UP042", "S608"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B017"]

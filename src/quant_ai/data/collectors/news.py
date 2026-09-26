@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
+import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
+import defusedxml.ElementTree as ET  # XML 폭탄(billion laughs)·외부 엔티티 공격 방어
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...engines.news_intel import NewsAnalyzer, tag_symbols
 from ..models import Instrument, NewsArticle
 from . import http
+
+log = logging.getLogger("quant_ai.news")
 
 
 @dataclass
@@ -26,15 +29,15 @@ class RawArticle:
 
 def _parse_date(text: str | None) -> datetime:
     if not text:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     try:
         dt = parsedate_to_datetime(text)
     except (TypeError, ValueError):
         try:
             dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:
-            return datetime.now(timezone.utc)
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            return datetime.now(UTC)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def parse_feed(xml_bytes: bytes, source: str) -> list[RawArticle]:
@@ -59,7 +62,8 @@ def parse_feed(xml_bytes: bytes, source: str) -> list[RawArticle]:
             body=(entry.findtext(f"{atom}summary") or "").strip(),
             published_at=_parse_date(entry.findtext(f"{atom}updated") or entry.findtext(f"{atom}published")),
         ))
-    return [a for a in out if a.url and a.title]
+    # 링크는 http(s) 만 허용 (javascript:, data: 등 UI 삽입 방지)
+    return [a for a in out if a.url.startswith(("http://", "https://")) and a.title]
 
 
 class NewsCollector:
@@ -77,7 +81,8 @@ class NewsCollector:
         for feed in self.feeds:
             try:
                 articles = parse_feed(self.fetch(feed), source=feed)
-            except Exception:  # noqa: BLE001 - 피드 하나가 실패해도 나머지는 계속
+            except Exception as exc:  # noqa: BLE001 - 피드 하나가 실패해도 나머지는 계속
+                log.warning("피드 수집 실패 %s: %s", feed, exc)
                 continue
             for a in articles:
                 if session.scalar(select(NewsArticle.id).where(NewsArticle.url == a.url)):

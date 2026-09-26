@@ -16,7 +16,7 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from .config import Mode, Settings
 
@@ -52,7 +52,7 @@ def cmd_collect(args):
 
     app = _app(args)
     st = app.settings
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if args.what == "prices":
         src = {"yahoo": P.YahooPriceSource, "synthetic": P.SyntheticPriceSource}[args.source]()
         syms = [s.strip() for s in args.symbols.split(",") if s.strip()]
@@ -117,8 +117,32 @@ def cmd_review(args):
     print(json.dumps({"summary": r.summary, "lessons": r.lessons}, ensure_ascii=False, indent=1, default=str))
 
 
+def cmd_kis_check(args):
+    """KIS 연결 점검: 토큰 → 잔고 → 현재가/호가 (주문은 내지 않음)."""
+    from .trading.kis import KISClient
+    st = Settings.from_env()
+    c = KISClient.from_env(st.artifacts_dir)
+    print(f"환경: {c.env} ({c.base})")
+    c.token()
+    print("토큰 OK")
+    cash, pos = c.balance()
+    print(f"예수금(D+2): {cash:,.0f}원, 보유 {len(pos)}종목")
+    for code, p in pos.items():
+        print(f"  {code} {p.qty}주 @ {p.avg_price:,.0f}")
+    q = c.quote(args.symbol)
+    print(f"{args.symbol} 현재가 {q.last:,.0f} / 매수1 {q.bid} / 매도1 {q.ask}")
+
+
+def cmd_health(args):
+    from .web.api import DashboardAPI
+    app = _app(args)
+    h = DashboardAPI(app).health()
+    print(json.dumps(h, ensure_ascii=False))
+    sys.exit(0 if h["ok"] else 1)
+
+
 def cmd_kill(args):
-    _app(args).set_kill_switch(args.state == "on")
+    _app(args).set_kill_switch(args.state == "on", by="cli")
     print(f"킬스위치 {args.state.upper()}")
 
 
@@ -142,13 +166,29 @@ def load_dotenv(path: str = ".env") -> None:
 
 def main(argv: list[str] | None = None) -> None:
     load_dotenv()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    import os
+    if os.environ.get("QUANT_LOG_JSON") == "1":  # 서버 배포 시 로그 수집기(ELK/Loki 등)용
+        class JsonFormatter(logging.Formatter):
+            def format(self, r):
+                d = {"ts": self.formatTime(r), "level": r.levelname, "logger": r.name, "msg": r.getMessage()}
+                if r.exc_info:
+                    d["exc"] = self.formatException(r.exc_info)
+                return json.dumps(d, ensure_ascii=False)
+        h = logging.StreamHandler()
+        h.setFormatter(JsonFormatter())
+        logging.basicConfig(level=logging.INFO, handlers=[h])
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     p = argparse.ArgumentParser(prog="quant-ai")
     p.add_argument("--db", help="DATABASE_URL 덮어쓰기")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    d = sub.add_parser("demo"); d.add_argument("--days", type=int, default=60); d.set_defaults(fn=cmd_demo)
-    s = sub.add_parser("serve"); s.add_argument("--host", default="127.0.0.1"); s.add_argument("--port", type=int, default=8050)
+    d = sub.add_parser("demo")
+    d.add_argument("--days", type=int, default=60)
+    d.set_defaults(fn=cmd_demo)
+    s = sub.add_parser("serve")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8050)
     s.set_defaults(fn=cmd_serve)
     c = sub.add_parser("collect")
     c.add_argument("what", choices=["prices", "news", "disclosures", "macro"])
@@ -159,10 +199,17 @@ def main(argv: list[str] | None = None) -> None:
     c.set_defaults(fn=cmd_collect)
     sub.add_parser("train").set_defaults(fn=cmd_train)
     sub.add_parser("decide").set_defaults(fn=cmd_decide)
-    r = sub.add_parser("run"); r.add_argument("--mode", default="paper", choices=[m.value for m in Mode])
+    r = sub.add_parser("run")
+    r.add_argument("--mode", default="paper", choices=[m.value for m in Mode])
     r.set_defaults(fn=cmd_run)
     sub.add_parser("review").set_defaults(fn=cmd_review)
-    k = sub.add_parser("kill"); k.add_argument("state", choices=["on", "off"]); k.set_defaults(fn=cmd_kill)
+    k = sub.add_parser("kill")
+    k.add_argument("state", choices=["on", "off"])
+    k.set_defaults(fn=cmd_kill)
+    kc = sub.add_parser("kis-check", help="한국투자증권 API 연결 점검 (주문 없음)")
+    kc.add_argument("--symbol", default="005930")
+    kc.set_defaults(fn=cmd_kis_check)
+    sub.add_parser("health").set_defaults(fn=cmd_health)
 
     args = p.parse_args(argv)
     args.fn(args)

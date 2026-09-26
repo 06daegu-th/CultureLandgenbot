@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
+import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 
@@ -25,6 +27,8 @@ class LLMError(RuntimeError):
 
 class LLMClient(ABC):
     model: str
+    provider: str = "unknown"
+    last_usage: tuple[int, int] | None = None  # (input_tokens, output_tokens) — 비용 추적용
 
     @abstractmethod
     def complete_json(self, system: str, user: str, schema: dict) -> dict: ...
@@ -48,13 +52,17 @@ def extract_json(text: str) -> dict:
 class ClaudeClient(LLMClient):
     """Primary AI. 기본 모델 claude-opus-5, adaptive thinking, 서버측 refusal fallback 사용."""
 
-    def __init__(self, model: str = "claude-opus-5", effort: str = "high", api_key: str | None = None):
+    provider = "anthropic"
+
+    def __init__(self, model: str = "claude-opus-5", effort: str = "high", api_key: str | None = None,
+                 timeout: float = 180.0, max_retries: int = 2):
         try:
             import anthropic
         except ImportError as exc:  # pragma: no cover - 선택 의존성
             raise LLMError("pip install 'quant-ai[ai]' 필요 (anthropic)") from exc
         self._anthropic = anthropic
-        self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+        kw = {"timeout": timeout, "max_retries": max_retries}
+        self.client = anthropic.Anthropic(api_key=api_key, **kw) if api_key else anthropic.Anthropic(**kw)
         self.model = model
         self.effort = effort
 
@@ -77,6 +85,8 @@ class ClaudeClient(LLMClient):
             raise LLMError(f"Claude API 오류 {exc.status_code}: {exc.message}") from exc
         except a.APIConnectionError as exc:
             raise LLMError("Claude 연결 실패") from exc
+        u = getattr(response, "usage", None)
+        self.last_usage = (getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0) if u else None
         if response.stop_reason == "refusal":
             raise LLMError("Claude refusal")
         if response.stop_reason == "max_tokens":
@@ -88,6 +98,8 @@ class ClaudeClient(LLMClient):
 class OpenAICompatClient(LLMClient):
     """NVIDIA NIM 등 OpenAI 호환 /chat/completions 엔드포인트."""
 
+    provider = "nvidia"
+
     def __init__(self, api_key: str, model: str = "nvidia/nemotron-3-super-120b-a12b",
                  base_url: str = "https://integrate.api.nvidia.com/v1", timeout: float = 120.0,
                  max_tokens: int = 8192):
@@ -97,17 +109,27 @@ class OpenAICompatClient(LLMClient):
         self.timeout = timeout
         self.max_tokens = max_tokens
 
-    def _post(self, path: str, body: dict) -> dict:
-        req = urllib.request.Request(
-            f"{self.base_url}{path}", data=json.dumps(body).encode(), method="POST",
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json",
-                     "Accept": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read())
-        except Exception as exc:  # noqa: BLE001
-            raise LLMError(f"{self.base_url}{path} 호출 실패: {exc}") from exc
+    def _post(self, path: str, body: dict, retries: int = 3) -> dict:
+        if not self.base_url.startswith("https://"):
+            raise LLMError("https 엔드포인트만 허용")
+        last: Exception | None = None
+        for attempt in range(retries):
+            req = urllib.request.Request(  # noqa: S310 - https 검사됨
+                f"{self.base_url}{path}", data=json.dumps(body).encode(), method="POST",
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json",
+                         "Accept": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - https 확인됨
+                    return json.loads(resp.read())
+            except urllib.error.HTTPError as exc:
+                last = exc
+                if exc.code not in (429, 500, 502, 503, 504):  # 4xx 는 재시도해도 소용없음
+                    break
+            except Exception as exc:  # noqa: BLE001 - 네트워크 오류 재시도
+                last = exc
+            time.sleep(min(2 ** attempt, 8))
+        raise LLMError(f"{self.base_url}{path} 호출 실패: {last}") from last
 
     def complete_json(self, system: str, user: str, schema: dict) -> dict:
         sys_prompt = (f"{system}\n\n반드시 아래 JSON 스키마를 따르는 JSON 객체 하나만 출력하라. 다른 텍스트 금지.\n"
@@ -118,6 +140,8 @@ class OpenAICompatClient(LLMClient):
             "temperature": 0.2,
             "max_tokens": self.max_tokens,
         })
+        u = payload.get("usage") or {}
+        self.last_usage = (int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)) if u else None
         try:
             content = payload["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:

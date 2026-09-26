@@ -13,7 +13,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .clock import MARKETS, MarketCalendar, Phase, any_market_open
 
@@ -40,10 +40,12 @@ class Job:
 
 
 class Scheduler:
-    def __init__(self, markets: dict[str, MarketCalendar] = MARKETS):
+    def __init__(self, markets: dict[str, MarketCalendar] = MARKETS, notifier=None, engine=None):
         self.markets = markets
         self.jobs: list[Job] = []
         self.status: dict[str, dict] = {}
+        self.notifier = notifier
+        self.engine = engine  # 있으면 모든 실행을 job_runs 에 기록 (대시보드 운영 패널)
 
     def add(self, name: str, fn: Callable[[datetime], object], interval_s: float, when: str = "always") -> None:
         self.jobs.append(Job(name, fn, interval_s, when))
@@ -52,7 +54,7 @@ class Scheduler:
         return {k: m.phase(now).value for k, m in self.markets.items()}
 
     def tick(self, now: datetime | None = None, now_s: float | None = None) -> list[str]:
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         now_s = time.monotonic() if now_s is None else now_s
         is_open = any_market_open(now, self.markets)
         ran = []
@@ -61,7 +63,12 @@ class Scheduler:
                 continue
             job.last_run = now_s
             try:
-                job.fn(now)
+                if self.engine is not None:
+                    from .ops import record_job
+                    with record_job(self.engine, job.name):
+                        job.fn(now)
+                else:
+                    job.fn(now)
                 job.failures = 0
                 self.status[job.name] = {"ok": True, "at": now.isoformat()}
                 ran.append(job.name)
@@ -69,6 +76,9 @@ class Scheduler:
                 job.failures += 1
                 self.status[job.name] = {"ok": False, "at": now.isoformat(), "error": str(exc)}
                 log.exception("작업 실패: %s", job.name)
+                if self.notifier is not None and job.failures in (1, 3, 10):
+                    self.notifier.send(f"작업 '{job.name}' 실패 {job.failures}회 연속: {exc}",
+                                       "critical" if job.failures >= 3 else "warn")
         return ran
 
     def run_forever(self, poll_s: float = 5.0) -> None:  # pragma: no cover - 무한 루프
@@ -89,7 +99,10 @@ def build_default_scheduler(app, mode) -> Scheduler:
     from .data.db import session_scope
 
     st = app.settings
-    sch = Scheduler()
+    from pathlib import Path
+
+    from .clock import load_holidays
+    sch = Scheduler(load_holidays(Path(st.artifacts_dir) / "holidays.json"), notifier=app.notifier, engine=app.engine)
 
     if st.news_feeds:
         def news(now):
@@ -116,14 +129,21 @@ def build_default_scheduler(app, mode) -> Scheduler:
     elif mode in (Mode.RESEARCH, Mode.PREDICT):
         sch.add("decide", lambda now: app.decide(), 30 * 60, "always")
 
-    sch.add("review", lambda now: app.review(now.date()), 6 * 3600, "closed")
+    def review(now):
+        r = app.review(now.date())
+        s = r.summary or {}
+        acc = s.get("consensus_accuracy")
+        app.notifier.send(f"일일 복기: 채점 {s.get('n_resolved', 0)}건"
+                          + (f", 합의 정확도 {acc:.0%}" if acc is not None else "")
+                          + "".join(f"\n· {x}" for x in (r.lessons or [])[:5]))
+    sch.add("review", review, 6 * 3600, "closed")
     sch.add("shadow_eval", lambda now: app.evaluate_shadow_models(), 12 * 3600, "closed")
     sch.add("retrain_candidate", lambda now: app.train_candidate(), 24 * 3600, "closed")
     return sch
 
 
 def market_phase_now() -> dict[str, str]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return {k: m.phase(now).value for k, m in MARKETS.items()}
 
 

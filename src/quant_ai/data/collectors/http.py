@@ -10,15 +10,23 @@ import urllib.request
 USER_AGENT = "quant-ai/0.1 (+research)"
 
 
+MAX_BYTES = 10 * 1024 * 1024
+
+
 def get(url: str, params: dict | None = None, timeout: float = 15.0, retries: int = 3) -> bytes:
+    if not url.startswith(("https://", "http://")):
+        raise ValueError(f"허용되지 않는 URL 스킴: {url[:40]}")
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
     last: Exception | None = None
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310 - 스킴 검사됨
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - 스킴 검사됨
+                data = resp.read(MAX_BYTES + 1)
+                if len(data) > MAX_BYTES:
+                    raise ValueError("응답이 너무 큼")
+                return data
         except Exception as exc:  # noqa: BLE001 - 네트워크 오류는 재시도
             last = exc
             time.sleep(2**attempt)

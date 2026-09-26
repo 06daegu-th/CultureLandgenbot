@@ -30,6 +30,7 @@ class ExecutionEngine:
         self.risk = risk
         self.journal = journal
         self.min_trade_weight = min_trade_weight  # 이보다 작은 비중 변화는 거래하지 않음 (회전율 억제)
+        self.errors: list[str] = []
 
     def rebalance(self, signals: list[Signal], quotes: dict[str, MarketQuote], ts: datetime,
                   exposure_multiplier: float = 1.0, tradable: set[str] | None = None) -> list[Fill]:
@@ -69,7 +70,12 @@ class ExecutionEngine:
             if not decision.approved or decision.order is None:
                 self.journal.order(ts, order, "rejected", decision.reasons, None)
                 continue
-            fill = self.broker.submit(decision.order, quotes[order.symbol], ts)
+            try:
+                fill = self.broker.submit(decision.order, quotes[order.symbol], ts)
+            except Exception as exc:  # noqa: BLE001 - 한 종목 주문 실패가 나머지를 막으면 안 됨
+                self.journal.order(ts, decision.order, "error", [*decision.reasons, f"브로커 오류: {exc}"], None)
+                self.errors.append(f"{order.symbol}: {exc}")
+                continue
             self.journal.order(ts, decision.order, "filled" if fill else "unfilled", decision.reasons, fill)
             if fill:
                 fills.append(fill)

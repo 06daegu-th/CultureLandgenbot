@@ -17,7 +17,8 @@ Market Data ─┬─▶ Primary AI (Claude · 종합 분석)        ─┐
 장 마감 후 ─▶ 실제 결과로 채점 ─▶ AI 성적표(방향·뉴스·거시·추세·위험) ─▶ 복기 교훈 ─▶ RAG 메모리
 ```
 
-자세한 설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- 설계: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **서비스 출시 준비도 점검 · 부족한 점 · 법규제 · 로드맵: [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)**
 
 ## 구성 (요청한 16단계 대응)
 
@@ -38,7 +39,14 @@ Market Data ─┬─▶ Primary AI (Claude · 종합 분석)        ─┐
 | 13 | Trade Journal | `trading/journal.py` (신호·주문·거부 사유 전부) |
 | 14 | 자동 복기 | `review/review.py`, `ensemble/tracker.py` |
 | 15 | 검증된 모델만 교체 | `registry/model_registry.py` (candidate→shadow→champion) |
-| 16 | 소액 Live | `LiveBroker` (다중 안전장치, 증권사 API 연동부만 구현하면 됨) |
+| 16 | 소액 Live | `trading/kis.py` 한국투자증권(모의/실전) — 보호 지정가·체결확인·잔량취소·잔고동기화, 소액 상한 |
+
+### 운영 기능
+- **LLM 가드**: 응답 캐시 · 일 비용 예산 · 모든 호출 감사 로그 (`analysts/guard.py`)
+- **검증 통계**: PSR · DSR(다중검정 보정) · Sharpe 부트스트랩 CI · 비용 2배 스트레스 · 확률 보정표
+- **안전장치**: DB 공유 킬스위치 · 자동 정지(급락) · 치명 위험 시 강제 청산 · 매매 사이클 잠금 · 영속 주문 한도
+- **관측**: 작업 실행 기록, `/api/health`, 운영 화면, Discord/Slack/Telegram 알림, JSON 로그
+- **배포**: Dockerfile, docker-compose(PostgreSQL+마이그레이션+스케줄러+웹), Alembic, GitHub Actions CI
 
 ## 빠른 시작
 
@@ -48,20 +56,23 @@ pip install -e ".[ai,dev]"          # PostgreSQL: .[postgres]  /  Yahoo 시세: 
 
 quant-ai demo                       # 가상 데이터로 전체 파이프라인 1회 실행 (약 30초)
 quant-ai serve                      # http://127.0.0.1:8050
-pytest                              # 테스트 36개
+pytest                              # 테스트 67개 (PostgreSQL: QUANT_TEST_DATABASE_URL 지정 시 통합 테스트 포함)
 ```
 
 ### 실제 데이터로
 
 ```bash
 cp .env.example .env                # 키 입력 (ANTHROPIC_API_KEY, NVIDIA_API_KEY, DART_API_KEY, FRED_API_KEY …)
-docker compose up -d                # PostgreSQL
+docker compose up -d --build        # PostgreSQL + 마이그레이션 + 스케줄러 + 대시보드 (또는 아래처럼 수동)
+alembic upgrade head                # 스키마 마이그레이션
 quant-ai collect prices --symbols 005930.KS,000660.KS,NVDA,AAPL,^KS11 --years 5
 quant-ai collect macro && quant-ai collect disclosures
 quant-ai train                      # walk-forward 검증 → 게이트 통과 시 shadow
 quant-ai decide                     # 멀티 AI 합의 신호 확인 (주문 없음)
 quant-ai run --mode shadow          # 24시간: 장중 판단/Shadow 매매, 장외 수집·채점·복기·재학습
-quant-ai kill on                    # 킬스위치
+quant-ai kis-check                  # 한국투자증권 연결 점검 (QUANT_BROKER=kis, KIS_ENV=demo 먼저!)
+quant-ai kill on                    # 킬스위치 (모든 프로세스 공유)
+quant-ai health                     # 헬스체크
 ```
 
 API 키가 없으면 해당 AI 는 오프라인 휴리스틱으로 대체되어 시스템은 계속 동작한다 (대시보드 설정 화면에 표시).

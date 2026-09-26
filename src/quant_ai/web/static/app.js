@@ -407,12 +407,60 @@ async function viewReview(el) {
 // ------------------------------------------------------------ 뷰: 모델
 function viewModels(d) {
   const st = { champion: "b-BUY", shadow: "b-NO_TRADE", candidate: "b-HOLD", rejected: "b-SELL", retired: "b-none" };
-  const rows = d.models.map((m) => `<tr><td><b>${esc(m.name)}</b><div class="dim small mono">${esc(m.version)}</div></td><td><span class="badge ${st[m.status] || "b-none"}">${esc(m.status.toUpperCase())}</span></td>
-    <td class="r num">${m.sharpe ?? "-"}</td><td class="r">${pct(m.total_return, 1)}</td><td class="r">${pct(m.mdd, 1)}</td><td class="r num">${m.accuracy == null ? "-" : (m.accuracy * 100).toFixed(1) + "%"}</td><td class="r num">${m.ic ?? "-"}</td>
-    <td class="small muted" style="white-space:normal;max-width:360px">${esc(m.notes || "")}${m.shadow ? `<div class="dim">Shadow ${m.shadow.days}일 · 정확도 ${(m.shadow.accuracy * 100).toFixed(0)}%</div>` : ""}</td></tr>`).join("");
+  const num3 = (v) => v == null ? "-" : Number(v).toFixed(2);
+  const psrCls = (v, t) => v == null ? "" : v >= t ? "conflict-low" : "conflict-high";
+  const rows = d.models.map((m) => `<tr class="click" data-model="${m.id}"><td><b>${esc(m.name)}</b><div class="dim small mono">${esc(m.version)}</div></td><td><span class="badge ${st[m.status] || "b-none"}">${esc(m.status.toUpperCase())}</span></td>
+    <td class="r num">${m.sharpe ?? "-"}<span class="sub">${m.sharpe_ci ? `95% ${num3(m.sharpe_ci[0])}~${num3(m.sharpe_ci[1])}` : ""}</span></td>
+    <td class="r num ${psrCls(m.psr, 0.9)}">${num3(m.psr)}</td><td class="r num ${psrCls(m.dsr, 0.5)}">${num3(m.dsr)}</td>
+    <td class="r num ${m.stress_sharpe != null && m.stress_sharpe < 0 ? "conflict-high" : ""}">${m.stress_sharpe ?? "-"}</td>
+    <td class="r">${pct(m.total_return, 1)}<span class="sub">BM ${m.benchmark_return == null ? "-" : (m.benchmark_return * 100).toFixed(0) + "%"}</span></td><td class="r">${pct(m.mdd, 1)}</td>
+    <td class="r num">${m.ic ?? "-"}</td>
+    <td class="small muted" style="white-space:normal;max-width:340px">${esc(m.notes || "")}${m.shadow ? `<div class="dim">Shadow ${m.shadow.days}일 · 정확도 ${(m.shadow.accuracy * 100).toFixed(0)}% · MDD ${(m.shadow.max_drawdown * 100).toFixed(1)}%</div>` : ""}</td></tr>`).join("");
+  const sel = d.models.find((m) => m.id === S.modelId) || d.models.find((m) => m.status === "champion") || d.models[0];
+  const cal = sel?.calibration?.length ? `<table><thead><tr><th>예측 구간</th><th class="r">표본</th><th class="r">예측 확률</th><th class="r">실제 상승률</th><th>차이</th></tr></thead><tbody>
+    ${sel.calibration.map((c) => { const gap = c.actual - c.predicted; return `<tr><td class="mono small">${esc(c.bin)}</td><td class="r num">${num(c.n)}</td><td class="r num">${(c.predicted * 100).toFixed(1)}%</td><td class="r num">${(c.actual * 100).toFixed(1)}%</td>
+      <td><div class="stance" style="width:140px"><div style="left:${gap >= 0 ? 50 : 50 + gap * 500}%;width:${Math.min(50, Math.abs(gap) * 500)}%;background:${Math.abs(gap) < 0.03 ? css("--good") : css("--warn")}"></div></div></td></tr>`; }).join("")}</tbody></table>
+    <div class="small dim" style="margin-top:8px">예측 확률과 실제 상승률이 가까울수록 확률이 '정직'합니다. 앙상블은 이 확률을 그대로 결합하므로 보정이 중요합니다.</div>` : empty();
   return `
-  ${card("모델 레지스트리 <span class='small dim'>검증된 모델만 교체</span>", `<div class="small muted" style="margin-bottom:12px">candidate → (walk-forward 백테스트 게이트) → shadow → (Shadow 실전 검증 게이트) → champion. Live 는 champion 만 사용합니다. 새로 학습된 모델은 절대 바로 실매매에 들어가지 않습니다.</div>
-    ${rows ? `<div class="scroll"><table><thead><tr><th>모델</th><th>상태</th><th class="r">Sharpe</th><th class="r">수익률</th><th class="r">MDD</th><th class="r">OOS 정확도</th><th class="r">IC</th><th>게이트 결과</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty()}`)}`;
+  ${card("모델 레지스트리 <span class='small dim'>검증된 모델만 교체</span>", `<div class="small muted" style="margin-bottom:12px">candidate → (walk-forward 백테스트 게이트) → shadow → (Shadow 실전 검증 게이트) → champion. Live 는 champion 만 사용합니다.</div>
+    ${rows ? `<div class="scroll"><table><thead><tr><th>모델</th><th>상태</th><th class="r">Sharpe</th><th class="r" title="P(진짜 Sharpe > 0)">PSR</th><th class="r" title="다중검정 보정 PSR">DSR</th><th class="r" title="비용 2배">스트레스</th><th class="r">수익률</th><th class="r">MDD</th><th class="r" title="날짜별 횡단면 순위상관">IC</th><th>게이트 결과</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty()}`)}
+  <div class="grid g-2">
+    ${card(`확률 보정 (Calibration) <span class="small dim">${sel ? esc(sel.name + " " + sel.version.slice(0, 8)) : ""}</span>`, cal)}
+    ${card("게이트 기준", `<ul class="plain small">
+      <li><span class="chk">◉</span>PSR ≥ 0.90 — 수익률 분포(왜도·첨도)와 표본 길이를 고려해 Sharpe 가 우연이 아닐 확률</li>
+      <li><span class="chk">◉</span>DSR ≥ 0.50 — 지금까지 시도한 후보 수만큼 기준을 올린 PSR (많이 시도할수록 엄격)</li>
+      <li><span class="chk">◉</span>비용 2배 스트레스 Sharpe ≥ 0 — 비용 가정이 틀려도 손실 전략이 아닐 것</li>
+      <li><span class="chk">◉</span>IC ≥ 0.02, IC t-stat ≥ 2 — 순위 예측력이 통계적으로 유의</li>
+      <li><span class="chk">◉</span>Brier ≤ 기저율 기준 — 확률이 '항상 평균만 말하기'보다 나쁘지 않을 것</li>
+      <li><span class="chk">◉</span>MDD ≥ -25%, 기존 champion 대비 개선 · Shadow 20일 이상 실전 검증</li></ul>`)}
+  </div>`;
+}
+
+// ------------------------------------------------------------ 뷰: 운영
+async function viewOps(el) {
+  const o = await api("/api/ops");
+  const ks = o.kill_switch || {};
+  const jobs = o.jobs.map((j) => `<tr><td><b>${esc(j.job)}</b></td><td>${j.ok === false ? '<span class="chip neg">실패</span>' : j.ok ? '<span class="chip" style="color:var(--good)">정상</span>' : '<span class="chip">실행 중</span>'}</td>
+    <td class="dim small">${time(j.last_run, true)}</td><td class="r num">${j.runs}</td><td class="r num ${j.failures ? "down" : ""}">${j.failures}</td><td class="small muted" style="white-space:normal">${esc(j.error || "")}</td></tr>`).join("");
+  const llmRows = o.llm.by_model.map((m) => `<tr><td class="mono small">${esc(m.model)}</td><td class="r num">${m.calls}</td><td class="r num">${m.cached}</td><td class="r num ${m.errors ? "down" : ""}">${m.errors}</td><td class="r num">${m.latency_ms == null ? "-" : (m.latency_ms / 1000).toFixed(1) + "s"}</td><td class="r num">$${m.cost.toFixed(2)}</td></tr>`).join("");
+  const used = o.llm_budget_usd > 0 ? Math.min(100, (o.llm.today_cost / o.llm_budget_usd) * 100) : 0;
+  const dq = Object.entries(o.data_quality || {}).map(([sym, r]) => `<tr><td>${esc(nameOf(sym).split(" (")[0])}</td><td class="r num">${num(r.rows_out)}/${num(r.rows_in)}</td>
+    <td class="small">${Object.entries(r.dropped || {}).map(([k, v]) => `<span class="chip neg">${esc(k)} ${v}</span>`).join("") || '<span class="chip" style="color:var(--good)">이상 없음</span>'}</td>
+    <td class="small muted" style="white-space:normal">${(r.warnings || []).slice(0, 3).map(esc).join("<br>")}</td></tr>`).join("");
+  const notes = o.notifications.map((n) => `<div class="lesson" style="border-left-color:${n.level === "critical" ? "var(--bad)" : n.level === "warn" ? "var(--warn)" : "var(--accent)"}">${esc(n.message)}</div>`).join("");
+  el.innerHTML = `
+  <div class="stat-row">
+    <div class="stat"><div class="l">킬스위치</div><div class="big ${ks.on ? "down" : ""}" style="${ks.on ? "color:var(--bad)" : "color:var(--good)"}">${ks.on ? "ON" : "OFF"}</div><div class="small dim">${ks.at ? `${esc(ks.by || "")} · ${time(ks.at, true)} ${esc(ks.reason || "")}` : ""}</div></div>
+    <div class="stat"><div class="l">오늘 LLM 비용</div><div class="big num">$${o.llm.today_cost.toFixed(2)}</div><div class="conf-bar" style="margin-top:6px"><div style="width:${used}%;background:${used > 80 ? css("--bad") : ""}"></div></div><div class="small dim">일 예산 $${o.llm_budget_usd}</div></div>
+    <div class="stat"><div class="l">증권사</div><div class="big">${esc(o.broker === "kis" ? "KIS" : "미연결")}</div><div class="small dim">${o.broker === "kis" ? (o.kis_env === "real" ? "실전 계좌" : "모의투자") : "Paper/Shadow 만 가능"}</div></div>
+    <div class="stat"><div class="l">알림</div><div class="big">${o.notifier_enabled ? "연결됨" : "미설정"}</div><div class="small dim">Discord · Slack · Telegram</div></div>
+  </div>
+  ${card("스케줄러 작업", jobs ? `<div class="scroll"><table><thead><tr><th>작업</th><th>상태</th><th>마지막 실행</th><th class="r">실행</th><th class="r">실패</th><th>오류</th></tr></thead><tbody>${jobs}</tbody></table></div>` : empty("기록 없음 — quant-ai run 으로 스케줄러를 실행하세요"))}
+  <div class="grid g-2">
+    ${card("LLM 사용량 <span class='small dim'>최근 7일 · 캐시·예산·감사 로그</span>", llmRows ? `<table><thead><tr><th>모델</th><th class="r">호출</th><th class="r">캐시</th><th class="r">실패</th><th class="r">지연</th><th class="r">비용</th></tr></thead><tbody>${llmRows}</tbody></table>` : empty("LLM 호출 없음 (API 키 미설정 시 휴리스틱 사용)"))}
+    ${card("최근 알림", notes || empty("알림 없음"))}
+  </div>
+  ${card("데이터 품질 <span class='small dim'>수집 시 자동 검사 · 문제 행 제거</span>", dq ? `<div class="scroll"><table><thead><tr><th>종목</th><th class="r">유효/수집</th><th>제거</th><th>경고</th></tr></thead><tbody>${dq}</tbody></table></div>` : empty("quant-ai collect 로 수집한 데이터부터 검사됩니다"))}`;
 }
 
 // ------------------------------------------------------------ 뷰: 설정
@@ -463,6 +511,7 @@ async function render() {
     else if (S.view === "news") el.innerHTML = viewNews(d);
     else if (S.view === "review") await viewReview(el);
     else if (S.view === "models") el.innerHTML = viewModels(d);
+    else if (S.view === "ops") await viewOps(el);
     else if (S.view === "settings") el.innerHTML = viewSettings(d);
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
@@ -475,6 +524,7 @@ function bindCommon() {
     S.symbol = tr.dataset.sym;
     if (S.view === "dashboard") render(); else { location.hash = "#analysis"; }
   });
+  document.querySelectorAll("tr[data-model]").forEach((tr) => tr.onclick = () => { S.modelId = Number(tr.dataset.model); render(); });
   document.querySelectorAll("#pf-tabs button").forEach((b) => b.onclick = () => { S.pfMode = b.dataset.m; render(); });
   document.querySelectorAll("#news-tabs button").forEach((b) => b.onclick = () => { S.newsKind = b.dataset.k; render(); });
 }
@@ -488,8 +538,11 @@ function renderChrome(d) {
   const kb = $("#kill-btn");
   kb.classList.toggle("on", d.kill_switch);
   kb.textContent = d.kill_switch ? "KILL SWITCH ON" : "KILL SWITCH";
-  $("#sys-status").innerHTML = `<span class="dot ok"></span>정상`;
   $("#sys-last").textContent = d.system.last_bar ? `${date(d.system.last_bar)}` : "-";
+  api("/api/health").then((h) => {
+    const bad = !h.ok || h.recent_job_failures > 0;
+    $("#sys-status").innerHTML = `<span class="dot ${bad ? "bad" : "ok"}"></span>${!h.ok ? "DB 오류" : h.recent_job_failures ? `작업 실패 ${h.recent_job_failures}건` : h.kill_switch ? "정상 · 매수 정지" : "정상"}`;
+  }).catch(() => { $("#sys-status").innerHTML = `<span class="dot bad"></span>연결 실패`; });
 }
 
 async function refresh() {
@@ -522,8 +575,12 @@ document.addEventListener("click", (e) => { if (!e.target.closest(".search")) $(
 
 $("#kill-btn").onclick = async () => {
   const on = !S.data?.kill_switch;
-  if (!confirm(on ? "킬스위치를 켜면 모든 신규 매수가 즉시 중단됩니다. 켤까요?" : "킬스위치를 끌까요?")) return;
-  await api("/api/killswitch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) });
+  let reason = "";
+  if (on) {
+    reason = prompt("킬스위치를 켜면 모든 신규 매수가 즉시 중단됩니다 (매도·위험 축소는 계속).\n사유를 입력하세요:", "수동 정지");
+    if (reason === null) return;
+  } else if (!confirm("킬스위치를 끄고 신규 매수를 재개할까요?")) return;
+  await api("/api/killswitch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on, reason }) });
   await refresh(); render();
 };
 $("#theme-btn").onclick = () => {

@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 import numpy as np
 import pandas as pd
@@ -88,10 +88,10 @@ def test_parse_dart_and_fred():
 
 # ------------------------------------------------------------------ 시장 시간
 def test_market_phases():
-    kst_open = datetime(2024, 3, 4, 1, 0, tzinfo=timezone.utc)  # 월 10:00 KST
+    kst_open = datetime(2024, 3, 4, 1, 0, tzinfo=UTC)  # 월 10:00 KST
     assert KRX.phase(kst_open) is Phase.OPEN
     assert US.phase(kst_open) is Phase.CLOSED
-    saturday = datetime(2024, 3, 2, 3, 0, tzinfo=timezone.utc)
+    saturday = datetime(2024, 3, 2, 3, 0, tzinfo=UTC)
     assert KRX.phase(saturday) is Phase.CLOSED
 
 
@@ -99,7 +99,7 @@ def test_market_phases():
 def test_paper_broker_costs_and_tax():
     pf = Portfolio(cash=1_000_000)
     br = PaperBroker(pf, CostModel())
-    ts = datetime.now(timezone.utc)
+    ts = datetime.now(UTC)
     br.submit(Order("A", Side.BUY, 10), MarketQuote(last=10_000), ts)
     assert pf.qty("A") == 10 and pf.cash < 900_000
     br.submit(Order("A", Side.SELL, 10), MarketQuote(last=10_000), ts)
@@ -113,7 +113,7 @@ def test_shadow_uses_quotes_and_partial_fill():
     pf = Portfolio(cash=10_000_000)
     br = ShadowBroker(pf)
     fill = br.submit(Order("A", Side.BUY, 100), MarketQuote(last=100, bid=99, ask=101, ask_qty=30),
-                     datetime.now(timezone.utc))
+                     datetime.now(UTC))
     assert fill.qty == 30 and fill.price > 101  # 매도1호가 + 슬리피지
     assert len(br.would_have_sent) == 1
 
@@ -122,7 +122,7 @@ def test_shadow_uses_quotes_and_partial_fill():
 def _pf_with(qty=0, cash=10_000_000):
     pf = Portfolio(cash=cash)
     if qty:
-        PaperBroker(pf).submit(Order("A", Side.BUY, qty), MarketQuote(last=1000), datetime.now(timezone.utc))
+        PaperBroker(pf).submit(Order("A", Side.BUY, qty), MarketQuote(last=1000), datetime.now(UTC))
     return pf
 
 
@@ -183,3 +183,14 @@ def test_backtest_gate():
 def test_shadow_gate():
     assert not shadow_gate({"days": 5, "accuracy": 0.6, "max_drawdown": -0.01}, PromotionGates()).passed
     assert shadow_gate({"days": 25, "accuracy": 0.55, "max_drawdown": -0.03}, PromotionGates()).passed
+
+
+def test_holidays_loaded_from_file(tmp_path):
+    import json
+
+    from quant_ai.clock import load_holidays
+    (tmp_path / "h.json").write_text(json.dumps({"KRX": ["2024-03-04"]}))
+    cals = load_holidays(tmp_path / "h.json")
+    monday_10am_kst = datetime(2024, 3, 4, 1, 0, tzinfo=UTC)
+    assert cals["KRX"].phase(monday_10am_kst) is Phase.CLOSED
+    assert KRX.phase(monday_10am_kst) is Phase.OPEN  # 원본은 변경되지 않음

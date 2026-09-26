@@ -21,9 +21,16 @@ STATIC = Path(__file__).parent / "static"
 log = logging.getLogger("quant_ai.web")
 
 
-def make_handler(api: DashboardAPI, token: str | None):
+CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+       "font-src https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data:; "
+       "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+
+
+def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "QuantAI/0.1"
+        server_version = "QuantAI"
+        sys_version = ""
 
         def log_message(self, fmt, *args):  # noqa: D401 - 조용히
             log.debug(fmt, *args)
@@ -34,12 +41,20 @@ def make_handler(api: DashboardAPI, token: str | None):
             got = self.headers.get("X-Token") or (qs.get("token") or [""])[0]
             return hmac.compare_digest(got, token)
 
+        def _host_ok(self) -> bool:
+            """DNS rebinding 방어: 허용된 Host 로 들어온 요청만 처리."""
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+            return host in allowed_hosts
+
         def _send(self, code: int, body: bytes, ctype: str) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Security-Policy", CSP)
             self.end_headers()
             self.wfile.write(body)
 
@@ -49,6 +64,11 @@ def make_handler(api: DashboardAPI, token: str | None):
         def do_GET(self):  # noqa: N802
             url = urlparse(self.path)
             qs = parse_qs(url.query)
+            if not self._host_ok():
+                return self._send(421, b"misdirected request", "text/plain")
+            if url.path == "/api/health":  # 인증 없이 최소 정보 (로드밸런서/모니터링용)
+                h = api.health()
+                return self._json(h, 200 if h["ok"] else 503)
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):
                     return self._json({"error": "unauthorized"}, 401)
@@ -61,6 +81,8 @@ def make_handler(api: DashboardAPI, token: str | None):
                         return self._json(api.analysis(qs["symbol"][0]))
                     if url.path == "/api/reviews":
                         return self._json(api.reviews())
+                    if url.path == "/api/ops":
+                        return self._json(api.ops())
                 except Exception as exc:  # noqa: BLE001
                     log.exception("API 오류")
                     return self._json({"error": str(exc)}, 500)
@@ -76,12 +98,24 @@ def make_handler(api: DashboardAPI, token: str | None):
 
         def do_POST(self):  # noqa: N802
             url = urlparse(self.path)
+            if not self._host_ok():
+                return self._send(421, b"misdirected request", "text/plain")
             if not self._authorized(parse_qs(url.query)):
                 return self._json({"error": "unauthorized"}, 401)
-            if url.path == "/api/killswitch":
-                length = int(self.headers.get("Content-Length") or 0)
+            # CSRF 방어: JSON 만 받는다 (다른 사이트의 form POST 는 preflight 없이 JSON 을 보낼 수 없음)
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                return self._json({"error": "application/json 필요"}, 415)
+            origin = self.headers.get("Origin")
+            if origin and urlparse(origin).hostname not in allowed_hosts:
+                return self._json({"error": "cross-origin 거부"}, 403)
+            length = min(int(self.headers.get("Content-Length") or 0), 10_000)
+            try:
                 body = json.loads(self.rfile.read(length) or b"{}")
-                api.app.set_kill_switch(bool(body.get("on")))
+            except json.JSONDecodeError:
+                return self._json({"error": "잘못된 JSON"}, 400)
+            if url.path == "/api/killswitch":
+                api.app.set_kill_switch(bool(body.get("on")), str(body.get("reason", ""))[:200], by="dashboard")
+                api._cache = None  # 대시보드 캐시 무효화
                 return self._json({"kill_switch": api.app.kill_switch_on()})
             self._json({"error": "not found"}, 404)
 
@@ -92,6 +126,8 @@ def serve(app, host: str = "127.0.0.1", port: int = 8050) -> None:
     token = os.environ.get("QUANT_WEB_TOKEN") or None
     if host not in ("127.0.0.1", "localhost") and not token:
         raise SystemExit("외부 바인딩 시 QUANT_WEB_TOKEN 설정이 필요합니다")
-    httpd = ThreadingHTTPServer((host, port), make_handler(DashboardAPI(app), token))
+    allowed = {"127.0.0.1", "localhost", "::1", host.lower()}
+    allowed |= {h.strip().lower() for h in os.environ.get("QUANT_WEB_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    httpd = ThreadingHTTPServer((host, port), make_handler(DashboardAPI(app), token, allowed))
     print(f"Quant AI 대시보드: http://{host}:{port}" + ("  (토큰: ?token=...)" if token else ""))
     httpd.serve_forever()

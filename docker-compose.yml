@@ -1,13 +1,55 @@
+# 로컬/단일 서버 배포: PostgreSQL + 스케줄러(24시간) + 대시보드
+# 사용: cp .env.example .env && docker compose up -d --build
 services:
   postgres:
     image: postgres:16
     environment:
       POSTGRES_USER: quant
-      POSTGRES_PASSWORD: quant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quant}
       POSTGRES_DB: quant
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://quant:${POSTGRES_PASSWORD:-quant}@postgres:5432/quant
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  scheduler:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://quant:${POSTGRES_PASSWORD:-quant}@postgres:5432/quant
+    command: ["quant-ai", "run", "--mode", "${QUANT_MODE:-shadow}"]
+    volumes: [artifacts:/data]
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://quant:${POSTGRES_PASSWORD:-quant}@postgres:5432/quant
+    # 컨테이너 안에서는 0.0.0.0 바인딩이 필요 → QUANT_WEB_TOKEN 필수. 외부 공개 시 HTTPS 리버스 프록시 뒤에 둘 것
+    command: ["quant-ai", "serve", "--host", "0.0.0.0", "--port", "8050"]
+    ports:
+      - "127.0.0.1:8050:8050"
+    volumes: [artifacts:/data]
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
 volumes:
   pgdata:
+  artifacts:

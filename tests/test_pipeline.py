@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from quant_ai.backtest.backtester import Backtester, BacktestConfig
+from quant_ai.backtest.backtester import BacktestConfig, Backtester
 from quant_ai.config import Mode, Settings
 from quant_ai.data.collectors.prices import SyntheticPriceSource
 
@@ -58,6 +58,7 @@ def test_kill_switch_blocks_new_buys(app):
         fills = app.trade(decisions, Mode.PAPER)
         assert all(f.order.side.value == "sell" for f in fills)
         from sqlalchemy import select
+
         from quant_ai.data.db import session_scope
         from quant_ai.data.models import JournalEntry
         with session_scope(app.engine) as s:

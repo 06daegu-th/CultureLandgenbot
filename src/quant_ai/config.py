@@ -66,9 +66,14 @@ class Settings:
     nvidia_embed_model: str = "nvidia/nemotron-3-embed-1b"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     watchlist: tuple[str, ...] = ()
+    llm_daily_budget_usd: float = 20.0  # 하루 LLM 비용 상한 (넘으면 LLM 기권, 시스템은 계속 동작)
+    llm_cache_minutes: float = 60.0
+    # 증권사
+    broker: str = "none"  # none / kis
+    kis_env: str = "demo"  # demo(모의투자) / real
 
     @classmethod
-    def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
+    def from_env(cls, env: dict[str, str] | None = None) -> Settings:
         e = dict(os.environ if env is None else env)
 
         def f(name: str, default: float) -> float:
@@ -103,6 +108,10 @@ class Settings:
             nvidia_embed_model=e.get("QUANT_NVIDIA_EMBED_MODEL", cls.nvidia_embed_model),
             nvidia_base_url=e.get("QUANT_NVIDIA_BASE_URL", cls.nvidia_base_url),
             watchlist=tuple(x.strip() for x in e.get("QUANT_WATCHLIST", "").split(",") if x.strip()),
+            llm_daily_budget_usd=f("QUANT_LLM_DAILY_BUDGET_USD", cls.llm_daily_budget_usd),
+            llm_cache_minutes=f("QUANT_LLM_CACHE_MINUTES", cls.llm_cache_minutes),
+            broker=e.get("QUANT_BROKER", cls.broker),
+            kis_env=e.get("KIS_ENV", cls.kis_env),
         )
 
     def assert_live_allowed(self, champion_ready: bool) -> None:

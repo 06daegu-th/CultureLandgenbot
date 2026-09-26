@@ -62,3 +62,23 @@ MARKETS = {"KRX": KRX, "US": US}
 
 def any_market_open(now: datetime, markets: dict[str, MarketCalendar] = MARKETS) -> bool:
     return any(m.phase(now) is Phase.OPEN for m in markets.values())
+
+
+def load_holidays(path) -> dict[str, MarketCalendar]:
+    """휴장일 파일로 캘린더 갱신. 형식: {"KRX": ["2026-01-01", ...], "US": [...]}
+
+    거래소 휴장일은 매년 공지(대체공휴일·선거일 등)로 바뀌므로 코드에 하드코딩하지 않는다.
+    """
+    import json
+    from dataclasses import replace
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.exists():
+        return dict(MARKETS)
+    data = json.loads(p.read_text(encoding="utf-8"))
+    out = {}
+    for k, cal in MARKETS.items():
+        days = frozenset(date.fromisoformat(x) for x in data.get(k, []))
+        out[k] = replace(cal, holidays=cal.holidays | days)
+    return out

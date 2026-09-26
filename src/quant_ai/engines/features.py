@@ -24,7 +24,7 @@ def _rsi(close: pd.Series, n: int = 14) -> pd.Series:
 
 
 def technical_features(bars: pd.DataFrame) -> pd.DataFrame:
-    c, h, l, v = bars["close"], bars["high"], bars["low"], bars["volume"]
+    c, h, lo, v = bars["close"], bars["high"], bars["low"], bars["volume"]
     logret = np.log(c).diff()
     f = pd.DataFrame(index=bars.index)
     f["ret_1"] = c.pct_change(1)
@@ -40,12 +40,12 @@ def technical_features(bars: pd.DataFrame) -> pd.DataFrame:
     f["bb_pctb"] = (c - (ma20 - 2 * sd20)) / (4 * sd20)
     f["dist_ma20"] = c / ma20 - 1
     f["dist_ma60"] = c / c.rolling(60).mean() - 1
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    tr = pd.concat([h - lo, (h - c.shift()).abs(), (lo - c.shift()).abs()], axis=1).max(axis=1)
     f["atr_14"] = tr.rolling(14).mean() / c
     lv = np.log1p(v)
     f["volume_z"] = (lv - lv.rolling(20).mean()) / lv.rolling(20).std()
     f["high_20_dist"] = c / h.rolling(20).max() - 1
-    f["low_20_dist"] = c / l.rolling(20).min() - 1
+    f["low_20_dist"] = c / lo.rolling(20).min() - 1
     return f.replace([np.inf, -np.inf], np.nan)
 
 

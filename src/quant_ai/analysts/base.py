@@ -74,7 +74,7 @@ class Opinion:
         return 0.0 if self.prob_up is None else 2 * self.prob_up - 1
 
     @classmethod
-    def abstain(cls, analyst: str, symbol: str, error: str, backend: str = "") -> "Opinion":
+    def abstain(cls, analyst: str, symbol: str, error: str, backend: str = "") -> Opinion:
         return cls(analyst, symbol, None, 0.0, error=error, backend=backend, summary=f"기권: {error}")
 
 

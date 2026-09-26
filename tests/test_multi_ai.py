@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -7,7 +7,7 @@ from quant_ai.analysts.base import MarketContext, Opinion
 from quant_ai.analysts.llm_clients import HashingEmbeddings, LLMClient, LLMError, extract_json
 from quant_ai.ensemble.engine import EnsembleEngine, TrackRecord
 
-NOW = datetime(2024, 3, 4, 6, 0, tzinfo=timezone.utc)
+NOW = datetime(2024, 3, 4, 6, 0, tzinfo=UTC)
 
 
 def ctx(**kw):

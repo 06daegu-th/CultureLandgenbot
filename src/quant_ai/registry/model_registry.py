@@ -12,7 +12,7 @@ Live 는 champion 만 사용한다. 새로 학습된 모델은 절대 바로 실
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -29,10 +29,14 @@ class PromotionGates:
     min_oos_predictions: int = 500
     min_accuracy: float = 0.51
     max_brier_excess: float = 0.002  # 기저율(climatology) Brier 대비 허용 초과분
-    min_ic: float = 0.02  # 확률과 실제 수익률의 순위상관 (예측력의 핵심)
+    min_ic: float = 0.02  # 날짜별 횡단면 순위상관 평균 (예측력의 핵심)
+    min_ic_t: float = 2.0  # IC 의 t-통계량 (IC 가 0 과 통계적으로 다른가)
     min_sharpe: float = 0.5
     max_drawdown: float = -0.25
     must_beat_champion_brier_by: float = 0.0005
+    min_psr: float = 0.90  # P(진짜 Sharpe > 0) — 운으로 나온 백테스트 걸러내기
+    min_stress_sharpe: float = 0.0  # 비용 2배 스트레스에서도 손실 전략이 아닐 것
+    min_dsr: float = 0.50  # 다중검정 보정 (후보를 많이 만들수록 기준 상승)
     # Shadow 게이트
     min_shadow_days: int = 20
     min_shadow_accuracy: float = 0.50
@@ -58,10 +62,19 @@ def backtest_gate(metrics: dict, champion_metrics: dict | None, g: PromotionGate
         fails.append(f"Brier {pred.get('brier', 1):.4f} > 기저율 기준 {climatology:.4f} (확률 보정 불량)")
     if (pred.get("ic") or 0) < g.min_ic:
         fails.append(f"IC {pred.get('ic') or 0:.3f} < {g.min_ic} (순위 예측력 부족)")
+    if pred.get("ic_t") is not None and pred["ic_t"] < g.min_ic_t:
+        fails.append(f"IC t-stat {pred['ic_t']:.1f} < {g.min_ic_t} (예측력이 통계적으로 유의하지 않음)")
     if strat["sharpe"] < g.min_sharpe:
         fails.append(f"Sharpe {strat['sharpe']:.2f} < {g.min_sharpe}")
     if strat["max_drawdown"] < g.max_drawdown:
         fails.append(f"MDD {strat['max_drawdown']:.1%} < {g.max_drawdown:.0%}")
+    if strat.get("psr") is not None and strat["psr"] < g.min_psr:
+        fails.append(f"PSR {strat['psr']:.2f} < {g.min_psr} (Sharpe 가 우연일 가능성)")
+    stress = metrics.get("stress")
+    if stress is not None and stress.get("sharpe", 0) < g.min_stress_sharpe:
+        fails.append(f"비용 2배 스트레스 Sharpe {stress['sharpe']:.2f} < {g.min_stress_sharpe}")
+    if metrics.get("dsr") is not None and metrics["dsr"] < g.min_dsr:
+        fails.append(f"DSR {metrics['dsr']:.2f} < {g.min_dsr} (시도 {metrics.get('n_trials')}회 다중검정 보정)")
     if champion_metrics:
         champ_brier = champion_metrics["prediction"].get("brier", 1)
         if pred.get("brier", 1) > champ_brier - g.must_beat_champion_brier_by:
@@ -93,11 +106,17 @@ class ModelRegistry:
             return s.scalar(select(ModelRecord).where(ModelRecord.status == "champion")
                             .order_by(ModelRecord.created_at.desc()))
 
+    def n_trials(self) -> int:
+        """지금까지 등록된 후보 수 (DSR 다중검정 보정에 사용)."""
+        from sqlalchemy import func
+        with session_scope(self.engine) as s:
+            return int(s.scalar(select(func.count()).select_from(ModelRecord)) or 0)
+
     def load(self, rec: ModelRecord) -> Predictor:
         return Predictor.load(Path(rec.artifact_path))
 
     def register_candidate(self, model: Predictor, name: str, metrics: dict, params: dict) -> ModelRecord:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         version = now.strftime("%Y%m%d%H%M%S%f")
         path = model.save(self.dir / f"{name}-{version}.joblib")
         with session_scope(self.engine) as s:

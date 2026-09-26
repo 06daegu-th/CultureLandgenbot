@@ -23,6 +23,7 @@ from ..trading.execution import ExecutionEngine, signals_from_probs
 from ..trading.journal import Journal
 from ..trading.portfolio import CostModel, Portfolio
 from ..trading.risk import RiskEngine
+from .stats import bootstrap_sharpe_ci, calibration_table, probabilistic_sharpe
 
 
 @dataclass
@@ -58,12 +59,16 @@ def performance(equity: pd.Series, periods: int = 252) -> dict:
     years = len(rets) / periods
     total = float(equity.iloc[-1] / equity.iloc[0] - 1)
     vol = float(rets.std() * np.sqrt(periods))
+    lo, hi = bootstrap_sharpe_ci(rets, periods)
     return {
         "total_return": total,
         "cagr": float((1 + total) ** (1 / years) - 1) if years > 0 and total > -1 else -1.0,
         "ann_vol": vol,
         "sharpe": float(rets.mean() * periods / vol) if vol > 0 else 0.0,
+        "sharpe_ci95": [lo, hi],
+        "psr": probabilistic_sharpe(rets),  # P(진짜 Sharpe > 0)
         "max_drawdown": float((equity / equity.cummax() - 1).min()),
+        "n_periods": int(len(rets)),
     }
 
 
@@ -142,11 +147,14 @@ class Backtester:
         metrics = {
             "strategy": performance(equity),
             "benchmark": performance(benchmark_eq),
-            "prediction": classification_metrics(scored["prob_up"], scored["label"], scored["fwd_ret"]),
+            "prediction": classification_metrics(scored["prob_up"], scored["label"], scored["fwd_ret"],
+                                                 ts=scored["ts"]),
+            "calibration": calibration_table(scored["prob_up"], scored["label"]) if len(scored) else [],
             "n_orders": len(journal.of_kind("order")),
             "n_fills": sum(1 for e in journal.of_kind("order") if e.data["status"] == "filled"),
             "fees_paid": pf.fees_paid,
             "n_days": len(equity),
         }
         metrics["excess_return"] = metrics["strategy"]["total_return"] - metrics["benchmark"]["total_return"]
+        metrics["daily_returns"] = [float(x) for x in equity.pct_change().dropna()]  # DSR 계산용
         return BacktestResult(equity, benchmark_eq, preds, journal, metrics, model)

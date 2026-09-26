@@ -21,6 +21,12 @@ PRICE_KEYS = ["ret_1", "ret_5", "ret_20", "vol_20", "vol_ratio", "rsi_14", "dist
 RISK_ON_SERIES = {"VIXCLS": -1.0, "DGS10": -0.5, "DEXKOUS": -0.5, "DCOILWTICO": 0.0}
 
 
+def _clip(text: str | None, n: int) -> str:
+    """외부 텍스트 길이 제한 (프롬프트 주입 표면·토큰 비용 축소)."""
+    t = " ".join((text or "").split())
+    return t if len(t) <= n else t[: n - 1] + "…"
+
+
 def _r(x, nd=4):
     return None if x is None or (isinstance(x, float) and np.isnan(x)) else round(float(x), nd)
 
@@ -75,7 +81,7 @@ def build_context(
 
     since = as_of - timedelta(hours=news_hours)
     news = [
-        {"ts": str(n.published_at), "title": n.title, "sentiment": _r(n.sentiment, 2),
+        {"ts": str(n.published_at), "title": _clip(n.title, 200), "sentiment": _r(n.sentiment, 2),
          "importance": _r(n.importance, 2), "events": n.events or [], "source": n.source}
         for n in session.scalars(
             select(NewsArticle).where(NewsArticle.published_at <= as_of, NewsArticle.published_at >= since)
@@ -84,7 +90,7 @@ def build_context(
         if symbol in (n.symbols or [])
     ][:max_news]
     discl = [
-        {"date": str(d.filed_at), "title": d.title, "sentiment": _r(d.sentiment, 2), "events": d.events or []}
+        {"date": str(d.filed_at), "title": _clip(d.title, 200), "sentiment": _r(d.sentiment, 2), "events": d.events or []}
         for d in session.scalars(
             select(Disclosure).where(Disclosure.symbol == symbol, Disclosure.filed_at <= as_of.date(),
                                      Disclosure.filed_at >= (as_of - timedelta(days=7)).date())

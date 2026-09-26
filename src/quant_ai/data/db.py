@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import contextmanager
-from datetime import timezone
+from datetime import UTC
 
 import pandas as pd
 from sqlalchemy import create_engine, select
@@ -45,7 +45,7 @@ def to_utc_index(idx: pd.Index) -> pd.DatetimeIndex:
 
 
 def _naive_utc(ts) -> object:
-    return ts.astimezone(timezone.utc).replace(tzinfo=None) if ts.tzinfo else ts
+    return ts.astimezone(UTC).replace(tzinfo=None) if ts.tzinfo else ts
 
 
 def upsert_bars(session: Session, symbol: str, bars: pd.DataFrame, interval: str, source: str) -> int:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +20,7 @@ from .data.collectors.prices import SyntheticPriceSource
 from .data.db import session_scope
 from .data.models import Instrument, MacroObservation, NewsArticle
 from .engines.news_intel import NewsAnalyzer
+from .ops import record_job
 from .pipeline import BENCHMARK_MARKET, QuantAI
 from .trading.broker import MarketQuote
 
@@ -50,7 +51,7 @@ NEU = ["{n}, 주주총회 개최", "{n} 신임 임원 선임", "{n} 사업부 �
 
 def seed(app: QuantAI, years: int = 5, seed_value: int = 11) -> None:
     rng = np.random.default_rng(seed_value)
-    end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     start = end - timedelta(days=365 * years)
     src = SyntheticPriceSource(seed=seed_value, momentum=0.2)  # 데모용: 학습 가능한 모멘텀을 강하게
 
@@ -63,13 +64,16 @@ def seed(app: QuantAI, years: int = 5, seed_value: int = 11) -> None:
             if sym not in have:
                 s.add(Instrument(symbol=sym, market=BENCHMARK_MARKET, name=name, currency="", sector="index"))
 
-    for sym in [u[0] for u in UNIVERSE] + [i[0] for i in INDICES]:
-        bars = src.fetch_bars(sym, start, end)
-        k = SCALE.get(sym, 1.0)
-        bars[["open", "high", "low", "close"]] *= k
-        with session_scope(app.engine) as s:
-            from .data.db import upsert_bars
-            upsert_bars(s, sym, bars, "1d", "synthetic-demo")
+    class ScaledDemoSource:  # 종목별 가격 수준만 현실적으로 맞춘 가상 시세
+        name = "synthetic-demo"
+
+        def fetch_bars(self, sym, start, end, interval="1d"):
+            bars = src.fetch_bars(sym, start, end)
+            bars[["open", "high", "low", "close"]] *= SCALE.get(sym, 1.0)
+            return bars
+
+    # 실제 수집과 같은 경로 (품질검사 → 저장)
+    app.ingest_prices(ScaledDemoSource(), [u[0] for u in UNIVERSE] + [i[0] for i in INDICES], start, end)
 
     # 가짜 뉴스: 이후 5일 수익률과 약하게 상관 (데모에서 뉴스 AI 가 '무언가'를 배울 수 있게)
     analyzer = NewsAnalyzer()
@@ -116,8 +120,9 @@ def run_demo(app: QuantAI, replay_days: int = 60, verbose: bool = True, years: i
 
     say(f"② walk-forward 백테스트 + 후보 모델 등록 (학습 데이터: ~{cutoff.date()})")
     cut = {k: v[v.index <= cutoff] for k, v in bars.items()}
-    rec, result, gate = app.train_candidate(cut, bench[bench.index <= cutoff],
-                                            sent[sent.index <= cutoff] if sent is not None else None)
+    with record_job(app.engine, "retrain_candidate"):
+        rec, result, gate = app.train_candidate(cut, bench[bench.index <= cutoff],
+                                                sent[sent.index <= cutoff] if sent is not None else None)
     m = result.metrics
     say(f"   전략 수익 {m['strategy']['total_return']:+.1%} / 벤치마크 {m['benchmark']['total_return']:+.1%}, "
         f"Sharpe {m['strategy']['sharpe']:.2f}, MDD {m['strategy']['max_drawdown']:.1%}, "
@@ -127,17 +132,20 @@ def run_demo(app: QuantAI, replay_days: int = 60, verbose: bool = True, years: i
     say(f"③ 최근 {replay_days}거래일 재생: 멀티 AI 판단 → 앙상블 → Paper/Shadow 매매 → 채점")
     replay = dates[-replay_days:]
     for i, t in enumerate(replay):
-        decisions = app.decide(as_of=t.to_pydatetime(), scenarios=(i == len(replay) - 1))
         quotes = {sym: MarketQuote(last=float(b.loc[t, "close"]), bid=float(b.loc[t, "close"]) * 0.9995,
                                    ask=float(b.loc[t, "close"]) * 1.0005, bid_qty=1e6, ask_qty=1e6)
                   for sym, b in bars.items() if t in b.index}
         ts = t.to_pydatetime() + timedelta(hours=6, minutes=20)  # 장 마감 무렵
-        app.trade(decisions, Mode.PAPER, ts=ts, quotes=dict(quotes))
-        app.trade(decisions, Mode.SHADOW, ts=ts, quotes=dict(quotes))
+        with record_job(app.engine, "decide_and_trade"):
+            decisions = app.decide(as_of=t.to_pydatetime(), scenarios=(i == len(replay) - 1))
+            app.trade(decisions, Mode.PAPER, ts=ts, quotes=dict(quotes))
+            app.trade(decisions, Mode.SHADOW, ts=ts, quotes=dict(quotes))
         if i % 10 == 9 or i == len(replay) - 1:
-            report = app.review(t.date())
+            with record_job(app.engine, "review"):
+                report = app.review(t.date())
             say(f"   {t.date()} 복기: 채점 {report.summary.get('n_resolved', 0)}건, 교훈 {len(report.lessons or [])}개")
-    results = app.evaluate_shadow_models()
+    with record_job(app.engine, "shadow_eval"):
+        results = app.evaluate_shadow_models()
     for mid, g in results:
         say(f"④ Shadow 평가 모델#{mid}: {'champion 승격' if g.passed else '보류/탈락: ' + '; '.join(g.failures)}")
     return m

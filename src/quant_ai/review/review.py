@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 from sqlalchemy import select
@@ -37,7 +37,7 @@ def classify_miss(c: ConsensusRecord) -> str:
 
 def daily_review(session: Session, review_date: date, lookback_days: int = 30,
                  memory: Memory | None = None) -> ReviewReport:
-    end = datetime.combine(review_date, datetime.max.time(), timezone.utc)
+    end = datetime.combine(review_date, datetime.max.time(), UTC)
     start = end - timedelta(days=lookback_days)
     cons = session.scalars(select(ConsensusRecord).where(
         ConsensusRecord.correct.is_not(None), ConsensusRecord.as_of >= start, ConsensusRecord.as_of <= end)).all()
@@ -97,7 +97,7 @@ def daily_review(session: Session, review_date: date, lookback_days: int = 30,
             elif row["accuracy"] < 0.45:
                 lessons.append(f"{names.get(row['analyst'], row['analyst'])} {label} 적중률 {row['accuracy']:.0%} (n={row['n']}) → 가중치 자동 하향 중")
 
-    report = ReviewReport(review_date=review_date, mode="review", created_at=datetime.now(timezone.utc),
+    report = ReviewReport(review_date=review_date, mode="review", created_at=datetime.now(UTC),
                           summary=_clean(summary), lessons=lessons)
     session.add(report)
     if memory is not None:

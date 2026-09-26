@@ -98,8 +98,22 @@
 - NVIDIA Developer Program 무료 엔드포인트는 프로토타이핑·연구·테스트 용도로 안내되어 있다.
   실제 돈이 걸린 Live 에 쓰기 전 최신 약관(Production 은 AI Enterprise 라이선스 필요 여부)을 확인할 것.
 
-## 7. 다음 단계
-1. 증권사 API 연동 (예: 한국투자증권 KIS): `RealtimeFeed`(웹소켓 시세/호가/체결), `LiveBroker.submit`.
+## 7. 운영 · 보안 계층
+
+| 계층 | 구현 |
+|---|---|
+| LLM 가드 | 입력 해시 캐시(TTL) · 일 예산(USD) 초과 시 기권 · `llm_calls` 감사 로그(모델·지연·토큰·비용·응답) |
+| 프롬프트 주입 방어 | 외부 텍스트를 '비신뢰 데이터'로 명시 · 길이 제한 · JSON 스키마 구조화 출력 · 값 클리핑 · 다른 AI 와 앙상블 |
+| 매매 사이클 | 모드별 잠금(PostgreSQL advisory lock) · 당일 주문 수 영속 · 소액 상한(budget ratio) · 종목별 오류 격리 |
+| 킬스위치 | DB 공유 상태(`system_state`) · 대시보드/CLI/자동(일 손실 1.5배) · 모든 변경 알림 |
+| Live | 증권사 잔고 = 진실의 원천 · 보호 지정가 · 체결 폴링 · 잔량 취소 |
+| 모델 게이트 | Brier(기저율 대비) · 횡단면 IC · IC t-stat · PSR · DSR · 비용 2배 스트레스 · MDD · champion 대비 개선 · Shadow |
+| 데이터 | 수집 시 품질검사 → 문제 행 제거 · 경고는 운영 화면/알림 |
+| 웹 | Host 화이트리스트(DNS rebinding) · JSON+Origin 검사(CSRF) · CSP/X-Frame-Options · 토큰 · 경로 탐색 차단 |
+| 관측 | `job_runs` · `/api/health` · 운영 화면 · 웹훅 알림 · JSON 로그 |
+
+## 8. 다음 단계
+1. KIS 모의투자 계좌로 실제 검증 → 실시간 웹소켓(`RealtimeFeed`), 해외주식 주문.
 2. 실적·재무 데이터 수집 → `features.asof_merge` 로 공시일 기준 결합.
 3. pgvector 로 RAG 메모리 이전 (대량 뉴스).
 4. 멀티모달 보조 AI (차트 이미지·IR 자료) — `Analyst` 를 하나 더 구현해 `build_analysts` 에 추가.
