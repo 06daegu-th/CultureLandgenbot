@@ -41,13 +41,14 @@ from .data.models import (
 )
 from .data.quality import validate_bars
 from .engines.features import build_dataset, feature_columns
+from .engines.market_intel import FACTORS, cross_asset, load_macro, market_state
 from .engines.news_intel import daily_sentiment
 from .engines.prediction import Prediction, Predictor, direction_of
 from .engines.regime import EXPOSURE_MULTIPLIER, Regime, RegimeState, equal_weight_index, regime_series
 from .engines.scenario import build_scenarios
 from .ensemble.calibration import fit_calibrators, load_calibrators
 from .ensemble.engine import ConsensusSignal, EnsembleEngine, records_for
-from .ensemble.tracker import resolve, save_consensus, scoreboard
+from .ensemble.tracker import evidence_snapshot, resolve, save_consensus, scoreboard
 from .registry.model_registry import ModelRegistry
 from .review.review import daily_review
 from .strategy.core_satellite import CoreSatelliteConfig, Plan, build_plan, core_scores
@@ -166,7 +167,7 @@ class QuantAI:
             idx = load_bars(s, self.index_symbols())
             news = pd.DataFrame([
                 {"published_at": n.published_at, "symbol": sym, "sentiment": n.sentiment or 0.0,
-                 "importance": n.importance or 0.5}
+                 "importance": n.importance or 0.5, "title": n.title}
                 for n in s.scalars(select(NewsArticle)) for sym in (n.symbols or [])
             ])
         if as_of is not None:
@@ -278,6 +279,9 @@ class QuantAI:
             backends = {a.name: backend_id(a.client) for a in analysts if getattr(a, "client", None) is not None}
             board = records_for(scoreboard(s, backends={k: v for k, v in backends.items() if v}))
             calibrators = load_calibrators(ops.get_state(self.engine, "calibration"))
+            macro_series = load_macro(s, [k for k in FACTORS if k != "KOSPI"], as_of=as_of or datetime.now(UTC))
+            factors = {**macro_series, **({"KOSPI": bench["close"]} if bench is not None else {})}
+            mstate = market_state(bench, bars, vix=macro_series.get("VIXCLS"))
             for sym in symbols or list(bars):
                 if sym not in bars or bars[sym].empty:
                     continue
@@ -286,12 +290,15 @@ class QuantAI:
                 frow = rows.loc[t, feats]
                 rrow = reg.loc[t] if t in reg.index else None
                 ctx = build_context(s, sym, t.to_pydatetime(), self.horizon, bars[sym], frow, rrow,
-                                    memory=self.memory, events=events, macro=macro)
+                                    memory=self.memory, events=events, macro=macro, market=mstate,
+                                    cross=cross_asset(bars[sym]["close"], {k: v for k, v in factors.items()
+                                                                           if k != sym}))
                 opinions = [a.analyze(ctx) for a in analysts]
                 sig = self.ensemble.combine(sym, opinions, board, calibrators)
                 cid = None
                 if persist:
-                    rec = save_consensus(s, sig, opinions, ctx.as_of, self.horizon, ctx.regime.get("regime"))
+                    rec = save_consensus(s, sig, opinions, ctx.as_of, self.horizon, ctx.regime.get("regime"),
+                                         evidence=evidence_snapshot(ctx))
                     cid = rec.id
                     if challenger is not None:  # 앙상블 미참여, 채점만
                         ch = QuantAnalyst(challenger, challenger_rec.version, name="challenger").analyze(ctx)

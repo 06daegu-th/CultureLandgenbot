@@ -26,11 +26,29 @@ MIN_SIGNAL = 0.05  # 이보다 약한 점수는 '의견 없음'으로 보고 채
 RISK_WARN_LEVEL = 0.3
 
 
+def evidence_snapshot(ctx) -> dict:
+    """Evidence Chain 용: 이 판단을 내릴 때 AI 들이 본 재료를 요약해 합의 기록에 같이 저장한다.
+    (나중에 뉴스·지표가 바뀌어도 '그때 무엇을 보고 샀는가' 를 그대로 재현)"""
+    keys = ("last_close", "ret_1", "ret_5", "ret_20", "rsi_14", "vol_20", "ma_20_gap", "ma_60_gap", "vol_ratio",
+            "jump_sigma", "dist_52w")
+    return {
+        "price": {k: v for k, v in (ctx.price or {}).items() if k in keys or k == "last_bar"},
+        "regime": ctx.regime, "market": {k: ctx.market_state.get(k) for k in ("label", "score", "type")} if ctx.market_state else {},
+        "news": [{k: e.get(k) for k in ("title", "ts", "n_articles", "sentiment", "importance", "sources", "category")}
+                 for e in (ctx.news or [])[:6]],
+        "disclosures": [{k: d.get(k) for k in ("date", "title", "sentiment", "events")} for d in (ctx.disclosures or [])[:5]],
+        "macro": ctx.macro, "cross_asset": (ctx.cross_asset or [])[:4],
+        "events": [{k: e.get(k) for k in ("ts", "name", "importance")} for e in (ctx.upcoming_events or [])[:5]],
+        "data_quality": ctx.data_quality,
+    }
+
+
 def save_consensus(session: Session, sig: ConsensusSignal, opinions: list[Opinion], as_of: datetime,
-                   horizon: int, regime: str | None) -> ConsensusRecord:
+                   horizon: int, regime: str | None, evidence: dict | None = None) -> ConsensusRecord:
     rec = ConsensusRecord(symbol=sig.symbol, as_of=as_of, action=sig.action, prob_up=sig.prob_up,
                           confidence=sig.confidence, conflict=sig.conflict,
-                          payload={**sig.to_dict(), "regime": regime, "horizon": horizon})
+                          payload={**sig.to_dict(), "regime": regime, "horizon": horizon,
+                                   **({"evidence": _json_safe(evidence)} if evidence else {})})
     session.add(rec)
     session.flush()
     cal = {c.analyst: c.prob_up for c in sig.contributions if c.prob_raw is not None}
@@ -50,6 +68,22 @@ def save_consensus(session: Session, sig: ConsensusSignal, opinions: list[Opinio
                 session.add(AnalystOpinionRecord(category=cat, prob_up=0.5 + 0.5 * score,
                                                  payload={**payload, "score": score}, **base))
     return rec
+
+
+def _json_safe(obj):
+    """JSON 컬럼에 넣을 수 있게: NaN/inf → None, numpy → 파이썬, 그 외 → 문자열."""
+    import math
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_json_safe(v) for v in obj]
+    if hasattr(obj, "item") and not isinstance(obj, (str, bytes)):
+        obj = obj.item()
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if obj is None or isinstance(obj, (bool, int, str)):
+        return obj
+    return str(obj)
 
 
 def resolve(session: Session, bars_by_symbol: dict[str, pd.DataFrame], benchmark: pd.DataFrame) -> int:

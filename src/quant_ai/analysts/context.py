@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..data.models import Disclosure, Instrument, MacroObservation, NewsArticle
+from ..engines.market_intel import cluster_news
 from .base import MarketContext
 from .memory import Memory
 
@@ -64,6 +65,8 @@ def build_context(
     macro: dict | None = None,
     news_hours: int = 72,
     max_news: int = 30,
+    market: dict | None = None,
+    cross: list[dict] | None = None,
 ) -> MarketContext:
     inst = session.scalar(select(Instrument).where(Instrument.symbol == symbol))
     hist = bars[bars.index <= pd.Timestamp(as_of)]
@@ -80,7 +83,7 @@ def build_context(
                   "vol_pct": _r(regime_row.get("vol_pct")), "drawdown": _r(regime_row.get("drawdown"))}
 
     since = as_of - timedelta(hours=news_hours)
-    news = [
+    articles = [
         {"ts": str(n.published_at), "title": _clip(n.title, 200), "sentiment": _r(n.sentiment, 2),
          "importance": _r(n.importance, 2), "events": n.events or [], "source": n.source}
         for n in session.scalars(
@@ -88,7 +91,9 @@ def build_context(
             .order_by(NewsArticle.published_at.desc()).limit(500)
         )
         if symbol in (n.symbols or [])
-    ][:max_news]
+    ]
+    # 같은 사건 기사 N개 → 이벤트 1개 (중복 보도로 호재/악재가 부풀려지지 않게, LLM 토큰도 절약)
+    news = [{k: v for k, v in e.items() if k != "symbols"} for e in cluster_news(articles)][:max_news]
     discl = [
         {"date": str(d.filed_at), "title": _clip(d.title, 200), "sentiment": _r(d.sentiment, 2), "events": d.events or []}
         for d in session.scalars(
@@ -115,5 +120,5 @@ def build_context(
         as_of=as_of, horizon_days=horizon_days, price=price, regime=regime, news=news, disclosures=discl,
         macro=macro or {}, upcoming_events=upcoming, similar_past=similar,
         features={k: float(v) for k, v in f.items() if isinstance(v, (int, float, np.floating)) and not pd.isna(v)},
-        data_quality=dq,
+        data_quality=dq, market_state=market or {}, cross_asset=(cross or [])[:6],
     )

@@ -96,6 +96,15 @@ def daily_sentiment(articles: pd.DataFrame, half_life_days: float = 2.0) -> pd.D
     df = articles.copy()
     df["date"] = pd.to_datetime(df["published_at"], utc=True).dt.normalize()
     df["w"] = df["sentiment"] * df["importance"]
+    if "title" in df:
+        # 같은 날 같은 종목의 같은 사건 기사들은 하나로 (중복 보도로 감성이 부풀려지지 않게): 이벤트별 평균
+        from .market_intel import cluster_news
+        rows = []
+        for (d, sym), g in df.groupby(["date", "symbol"]):
+            for e in cluster_news([{"ts": str(t), "title": ti, "sentiment": w}
+                                   for t, ti, w in zip(g["published_at"], g["title"], g["w"], strict=True)]):
+                rows.append({"date": d, "symbol": sym, "w": e["sentiment"] or 0.0})
+        df = pd.DataFrame(rows)
     daily = df.pivot_table(index="date", columns="symbol", values="w", aggfunc="sum").sort_index()
     full = pd.date_range(daily.index.min(), daily.index.max(), freq="D", tz="UTC")
     daily = daily.reindex(full).fillna(0.0)

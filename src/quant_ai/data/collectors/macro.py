@@ -15,7 +15,8 @@ from ..models import MacroObservation
 from . import http
 
 FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
-DEFAULT_SERIES = ("DGS10", "DGS2", "DEXKOUS", "VIXCLS", "DFF", "DCOILWTICO")
+# 금리·환율·변동성·유가 + 크로스에셋(NASDAQ, S&P500, 달러지수)
+DEFAULT_SERIES = ("DGS10", "DGS2", "DEXKOUS", "VIXCLS", "DFF", "DCOILWTICO", "NASDAQCOM", "SP500", "DTWEXBGS")
 
 
 def parse_fred(payload: dict) -> list[tuple[date, float]]:

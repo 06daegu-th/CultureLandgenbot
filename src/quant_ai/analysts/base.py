@@ -33,13 +33,15 @@ class MarketContext:
     horizon_days: int
     price: dict  # last, ret_1/5/20, vol_20, rsi, ma 거리 등
     regime: dict  # regime, trend, vol_pct, drawdown
-    news: list[dict] = field(default_factory=list)  # [{ts, title, sentiment, events}]
+    news: list[dict] = field(default_factory=list)  # 뉴스 '이벤트' [{ts, title, n_articles, sentiment, events}]
     disclosures: list[dict] = field(default_factory=list)
     macro: dict = field(default_factory=dict)  # {series: {last, chg_5d}}
     upcoming_events: list[dict] = field(default_factory=list)  # [{ts, name, importance}]
     similar_past: list[dict] = field(default_factory=list)  # RAG: 과거 유사 사례 + 당시 결과
     features: dict = field(default_factory=dict)  # 퀀트 피처 원본 (quant 애널리스트용)
     data_quality: dict = field(default_factory=dict)  # stale, gap, jump 등
+    market_state: dict = field(default_factory=dict)  # 시장 상태 {label: RISK ON/OFF, score, type}
+    cross_asset: list[dict] = field(default_factory=list)  # [{name, corr, beta, chg_5d}] NASDAQ·VIX·달러·금리·유가
 
     def to_prompt(self) -> str:
         d = asdict(self)
