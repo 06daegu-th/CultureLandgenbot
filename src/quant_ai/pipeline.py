@@ -46,7 +46,7 @@ from .engines.news_intel import daily_sentiment
 from .engines.prediction import Prediction, Predictor, direction_of
 from .engines.regime import EXPOSURE_MULTIPLIER, Regime, RegimeState, equal_weight_index, regime_series
 from .engines.scenario import build_scenarios
-from .ensemble.calibration import fit_calibrators, load_calibrators
+from .ensemble.calibration import calibrators_as_of, fit_calibrators
 from .ensemble.engine import ConsensusSignal, EnsembleEngine, records_for
 from .ensemble.tracker import evidence_snapshot, resolve, save_consensus, scoreboard
 from .registry.model_registry import ModelRegistry
@@ -277,8 +277,11 @@ class QuantAI:
             macro = macro_snapshot(s, as_of or datetime.now(UTC))
             # 백엔드가 바뀌면(예: 휴리스틱 → Claude) 이전 성적을 물려받지 않는다
             backends = {a.name: backend_id(a.client) for a in analysts if getattr(a, "client", None) is not None}
-            board = records_for(scoreboard(s, backends={k: v for k, v in backends.items() if v}))
-            calibrators = load_calibrators(ops.get_state(self.engine, "calibration"))
+            # Point-in-Time: 과거 재생(as_of)이면 그 시점에 알 수 있던 성적·보정기만 쓴다 (미래 누수 방지)
+            board = records_for(scoreboard(s, backends={k: v for k, v in backends.items() if v},
+                                           until=pd.Timestamp(as_of).to_pydatetime() if as_of is not None else None))
+            calibrators = calibrators_as_of(ops.get_state(self.engine, "calibration_history"),
+                                            ops.get_state(self.engine, "calibration"), as_of)
             macro_series = load_macro(s, [k for k in FACTORS if k != "KOSPI"], as_of=as_of or datetime.now(UTC))
             factors = {**macro_series, **({"KOSPI": bench["close"]} if bench is not None else {})}
             mstate = market_state(bench, bars, vix=macro_series.get("VIXCLS"))
@@ -412,17 +415,31 @@ class QuantAI:
         broker = None
         if mode is not Mode.LIVE:
             self.recover_orders(name)  # 가상 장부: 지난번 중단된 사이클의 미완료 기록 정리
+        if book is None and ops.halted(self.engine):
+            # 자동 감시가 심각한 이상으로 멈춘 상태: 매도 포함 새 주문 없음 (사람이 확인 후 해제)
+            ks = ops.get_state(self.engine, "kill_switch")
+            log.warning("[%s] HALTED — 주문 건너뜀: %s", name, ks.get("reason"))
+            DBJournal(name, self.engine).note(ts, "risk_block", f"HALTED: {ks.get('reason', '')}"[:500])
+            return []
         if mode is Mode.LIVE:
             broker = self._live_broker(pf)
-            if hasattr(broker, "recover"):
-                self.recover_orders(name, broker)  # 지난 사이클에 끝나지 않은 주문부터 정리 (중복 주문 방지)
-            if hasattr(broker, "sync_portfolio"):
-                broker.sync_portfolio(self.symbols())  # 진실의 원천 = 증권사 잔고
-                if quotes is None:
-                    # 필요한 종목만 실시간 조회 (전 종목 조회는 모의투자 기준 사이클당 수 분)
-                    want = {x.symbol for x in signals_override} if signals_override is not None \
-                        else {d.symbol for d in decisions}
-                    quotes = broker.live_quotes(sorted(want | set(pf.positions)))
+            try:
+                if hasattr(broker, "recover"):
+                    self.recover_orders(name, broker)  # 지난 사이클에 끝나지 않은 주문부터 정리 (중복 주문 방지)
+                if hasattr(broker, "sync_portfolio"):
+                    broker.sync_portfolio(self.symbols())  # 진실의 원천 = 증권사 잔고
+                    if quotes is None:
+                        # 필요한 종목만 실시간 조회 (전 종목 조회는 모의투자 기준 사이클당 수 분)
+                        want = {x.symbol for x in signals_override} if signals_override is not None \
+                            else {d.symbol for d in decisions}
+                        quotes = broker.live_quotes(sorted(want | set(pf.positions)))
+                        self._record_quotes(quotes)
+                if st.broker == "kis":
+                    ops.record_health(self.engine, "broker", True)
+            except Exception as e:
+                if st.broker == "kis":
+                    ops.record_health(self.engine, "broker", False, f"{type(e).__name__}: {e}")
+                raise
         if quotes is None:
             bars, _, _ = self.market_data(ts)
             quotes = {}
@@ -443,9 +460,18 @@ class QuantAI:
         if mode is Mode.LIVE and equity > 0 and self._live_capital_capped():
             budget_ratio = min(1.0, st.live_max_capital / equity)  # 실전 계좌: 소액 상한만큼만 운용
 
-        risk = RiskEngine(st.risk)
-        risk.kill_switch = self.kill_switch_on()
-        risk.start_day(ts.date(), self._day_start_equity(name, ts, equity), self._orders_today(name, ts))
+        try:
+            risk = RiskEngine(st.risk)
+            risk.kill_switch = self.kill_switch_on()
+            risk.start_day(ts.date(), self._day_start_equity(name, ts, equity), self._orders_today(name, ts))
+            with session_scope(self.engine) as s:  # 유동성 한도: 20일 평균 거래대금 대비 주문 금액
+                risk.adv = recent_adv(s, set(pf.positions) | ({x.symbol for x in signals_override}
+                                                              if signals_override is not None else set()))
+        except Exception as e:
+            ops.record_health(self.engine, "risk_engine", False, f"{type(e).__name__}: {e}")
+            raise
+        if book is None:
+            ops.record_health(self.engine, "risk_engine", True)
         journal = DBJournal(name, self.engine)
         regime = next((d.context.regime.get("regime") for d in decisions if d.context.regime.get("regime")), None)
         mult = (EXPOSURE_MULTIPLIER[Regime(regime)] if regime else 1.0) * budget_ratio
@@ -458,8 +484,10 @@ class QuantAI:
             journal.note(ts, "signal", f"{d.symbol} {d.signal.action} P(up)={d.signal.prob_up:.2f} "
                          f"신뢰도 {d.signal.confidence:.0f} 충돌 {d.signal.conflict}", d.symbol,
                          consensus_id=d.consensus_id, vetoes=d.signal.vetoes)
-        with session_scope(self.engine) as s:  # 유동성 한도: 20일 평균 거래대금 대비 주문 금액
-            risk.adv = recent_adv(s, {x.symbol for x in signals} | set(pf.positions))
+        missing = {x.symbol for x in signals} - set(risk.adv) - set(pf.positions)
+        if missing:
+            with session_scope(self.engine) as s:
+                risk.adv |= recent_adv(s, missing)
         engine = ExecutionEngine(broker, risk, journal)
         fills = engine.rebalance(signals, quotes, ts, mult)
         with session_scope(self.engine) as s:
@@ -702,7 +730,13 @@ class QuantAI:
             held_live = set(self.load_portfolio(mode.value).positions)
             books_core = {s for b in self.ATTRIBUTION_BOOKS for s in ops.get_state(self.engine, f"cs:{b}").get("core", [])}
             want = set(plan.weights) | held_live | books_core | set(scores.index[:cfg.core_top_k])
-            quotes = KISBroker(Portfolio(cash=0), KISClient.from_env(self.settings.artifacts_dir)).live_quotes(sorted(want))
+            try:
+                quotes = KISBroker(Portfolio(cash=0), KISClient.from_env(self.settings.artifacts_dir)).live_quotes(sorted(want))
+            except Exception as e:
+                ops.record_health(self.engine, "broker", False, f"시세 조회 실패 {type(e).__name__}: {e}")
+                raise
+            ops.record_health(self.engine, "broker", True)
+            self._record_quotes(quotes, bars)
         fills = self.trade(decisions, mode, ts=ts, quotes=dict(quotes) if quotes else None,
                            signals=to_signals(plan))
         if plan.core_rebalanced:
@@ -754,6 +788,71 @@ class QuantAI:
             self.notifier.send(f"[{mode.value}] AI 긴급 청산: " + ", ".join(f"{k}({v})" for k, v in plan.exits.items()),
                                "warn")
         return {"plan": plan, "fills": fills, "decisions": decisions}
+
+    def _record_quotes(self, quotes: dict | None, bars: dict | None = None) -> None:
+        """실시간 시세 품질 기록 → 자동 킬스위치 (Quote stale / Data source conflict)."""
+        if not quotes:
+            return
+        bad = [s for s, q in quotes.items() if not q.last or q.last <= 0]
+        conflicts = []
+        if bars:
+            for s, q in quotes.items():
+                b = bars.get(s)
+                if b is not None and len(b) and q.last and q.last > 0:
+                    ref = float(b["close"].iloc[-1])
+                    if ref > 0 and abs(q.last / ref - 1) > 0.30:  # 국내 가격제한폭 ±30% 밖 = 데이터 문제
+                        conflicts.append(s)
+        ops.set_state(self.engine, "live_quotes", {"ts": datetime.now(UTC).isoformat(), "n": len(quotes),
+                                                   "bad": len(bad), "conflicts": conflicts[:20]})
+
+    def champion_forward(self) -> dict:
+        """champion 모델의 승격 이후 전진(forward) 성적: 적중률 · Brier vs 기저율 · 최근 확률 분산."""
+        champ = self.registry.champion()
+        if champ is None:
+            return {"status": "none"}
+        promoted = (champ.shadow_metrics or {}).get("promoted_at")
+        since = datetime.fromisoformat(promoted) if promoted else champ.created_at
+        with session_scope(self.engine) as s:
+            rows = s.execute(select(AnalystOpinionRecord.prob_up, AnalystOpinionRecord.correct,
+                                    AnalystOpinionRecord.realized_return, AnalystOpinionRecord.payload).where(
+                AnalystOpinionRecord.analyst == "quant", AnalystOpinionRecord.category == "direction",
+                AnalystOpinionRecord.as_of >= since).order_by(AnalystOpinionRecord.id.desc()).limit(2000)).all()
+        rows = [r for r in rows if (r[3] or {}).get("model_version") == champ.version]
+        scored = [r for r in rows if r[1] is not None]
+        recent = pd.Series([r[0] for r in rows[:200]], dtype=float)
+        out = {"status": "ok", "version": champ.version, "since": str(since)[:19], "n": len(scored),
+               "n_recent": len(recent), "prob_std": round(float(recent.std()), 5) if len(recent) > 1 else None}
+        if scored:
+            y = pd.Series([1.0 if (r[2] or 0) > 0 else 0.0 for r in scored])
+            p = pd.Series([r[0] for r in scored], dtype=float)
+            base = float(y.mean())
+            out |= {"accuracy": round(float(sum(bool(r[1]) for r in scored) / len(scored)), 4),
+                    "brier": round(float(((p - y) ** 2).mean()), 5),
+                    "brier_excess": round(float(((p - y) ** 2).mean() - base * (1 - base)), 5)}
+        return out
+
+    def check_champion(self, rollback: bool = True) -> dict:
+        """champion 전진 성과 이상 → (rollback=True 면) 자동 롤백 + 알림 + 기록."""
+        from .registry.model_registry import forward_gate
+        fwd = self.champion_forward()
+        if fwd["status"] == "none":
+            return fwd
+        gate = forward_gate(fwd, self.registry.gates)
+        out = fwd | {"passed": gate.passed, "failures": gate.failures}
+        if not gate.passed and rollback:
+            rb = self.registry.rollback("; ".join(gate.failures))
+            out["rollback"] = rb
+            log_ = ops.get_state(self.engine, "model_events").get("events", [])
+            log_.append({"at": datetime.now(UTC).isoformat(), "kind": "rollback", **rb, "forward": fwd})
+            ops.set_state(self.engine, "model_events", {"events": log_[-100:]})
+            self.notifier.send(f"모델 자동 롤백: champion {rb.get('rolled_back')} → {rb.get('restored') or '없음'}\n"
+                               f"사유: {'; '.join(gate.failures)}", "critical")
+        return out
+
+    def guardian(self, mode: str | None = None, act: bool = True, market_open: bool = False) -> dict:
+        """자동 킬스위치 10개 조건 점검 (trading/guardian.py)."""
+        from .trading.guardian import evaluate
+        return evaluate(self, mode, act=act, market_open=market_open)
 
     def ai_verdict(self) -> dict:
         """AI 를 켜도 되나: AI 섀도 가상 장부 3개 + 합의 확률 보정 품질 (review/promotion.py)."""
@@ -830,13 +929,22 @@ class QuantAI:
         broker = KISBroker(Portfolio(cash=db.cash, positions=dict(db.positions)),
                            KISClient.from_env(self.settings.artifacts_dir))
         before = {s: p.qty for s, p in db.positions.items() if p.qty}
-        pf = broker.sync_portfolio(self.symbols())
+        try:
+            pf = broker.sync_portfolio(self.symbols())
+        except Exception as e:
+            ops.record_health(self.engine, "broker", False, f"잔고 조회 실패 {type(e).__name__}: {e}")
+            raise
+        ops.record_health(self.engine, "broker", True)
         after = {s: p.qty for s, p in pf.positions.items() if p.qty}
         drift = {s: (before.get(s, 0), after.get(s, 0)) for s in set(before) | set(after)
                  if before.get(s, 0) != after.get(s, 0)}
         prices = {s: p.avg_price for s, p in pf.positions.items()}
         with session_scope(self.engine) as s:
             s.add(PortfolioSnapshot(mode="live", ts=ts, **pf.snapshot(prices)))
+        prev = ops.get_state(self.engine, "reconcile")
+        ops.set_state(self.engine, "reconcile", {
+            "at": ts.isoformat(), "drift_n": len(drift) if before else 0,
+            "streak": (int(prev.get("streak", 0)) + 1) if drift and before else 0})
         if drift and before:
             DBJournal("live", self.engine).note(ts, "reconcile", f"장부 불일치 {len(drift)}종목 → 증권사 기준으로 수정",
                                                 drift={k: list(v) for k, v in drift.items()})
@@ -922,9 +1030,13 @@ class QuantAI:
         bars, bench, _ = self.market_data()
         with session_scope(self.engine) as s:
             n = resolve(s, bars, bench)
-        with session_scope(self.engine) as s:  # 채점이 끝난 의견으로 AI 별 확률 보정 다시 적합
+        with session_scope(self.engine) as s:  # 채점이 끝난 의견으로 AI 별·합의 확률 보정 다시 적합
             fitted = fit_calibrators(s)
         ops.set_state(self.engine, "calibration", fitted)
+        hist = ops.get_state(self.engine, "calibration_history").get("fits", [])
+        hist.append({"at": datetime.now(UTC).isoformat(), "fitted": {k: {kk: v[kk] for kk in ("a", "b", "n")}
+                                                                    for k, v in fitted.items()}})
+        ops.set_state(self.engine, "calibration_history", {"fits": hist[-400:]})  # 재생·감사용 보정기 버전 기록
         with session_scope(self.engine) as s:
             report = daily_review(s, day or datetime.now(UTC).date(), memory=self.memory)
             s.flush()

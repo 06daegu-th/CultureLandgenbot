@@ -104,13 +104,31 @@ def _direction_rows(session: Session, since: datetime | None):
     return session.execute(q).all()
 
 
-def fit_calibrators(session: Session, window_days: int = 180, min_n: int = 50) -> dict[str, dict]:
-    """AI 별 Platt 보정 적합. {analyst: {a, b, n, before, after}} — 표본 부족이면 제외."""
-    since = datetime.now(UTC) - timedelta(days=window_days)
+# 판단 시점에 결과를 알 수 있었던 기록만 쓴다 (5거래일 채점 + 여유). Point-in-Time 보정의 핵심
+KNOWN_AFTER = timedelta(days=9)
+
+
+def fit_calibrators(session: Session, window_days: int = 180, min_n: int = 50,
+                    as_of: datetime | None = None) -> dict[str, dict]:
+    """AI 별 + 앙상블(합의) Platt 보정 적합. {analyst: {a, b, n, before, after}} — 표본 부족이면 제외.
+
+    as_of 를 주면 그 시점에 이미 결과가 나와 있던 기록만 쓴다 (과거 재생에서 미래 성적 누수 방지)."""
+    from .engine import CONSENSUS_KEY
+    now = as_of or datetime.now(UTC)
+    since = now - timedelta(days=window_days)
     by: dict[str, list] = defaultdict(list)
-    for analyst, prob, rr, _payload, _ in _direction_rows(session, since):
+    for analyst, prob, rr, _payload, t in _direction_rows(session, since):
+        if as_of is not None and _aware(t) > now - KNOWN_AFTER:
+            continue
         # prob_up 은 AI 가 말한 원래 확률 (보정값은 payload.prob_cal) → 이중 보정 없음
         by[analyst].append((prob, 1.0 if (rr or 0) > 0 else 0.0))
+    q = select(ConsensusRecord.prob_up, ConsensusRecord.realized_return, ConsensusRecord.payload,
+               ConsensusRecord.as_of).where(ConsensusRecord.correct.is_not(None), ConsensusRecord.as_of >= since)
+    for prob, rr, payload, t in session.execute(q):
+        if as_of is not None and _aware(t) > now - KNOWN_AFTER:
+            continue
+        raw = (payload or {}).get("prob_raw")  # 이미 보정된 합의 확률은 원래 값으로 다시 적합
+        by[CONSENSUS_KEY].append((raw if raw is not None else prob, 1.0 if (rr or 0) > 0 else 0.0))
     out = {}
     for analyst, rows in by.items():
         if len(rows) < min_n:
@@ -126,9 +144,22 @@ def _brief(m: dict) -> dict:
     return {k: m.get(k) for k in ("n", "brier", "logloss", "ece", "accuracy")}
 
 
+def _aware(t: datetime) -> datetime:
+    return t if t.tzinfo else t.replace(tzinfo=UTC)
+
+
 def load_calibrators(state: dict) -> dict[str, Platt]:
     return {k: Platt(v["a"], v["b"], v.get("n", 0)) for k, v in (state or {}).items()
             if isinstance(v, dict) and "a" in v}
+
+
+def calibrators_as_of(history: dict, latest: dict, as_of: datetime | None) -> dict[str, Platt]:
+    """Point-in-Time: 판단 시점 이전에 적합된 보정기만. as_of 가 없으면(실시간) 최신."""
+    if as_of is None:
+        return load_calibrators(latest)
+    t = _aware(as_of).isoformat()
+    past = [f for f in (history or {}).get("fits", []) if f.get("at", "") <= t]
+    return load_calibrators(past[-1]["fitted"]) if past else {}
 
 
 def calibration_report(session: Session, window_days: int = 180, fitted: dict | None = None) -> dict:
@@ -148,4 +179,4 @@ def calibration_report(session: Session, window_days: int = 180, fitted: dict | 
     return {"window_days": window_days, "analysts": analysts, "consensus": consensus}
 
 
-__all__ = ["Platt", "metrics", "fit_calibrators", "load_calibrators", "calibration_report"]
+__all__ = ["Platt", "metrics", "fit_calibrators", "load_calibrators", "calibrators_as_of", "calibration_report"]

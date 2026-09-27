@@ -5,6 +5,7 @@
         │                                   │
         └──────────── 실패 ──────────────────┴──▶ rejected
     기존 champion 은 새 champion 등장 시 retired.
+    champion ──(전진 성과 이상: 적중률 붕괴·확률 붕괴·Brier 악화)──▶ rolled_back, 직전 champion 복귀 (자동 롤백)
 
 Live 는 champion 만 사용한다. 새로 학습된 모델은 절대 바로 실매매에 투입되지 않는다.
 """
@@ -41,6 +42,11 @@ class PromotionGates:
     min_shadow_days: int = 20
     min_shadow_accuracy: float = 0.50
     max_shadow_drawdown: float = -0.10
+    # 전진(Forward) 감시 → 자동 롤백. 표본이 min_forward_n 이상일 때만 판정
+    min_forward_n: int = 60
+    rollback_accuracy: float = 0.45
+    rollback_brier_excess: float = 0.01  # 기저율 Brier 보다 이만큼 나쁘면
+    min_prob_std: float = 0.003  # 확률이 한 값으로 붕괴 (모델 고장)
 
 
 @dataclass
@@ -153,7 +159,37 @@ class ModelRegistry:
                 old.status = "retired"
             rec.status = "champion"
             rec.notes = "Shadow 게이트 통과 → champion"
+            rec.shadow_metrics = {**(rec.shadow_metrics or {}), "promoted_at": datetime.now(UTC).isoformat()}
         return result
+
+    def rollback(self, reason: str) -> dict:
+        """현재 champion → rolled_back, 직전(retired) champion 복귀. 없으면 champion 없음 (실전 계좌는 자동 차단)."""
+        with session_scope(self.engine) as s:
+            cur = s.scalar(select(ModelRecord).where(ModelRecord.status == "champion")
+                           .order_by(ModelRecord.created_at.desc()))
+            if cur is None:
+                return {"rolled_back": None, "restored": None}
+            cur.status = "rolled_back"
+            cur.notes = f"자동 롤백: {reason}"
+            prev = s.scalar(select(ModelRecord).where(ModelRecord.status == "retired", ModelRecord.id != cur.id)
+                            .order_by(ModelRecord.created_at.desc()))
+            if prev is not None:
+                prev.status = "champion"
+                prev.notes = f"롤백으로 복귀 ({cur.version} 대신)"
+            return {"rolled_back": cur.version, "restored": prev.version if prev else None, "reason": reason}
+
+
+def forward_gate(fwd: dict, g: PromotionGates) -> GateResult:
+    """champion 의 전진 성과 이상 탐지. 실패 = 롤백 사유."""
+    fails = []
+    if fwd.get("prob_std") is not None and fwd.get("n_recent", 0) >= 20 and fwd["prob_std"] < g.min_prob_std:
+        fails.append(f"확률 붕괴 (표준편차 {fwd['prob_std']:.4f})")
+    if fwd.get("n", 0) >= g.min_forward_n:
+        if fwd.get("accuracy", 1.0) < g.rollback_accuracy:
+            fails.append(f"전진 적중률 {fwd['accuracy']:.1%} < {g.rollback_accuracy:.0%}")
+        if fwd.get("brier_excess", 0.0) > g.rollback_brier_excess:
+            fails.append(f"Brier 가 기저율보다 {fwd['brier_excess']:.4f} 나쁨")
+    return GateResult(not fails, fails)
 
 
 def _jsonable(obj):

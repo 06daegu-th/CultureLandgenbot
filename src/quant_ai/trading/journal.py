@@ -105,6 +105,10 @@ class DBJournal(Journal):
                                   updated_at=datetime.now(UTC)))
         except IntegrityError:  # 다른 프로세스가 같은 키로 방금 기록 → 중복
             self._orders[coid] = "pending"
+            from .. import ops
+            st = ops.get_state(self.engine, "health:duplicate_blocked")
+            ops.set_state(self.engine, "health:duplicate_blocked",
+                          {"count": int(st.get("count", 0)) + 1, "last": coid, "at": datetime.now(UTC).isoformat()})
             return None
         return coid
 

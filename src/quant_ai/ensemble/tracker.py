@@ -137,8 +137,8 @@ def resolve(session: Session, bars_by_symbol: dict[str, pd.DataFrame], benchmark
 
 
 def scoreboard(session: Session, since: datetime | None = None, regime: str | None = None,
-               window_days: int | None = 365, backends: dict[str, str] | None = None
-               ) -> dict[tuple[str, str], TrackRecord]:
+               window_days: int | None = 365, backends: dict[str, str] | None = None,
+               until: datetime | None = None) -> dict[tuple[str, str], TrackRecord]:
     """(analyst, category) → TrackRecord.
 
     - window_days: 최근 N일 성적만 (시장이 바뀌면 과거 성적의 의미도 바뀐다). None = 전체
@@ -148,10 +148,13 @@ def scoreboard(session: Session, since: datetime | None = None, regime: str | No
     q = select(AnalystOpinionRecord.analyst, AnalystOpinionRecord.category, AnalystOpinionRecord.prob_up,
                AnalystOpinionRecord.correct, AnalystOpinionRecord.realized_return,
                AnalystOpinionRecord.payload).where(AnalystOpinionRecord.correct.is_not(None))
+    now = until or datetime.now(UTC)
     if since is not None:
         q = q.where(AnalystOpinionRecord.as_of >= since)
     elif window_days is not None:
-        q = q.where(AnalystOpinionRecord.as_of >= datetime.now(UTC) - timedelta(days=window_days))
+        q = q.where(AnalystOpinionRecord.as_of >= now - timedelta(days=window_days))
+    if until is not None:  # Point-in-Time 가중치: 그 시점에 결과가 이미 나와 있던 의견만
+        q = q.where(AnalystOpinionRecord.as_of <= until - timedelta(days=9))
     acc: dict[tuple[str, str], list] = defaultdict(lambda: [0, 0, 0.0])
     for analyst, cat, prob, correct, rr, payload in session.execute(q):
         p = payload or {}

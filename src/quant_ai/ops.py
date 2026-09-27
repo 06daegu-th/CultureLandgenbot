@@ -48,8 +48,28 @@ def kill_switch_on(engine: Engine) -> bool:
     return bool(get_state(engine, "kill_switch").get("on"))
 
 
-def set_kill_switch(engine: Engine, on: bool, reason: str = "", by: str = "manual") -> None:
-    set_state(engine, "kill_switch", {"on": on, "reason": reason, "by": by, "at": datetime.now(UTC).isoformat()})
+def halted(engine: Engine) -> bool:
+    """HALTED = 자동 감시(guardian)가 심각한 이상으로 매매를 완전히 멈춘 상태 (매도 포함 신규 주문 없음)."""
+    ks = get_state(engine, "kill_switch")
+    return bool(ks.get("on") and ks.get("halt"))
+
+
+def set_kill_switch(engine: Engine, on: bool, reason: str = "", by: str = "manual", halt: bool = False,
+                    conditions: list | None = None) -> None:
+    set_state(engine, "kill_switch", {"on": on, "halt": bool(on and halt), "reason": reason, "by": by,
+                                      "at": datetime.now(UTC).isoformat(), "conditions": conditions or []})
+
+
+def record_health(engine: Engine, key: str, ok: bool, error: str | None = None, **extra) -> None:
+    """외부 의존성(증권사·리스크 엔진 등) 호출 결과 → 연속 실패 횟수. 자동 킬스위치 조건이 읽는다."""
+    try:
+        st = get_state(engine, f"health:{key}")
+        now = datetime.now(UTC).isoformat()
+        st = ({**st, "ok_at": now, "fails": 0, "error": None} if ok
+              else {**st, "fail_at": now, "fails": int(st.get("fails", 0)) + 1, "error": (error or "")[:300]})
+        set_state(engine, f"health:{key}", {**st, **extra})
+    except Exception as e:  # noqa: BLE001 - DB 장애 시에도 원래 작업은 계속 (DB 조건이 따로 잡는다)
+        log.warning("상태 기록 실패 (%s): %s", key, e)
 
 
 # ------------------------------------------------------------------ 작업 기록

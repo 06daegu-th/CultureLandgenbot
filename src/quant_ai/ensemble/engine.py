@@ -72,9 +72,14 @@ class ConsensusSignal:
     explanation: list[str]
     # NO_TRADE/HOLD 사유 코드: veto · few_responders · high_conflict · weak_signal (복기에서 사유별로 가치 측정)
     no_trade_codes: list[str] = field(default_factory=list)
+    # 앙상블 단계 OOS 보정 전 확률 (보정이 없으면 None). 보정은 과거 합의 기록으로만 적합 (PIT)
+    prob_raw: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+CONSENSUS_KEY = "__consensus__"  # 보정기 목록에서 앙상블(합의) 확률 보정기의 이름
 
 
 def _logit(p: float) -> float:
@@ -124,6 +129,11 @@ class EnsembleEngine:
 
         voters = [c for c in contribs if c.prob_up is not None]
         prob = 1 / (1 + math.exp(-num / den)) if den > 0 else 0.5
+        prob_raw = None
+        ens_cal = calibrators.get(CONSENSUS_KEY)
+        if ens_cal is not None and voters:
+            # 앙상블 확률 자체도 과거 합의 기록으로 보정 (정보 없는 합의는 0.5 로 눌려 NO TRADE 가 된다)
+            prob_raw, prob = prob, ens_cal.apply(prob)
         cons_stance = 2 * prob - 1
 
         # ---- 충돌 탐지
@@ -173,7 +183,7 @@ class EnsembleEngine:
         reasons = [f"[{op.analyst}] {r}" for op in opinions for r in op.reasons[:3] if op.analyst != "risk"]
         risks = [f"[{op.analyst}] {r}" for op in opinions for r in op.risks[:3]]
         return ConsensusSignal(symbol, action, prob, round(confidence, 1), conflict, round(conflict_score, 3),
-                               contribs, vetoes, reasons[:10], risks[:10], explanation, codes)
+                               contribs, vetoes, reasons[:10], risks[:10], explanation, codes, prob_raw)
 
 
 def records_for(scoreboard: dict[tuple[str, str], TrackRecord], category: str = DIRECTION) -> dict[str, TrackRecord]:
