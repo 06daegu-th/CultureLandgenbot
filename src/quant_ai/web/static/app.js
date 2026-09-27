@@ -9,12 +9,14 @@ const S = {
   newsKind: "all",
   idxTab: "kr", watchTab: "all", feedTab: "all", chartN: 260, chartSym: null, param: null,
   charts: [],
+  alphaMarket: null,
   token: new URLSearchParams(location.search).get("token") || safeGet("qa_token") || "",
 };
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* 무시 */ } }
 if (S.token) safeSet("qa_token", S.token);
+S.alphaMarket = safeGet("qa_mkt") || "KR";
 
 // ------------------------------------------------------------ 유틸
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -43,7 +45,7 @@ function time(ts, withDate = false) {
 function date(ts) { if (!ts) return "-"; const d = new Date(ts); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; }
 const badge = (a) => a ? `<span class="badge b-${esc(a)}">${a === "NO_TRADE" ? "NO TRADE" : esc(a)}</span>` : '<span class="badge b-none">-</span>';
 const card = (title, body, right = "", cls = "") => `<div class="card ${cls}">${title || right ? `<div class="card-h"><h3>${title}</h3><div class="right">${right}</div></div>` : ""}${body}</div>`;
-const empty = (msg = "데이터 없음") => `<div class="empty">${esc(msg)}</div>`;
+const empty = (msg = "아직 기록 없음") => `<div class="empty">${esc(msg)}</div>`;
 
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
@@ -266,6 +268,11 @@ function viewDashboard(d) {
   const tabs = (id, obj, cur) => `<div class="tabs" id="${id}">${Object.entries(obj).map(([k, v]) => `<button data-k="${k}" class="${cur === k ? "on" : ""}">${v}</button>`).join("")}</div>`;
   const lessons = (d.lessons || []).slice(0, 5);
   return `
+  <div id="setup-box"></div>
+  <div class="grid h0">
+    <div id="alpha-box">${card("Net Alpha", empty("계산 중…"))}</div>
+    ${card("매매 안전 상태", `<div id="safe-box">${empty("점검 중…")}</div>`, `<a class="link" href="#safety">안전 센터 ${ICONS.arrow}</a>`)}
+  </div>
   <div class="grid h1">
     ${card("주요 지수", idx, tabs("idx-tabs", tabsIdx, S.idxTab))}
     ${card("시장 상태", mk, `<a class="link" href="#market">상세 ${ICONS.arrow}</a>`)}
@@ -301,6 +308,9 @@ async function fillHome(d) {
   if (chartSym) candleChart($("#main-chart"), chartSym, S.chartN);
   if (S.symbol) fillAI(d, S.symbol);
   api("/api/ops").then((o) => { const b = $("#pipe-box"); if (b) b.innerHTML = pipeline(d, o); }).catch(() => {});
+  api("/api/setup").then((st) => { const b = $("#setup-box"); if (b) { b.innerHTML = setupBanner(st); bindSetup(); } }).catch(() => {});
+  api(`/api/net-alpha?market=${S.alphaMarket || "KR"}`).then((na) => { const b = $("#alpha-box"); if (b) { b.innerHTML = alphaHero(na); bindMarketTabs(); } }).catch((e) => { const b = $("#alpha-box"); if (b) b.innerHTML = card("증명 체인", empty(e.message)); });
+  api("/api/guardian").then((g) => { const b = $("#safe-box"); if (b) b.innerHTML = safetyMini(g); }).catch(() => {});
   api(`/api/risk?mode=${homeMode(d)}`).then((r) => { const b = $("#pos-box"); if (b) b.innerHTML = posWeights(r); }).catch(() => {});
 }
 
@@ -555,7 +565,8 @@ async function viewAnalysis(el) {
   const sym = S.symbol || d.watchlist[0]?.symbol;
   if (!sym) { el.innerHTML = card("AI 종목 분석", empty()); return; }
   const a = await api(`/api/analysis?symbol=${encodeURIComponent(sym)}`);
-  const selList = (d.all_symbols || d.watchlist);
+  const selList = [...(d.all_symbols || d.watchlist)];
+  if (!selList.some((w) => w.symbol === sym)) selList.unshift({ symbol: sym, name: a.name || sym });
   const sel = `<select class="sym-select" id="sym-select">${selList.map((w) => `<option value="${esc(w.symbol)}" ${w.symbol === sym ? "selected" : ""}>${esc(w.name)} (${esc(w.symbol)})</option>`).join("")}</select>`;
   const c = a.consensus;
   const labels = d.analyst_labels;
@@ -577,8 +588,13 @@ async function viewAnalysis(el) {
   const sim = a.similar.map((s) => `<tr><td class="dim small">${date(s.ts)}</td><td style="white-space:normal">${esc(s.text)}</td><td class="r num small">${s.similarity.toFixed(2)}</td></tr>`).join("");
   const hist = a.history.map((h) => `<tr><td class="dim small">${date(h.ts)}</td><td>${badge(h.action)}</td><td class="r num">${(h.prob_up * 100).toFixed(0)}%</td><td class="r num">${Math.round(h.confidence)}</td><td class="r">${h.realized === null ? '<span class="dim">대기</span>' : pct(h.realized)}</td><td class="r">${h.correct === null ? "" : h.correct ? "✔" : "✘"}</td></tr>`).join("");
 
+  const isGlobal = a.market === "GLOBAL" || (!c && !/^\d{6}$/.test(sym));
+  const fetchErr = a.fetch?.error && !a.fetch?.ok;
+  const globalNote = isGlobal ? `<div class="lesson" style="margin-top:10px">🌐 <b>해외 종목</b> — 국내 코어 전략·AI 합의 대상이 아니어서 무료 일봉(Yahoo/Stooq)만 보여줍니다.
+    ${fetchErr ? `<div class="veto" style="margin-top:6px">시세를 받지 못했습니다 (네트워크): ${esc(a.fetch.error)}</div>` : ""}
+    <button class="btn-sm primary" style="margin-top:8px" onclick="askAI('${esc(a.name || sym)} 어때?')">${ICONS.chat} AI 에게 ${esc(a.name || sym)} 분석 요청</button></div>` : "";
   el.innerHTML = `
-  <div class="card"><div class="card-h"><h3>AI 종목 분석</h3><div class="right">${sel}</div></div>
+  <div class="card"><div class="card-h"><h3>AI 종목 분석</h3><div class="right">${sel}</div></div>${globalNote}
     <div class="small muted">모든 AI 는 같은 데이터를 보고 <b>서로의 의견을 모른 채</b> 독립적으로 판단합니다. 앙상블이 과거 성적으로 가중해 합의 신호를 만들고, Risk AI 의 거부권은 가중치로 희석되지 않습니다.</div></div>
   <div class="grid g-21">
     ${card(esc(a.name) + ` <span class="dim small">${esc(a.symbol)}</span>`, `<div id="an-chart" class="chart"></div>`)}
@@ -593,7 +609,7 @@ async function viewAnalysis(el) {
     ${card("관련 뉴스", news ? `<div class="scroll"><table><tbody>${news}</tbody></table></div>` : empty())}
     ${card("과거 유사 사례 (RAG 메모리)", sim ? `<div class="scroll"><table><tbody>${sim}</tbody></table></div>` : empty("메모리가 아직 비어 있습니다"))}
   </div>`;
-  $("#sym-select").onchange = (e) => { S.symbol = e.target.value; render(); };
+  $("#sym-select").onchange = (e) => { location.hash = `#analysis/${e.target.value}`; };
   candleChart($("#an-chart"), sym);
 }
 
@@ -953,10 +969,10 @@ function viewSettings(d) {
 
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
-  ["메인", [["dashboard", "home", "홈"], ["market", "market", "시장 분석"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
+  ["메인", [["dashboard", "home", "홈"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
   ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
-  ["검증 · 학습", [["journal", "journal", "판단 저널"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
-  ["시스템", [["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
+  ["검증 · 학습", [["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
+  ["시스템", [["safety", "shield", "안전 센터"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
 ];
 function buildNav() {
   $("#nav").innerHTML = NAV.map(([g, items]) => `<div class="grp">${g}</div>` + items.map(([v, ic, label]) =>
@@ -1003,6 +1019,11 @@ async function render() {
     else if (S.view === "journal") await viewJournal(el);
     else if (S.view === "evidence") await viewEvidence(el, S.param);
     else if (S.view === "settings") el.innerHTML = viewSettings(d);
+    else if (S.view === "alpha") await viewAlpha(el);
+    else if (S.view === "safety") await viewSafety(el);
+    else if (S.view === "lab") await viewLab(el);
+    else if (S.view === "server") await viewServer(el);
+    else if (S.view === "chat") await viewChat(el);
     else el.innerHTML = card("페이지 없음", empty(`'${esc(S.view)}' 화면이 없습니다`));
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
@@ -1043,7 +1064,8 @@ function renderChrome(d) {
   $("#balance-card").innerHTML = `<div class="t">계좌 평가금액 (${homeMode(d).toUpperCase()})</div><div class="bal num">${pf.equity ? krw(pf.equity) : "-"}</div><div class="small">${pf.equity ? pct(pf.return_pct) + ' <span class="muted">누적</span>' : '<span class="muted">기록 없음</span>'}</div>`;
   const kb = $("#kill-btn");
   kb.classList.toggle("on", d.kill_switch);
-  kb.innerHTML = d.kill_switch ? `${ICONS.play} 매수 정지 중 · 해제` : `${ICONS.stop} 긴급 정지`;
+  kb.innerHTML = d.halted ? `${ICONS.stop} HALTED · 자동 정지` : d.kill_switch ? `${ICONS.play} 매수 정지 중 · 해제` : `${ICONS.stop} 긴급 정지`;
+  kb.title = d.halted ? `자동 정지 사유: ${d.kill_info?.reason || ""}` : "긴급 정지: 신규 매수 즉시 중단 (매도·위험 축소는 계속)";
   $("#market-badges").innerHTML = Object.entries(d.markets).map(([k, v]) => `<span class="pill ${v === "open" ? "open" : ""}">${k} ${v === "open" ? "장중" : v === "pre_open" ? "장전" : "장외"}</span>`).join(" ");
   $("#sys-last").textContent = d.system.last_bar ? `데이터 ${date(d.system.last_bar)}` : "-";
   $("#avatar").textContent = homeMode(d).slice(0, 2).toUpperCase();
@@ -1076,27 +1098,22 @@ function route() {
   const h = (location.hash || "#dashboard").slice(1) || "dashboard";
   const [v, param] = h.split("/");
   S.view = v; S.param = param || null;
+  document.body.classList.toggle("on-chat", v === "chat");
+  if (v === "analysis" && param) S.symbol = decodeURIComponent(param);
   $(".side").classList.remove("open");
   window.scrollTo(0, 0);
   render();
 }
 
-// 검색
-$("#search").addEventListener("input", (e) => {
-  const q = e.target.value.trim().toLowerCase();
-  const box = $("#search-results");
-  if (!q || !S.data) { box.classList.remove("open"); return; }
-  const hits = (S.data.all_symbols || S.data.watchlist).filter((w) => w.name.toLowerCase().includes(q) || w.symbol.toLowerCase().includes(q)).slice(0, 8);
-  box.innerHTML = hits.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span>${badge(w.action)}</a>`).join("") || '<div class="empty">결과 없음</div>';
-  box.classList.add("open");
-  box.querySelectorAll("a").forEach((a) => a.onclick = () => { S.symbol = a.dataset.sym; box.classList.remove("open"); e.target.value = ""; location.hash = "#analysis"; route(); });
-});
+// 검색: 서버 검색 (한글 별칭 · 해외 종목) — pro.js
+initSearch();
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".search")) $("#search-results").classList.remove("open");
   if (!e.target.closest(".bell-wrap")) $("#bell-panel").classList.remove("open");
 });
 
 $("#kill-btn").onclick = async () => {
+  if (S.data?.halted) { location.hash = "#safety"; return; }
   const on = !S.data?.kill_switch;
   let reason = "";
   if (on) {
@@ -1129,6 +1146,7 @@ $("#settings-btn").innerHTML = ICONS.settings;
 $("#bell-btn").innerHTML = ICONS.bell;
 setTheme(safeGet("qa_theme") || "dark");
 buildNav();
+initChatWidget();
 tickClock(); setInterval(tickClock, 1000);
 
 window.addEventListener("hashchange", route);

@@ -8,51 +8,67 @@ import pandas as pd
 import pytest
 
 from quant_ai import ops
-from quant_ai.review.net_alpha import alpha_stats, bench_step, hit_step, net_alpha
+from quant_ai.review.net_alpha import (
+    ai_alpha,
+    calibration_step,
+    data_step,
+    execution_step,
+    proof_chain,
+    relative,
+    repeat_step,
+)
 
 
-# ------------------------------------------------------------------ Net Alpha (순수 함수)
+# ------------------------------------------------------------------ 증명 체인 (순수 함수)
 def _series(rets, start="2026-01-01"):
     idx = pd.bdate_range(start, periods=len(rets) + 1)
     return pd.Series(np.cumprod([1.0, *[1 + r for r in rets]]) * 1e7, index=idx)
 
 
-def test_net_alpha_funnel_and_attribution_add_up():
-    rng = np.random.default_rng(1)
-    b = rng.normal(0.0003, 0.01, 120)
-    book = _series(0.6 * b + 0.001 + rng.normal(0, 0.002, 120))
-    bench = _series(b)
-    core = _series(0.6 * b + 0.0008)
-    full = _series(0.6 * b + 0.0012)
+def _books(n=120, ai_edge=0.0015, seed=1):
+    rng = np.random.default_rng(seed)
+    b = rng.normal(0.0003, 0.01, n)
+    core_r = 0.6 * b + 0.0006 + rng.normal(0, 0.003, n)
+    veto_r = core_r + ai_edge / 2 + rng.normal(0, 0.001, n)
+    full_r = veto_r + ai_edge / 2 + rng.normal(0, 0.001, n)
+    return _series(b), {"attr-core": _series(core_r), "attr-veto": _series(veto_r), "attr-full": _series(full_r)}
+
+
+def test_proof_chain_all_six_pass_when_evidence_is_strong():
+    bench, books = _books()
     regimes = pd.Series(["bull_quiet"] * 60 + ["sideways"] * 61, index=bench.index)
-    r = net_alpha(book, bench, books={"attr-core": core, "attr-veto": core, "attr-full": full}, costs=20_000,
-                  slippage=5_000, signals={"n": 300, "hits": 180, "base_rate": 0.52},
-                  conv={"signals": 300, "correct": 180, "traded": 60, "traded_correct": 40, "avg_trade_return": 0.004},
-                  regimes=regimes, ai_book="attr-full")
-    st = {s["key"]: s for s in r["steps"]}
-    assert st["hit"]["status"] == "pass" and st["hit"]["edge"] > 0.05
-    assert st["money"]["status"] == "pass" and st["money"]["money_rate"] == pytest.approx(40 / 180, abs=1e-3)
-    assert st["cost"]["gross"] > st["cost"]["net"]
-    assert st["bench"]["status"] == "pass" and r["headline"]["excess"] > 0 and r["headline"]["ai_excess"] > 0
-    assert st["regime"]["status"] == "pass" and len(st["regime"]["rows"]) == 2
+    r = proof_chain(books["attr-full"], bench, books=books,
+                    data_check={"checked": 500, "ts_violations": 0, "adjusted": True, "pit_universe": True},
+                    calibration={"n": 400, "brier_skill": 0.02, "ece": 0.03}, hit={"n": 300, "hits": 170},
+                    main_cost=20_000, ai_cost_gap=0.001, regimes=regimes,
+                    execution={"live": True, "twin": "attr-full", "tracking": relative(books["attr-full"] * 1.0001, books["attr-full"]),
+                               "slippage_mean": 3.0, "assumed": 5.0, "fill_rate": 0.98, "n_orders": 80})
+    st = {s["key"]: s["status"] for s in r["steps"]}
+    assert st == {"data": "pass", "calib": "pass", "ai": "pass", "cost": "pass", "exec": "pass", "repeat": "pass"}, st
+    assert r["verdict"]["status"] == "pass" and r["headline"]["ai_excess"] > 0 and r["headline"]["ai_t"] > 1.64
+    a = r["ai_alpha"]
+    assert a["veto"]["excess"] > 0 and a["satellite"]["excess"] > 0  # AI 알파를 거부권·위성으로 분리
     parts = {p["key"]: p["value"] for p in r["attribution"]}
     assert sum(v for k, v in parts.items() if k != "total") == pytest.approx(parts["total"], abs=1e-4)
-    assert parts["total"] == pytest.approx(r["headline"]["book"], abs=1e-4)
-    assert r["verdict"]["status"] == "pass"
 
 
-def test_net_alpha_is_honest_about_small_samples_and_luck():
-    assert hit_step({"n": 20, "hits": 15, "base_rate": 0.5})["status"] == "insufficient"
-    assert hit_step({"n": 400, "hits": 204, "base_rate": 0.5})["status"] == "fail"  # 51% = 찍기 수준
-    assert hit_step({"n": 0, "resolved": 50})["headline"] == "방향 신호 0건"
-    rng = np.random.default_rng(3)
-    b = rng.normal(0, 0.012, 80)
-    lucky = alpha_stats(_series(b + rng.normal(0.0002, 0.012, 80)), _series(b))
-    if lucky["excess"] > 0 and (lucky["t"] or 0) <= 1:
-        assert bench_step(lucky, None)["status"] == "insufficient"  # +여도 우연과 구분 안 되면 통과 아님
-    worse = alpha_stats(_series(b - 0.002), _series(b))
-    assert bench_step(worse, None)["status"] == "fail"
-    empty = net_alpha(pd.Series(dtype=float), None)
+def test_proof_chain_is_honest_about_failures_and_small_samples():
+    bench, books = _books(ai_edge=-0.002, seed=2)
+    r = proof_chain(books["attr-full"], bench, books=books, data_check={"checked": 10, "ts_violations": 2, "adjusted": True,
+                                                                         "pit_universe": True})
+    st = {s["key"]: s for s in r["steps"]}
+    assert st["data"]["status"] == "fail" and st["ai"]["status"] == "fail" and r["verdict"]["status"] == "fail"
+    assert st["exec"]["status"] == "insufficient"  # 가상매매만으로는 '실주문 동일' 을 증명할 수 없다
+    assert calibration_step({"n": 50})["status"] == "insufficient"
+    assert calibration_step({"n": 500, "brier_skill": -0.01, "ece": 0.02})["status"] == "fail"  # 찍기보다 못함
+    assert data_step({"checked": 5, "ts_violations": 0, "adjusted": True, "forward_only": True})["status"] == "pass"
+    assert data_step({"checked": 5, "ts_violations": 0, "adjusted": True})["status"] == "fail"  # 생존편향
+    short_bench, short = _books(n=30, seed=3)
+    assert ai_alpha(short)["total"]["days"] == 31
+    assert proof_chain(short["attr-full"], short_bench, books=short)["steps"][2]["status"] == "insufficient"
+    assert repeat_step(None, None)["status"] == "insufficient"
+    assert execution_step({"live": True, "n_orders": 3})["status"] == "insufficient"
+    empty = proof_chain(pd.Series(dtype=float), None)
     assert empty["verdict"]["status"] == "insufficient" and empty["attribution"] == []
 
 
@@ -86,7 +102,8 @@ def test_analytics_run_on_real_shaped_data(app):
     from quant_ai import analytics as an
     _run_days(app)
     r = an.net_alpha_report(app, "paper")
-    assert len(r["steps"]) == 5 and r["mode"] == "paper"
+    assert [x["key"] for x in r["steps"]] == ["data", "calib", "ai", "cost", "exec", "repeat"] and r["mode"] == "paper"
+    assert r["steps"][0]["checked"] > 0 and r["steps"][0]["ts_violations"] == 0  # 판단 입력에 미래 정보 없음
     assert an.execution_quality(app, "paper", days=10_000)["orders"] > 0  # 가짜 데이터는 2020년
     cf = an.counterfactual(app)
     assert {"attr-core", "attr-full"} <= set(cf["paths"])
@@ -327,7 +344,7 @@ def test_db_maintenance_keeps_audit_records(app):
 def test_dashboard_api_new_endpoints(app):
     from quant_ai.web.api import DashboardAPI
     api = DashboardAPI(app)
-    assert len(api.net_alpha()["steps"]) == 5
+    assert len(api.net_alpha()["steps"]) == 6 and api.net_alpha(market="US")["market"] == "US"
     assert api.guardian()["conditions"][0]["key"] == "broker"
     for kind in ("execution", "counterfactual", "events", "confidence", "stress", "experiments", "ai_verdict", "champion"):
         assert "error" not in api.analytics(kind), kind
@@ -345,3 +362,34 @@ def test_dashboard_api_new_endpoints(app):
     with pytest.raises(ValueError):
         api.action("rm -rf", start=True)
     assert a["name"] == "guardian"
+
+
+# ------------------------------------------------------------------ 해외(미국) 장부
+def test_us_books_run_same_rules_and_proof_chain(app):
+    from quant_ai import global_market as gm
+    from quant_ai.analytics import net_alpha_report
+    from quant_ai.data.collectors.prices import SyntheticPriceSource
+    src = SyntheticPriceSource(seed=11)
+    fake = (("fake", lambda sym: src.fetch_bars(sym, datetime(2025, 1, 1), datetime(2026, 6, 30))),)
+    r = gm.sync(app, fetchers=fake)
+    assert r["ok"] == len(gm.universe()) + 1 and not r["failed"]
+    assert not set(gm.universe()) & set(app.symbols())  # 국내 전략 유니버스와 분리
+    bars, bench, _ = gm.market_data(app)
+    for t in bench.index[-25:]:
+        c = gm.run_cycle(app, as_of=t.to_pydatetime(), ts=t.to_pydatetime() + timedelta(hours=22))
+        assert "skipped" not in c, c
+    assert c["analyzed"] > 0 and set(c["books"]) == {gm.MAIN, *gm.BOOKS}
+    pf = app.load_portfolio("us-attr-core")
+    assert pf.positions and pf.cash < gm.CASH_USD  # USD 장부로 매수
+    rep = net_alpha_report(app, market="US")
+    assert rep["market"] == "US" and rep["bench_name"] == "SPY" and rep["currency"] == "USD"
+    assert rep["ai_alpha"] is not None and rep["headline"]["days"] >= 20
+    assert rep["steps"][0]["forward_only"]  # 미국: 과거 백테스트 없이 전진 기록만
+    assert rep["steps"][4]["status"] == "insufficient"  # 해외 실주문 없음
+    from quant_ai.data.db import session_scope
+    from quant_ai.data.models import FillRecord, OrderRecord
+    with session_scope(app.engine) as s:
+        o = s.query(OrderRecord).filter(OrderRecord.mode == "us-attr-core", OrderRecord.side == "buy",
+                                        OrderRecord.status == "filled").first()
+        f = s.query(FillRecord).filter(FillRecord.order_id == o.id).first()
+        assert f.fee == pytest.approx(f.qty * f.price * 0.0025, rel=0.05)  # 해외주식 수수료 0.25%, 매도세 없음

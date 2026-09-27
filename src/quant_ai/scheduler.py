@@ -192,6 +192,14 @@ def build_default_scheduler(app, mode) -> Scheduler:
                 snap(app)
         sch.add("ai_snapshot", ai_snapshot, 6 * 3600, "closed")
 
+        def us_book(now):
+            # 미국 코어 + AI 장부 (가상매매): 새 일봉이 생기면 한 번. 네트워크 실패 시 다음 회차에 다시
+            from .global_market import run_cycle, sync
+            if os.environ.get("QUANT_US", "true").lower() != "false":
+                sync(app)
+                run_cycle(app, ts=now)
+        sch.add("us_cycle", us_book, 3 * 3600, "always")
+
         def event_db(now):
             from .analytics import event_reactions
             event_reactions(app, refresh=True)

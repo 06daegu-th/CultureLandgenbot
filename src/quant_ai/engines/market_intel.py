@@ -141,6 +141,7 @@ def market_state(bench: pd.DataFrame | None, bars: dict[str, pd.DataFrame] | Non
 # ------------------------------------------------------------------ 3. 크로스에셋
 FACTORS = {  # series_id: (표시 이름, 변화 방식, 미국 지표 → 하루 지연)
     "KOSPI": ("KOSPI", "ret", False),
+    "SPY": ("S&P 500 (SPY)", "ret", False),
     "NASDAQCOM": ("NASDAQ", "ret", True),
     "SP500": ("S&P 500", "ret", True),
     "VIXCLS": ("VIX", "diff", True),
@@ -159,8 +160,10 @@ def _changes(s: pd.Series, how: str) -> pd.Series:
     return s.pct_change(fill_method=None) if how == "ret" else s.diff()
 
 
-def cross_asset(target: pd.Series, factors: dict[str, pd.Series], window: int = 60) -> list[dict]:
-    """target: 종목(또는 지수) 종가. factors: {series_id: 값 시계열}. → 요인별 상관·베타·최근 변화."""
+def cross_asset(target: pd.Series, factors: dict[str, pd.Series], window: int = 60, lag_us: bool = True) -> list[dict]:
+    """target: 종목(또는 지수) 종가. factors: {series_id: 값 시계열}. → 요인별 상관·베타·최근 변화.
+
+    lag_us=False: 대상이 미국 종목이면 미국 지표를 같은 날로 맞춘다 (국내 종목일 때만 하루 지연)."""
     y = _changes(target, "ret").dropna()
     out = []
     for sid, series in factors.items():
@@ -168,7 +171,7 @@ def cross_asset(target: pd.Series, factors: dict[str, pd.Series], window: int = 
             continue
         name, how, lag = FACTORS.get(sid, (sid, "ret", False))
         x = _changes(series.dropna(), how)
-        if lag:  # 미국 d 일 종가 → 한국 d+1 일에 반영
+        if lag and lag_us:  # 미국 d 일 종가 → 한국 d+1 일에 반영
             x.index = x.index + pd.tseries.offsets.BDay(1)
         both = pd.concat([y, x], axis=1, join="inner").dropna().iloc[-window:]
         if len(both) < 20:

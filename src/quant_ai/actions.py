@@ -306,7 +306,7 @@ def _vacuum(app) -> str:
 # ====================================================================== 백그라운드 실행
 _ACTIONS: dict[str, dict] = {}
 _LOCK = threading.Lock()
-ACTION_LABELS = {"warmup": "데이터·AI 판단 채우기", "db_clean": "DB 정리", "guardian": "자동 감시 점검",
+ACTION_LABELS = {"us_cycle": "미국 장부 갱신", "warmup": "데이터·AI 판단 채우기", "db_clean": "DB 정리", "guardian": "자동 감시 점검",
                  "ai_snapshot": "AI 판단 지금 실행", "event_reactions": "공시 반응 통계 갱신"}
 
 
@@ -318,7 +318,9 @@ def get_action(name: str) -> dict:
 def start_action(app, name: str) -> dict:
     """버튼 → 백그라운드 스레드 (같은 동작은 동시에 하나만)."""
     from .analytics import event_reactions
-    fns = {"warmup": lambda say: warmup(app, say), "db_clean": lambda say: db_maintenance(app, dry_run=False),
+    from .global_market import run_cycle as us_cycle
+    from .global_market import sync as us_sync
+    fns = {"us_cycle": lambda say: (say("미국 일봉 받는 중…"), {"sync": us_sync(app), "cycle": us_cycle(app)})[1],"warmup": lambda say: warmup(app, say), "db_clean": lambda say: db_maintenance(app, dry_run=False),
            "guardian": lambda say: {"state": app.guardian()["state"]}, "ai_snapshot": lambda say: ai_snapshot(app),
            "event_reactions": lambda say: {"types": len(event_reactions(app, refresh=True)["types"])}}
     if name not in fns:

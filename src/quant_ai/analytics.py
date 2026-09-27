@@ -64,47 +64,106 @@ def _book_costs(app, book: str, since) -> tuple[float, float]:
     return float(fee), float(slip)
 
 
-def _signal_stats(app, since, book: str) -> tuple[dict, dict]:
+def _is_market(sym: str, market: str) -> bool:
+    kr = bool(re.fullmatch(r"\d{6}", sym or ""))
+    return kr if market == "KR" else not kr
+
+
+def _signal_stats(app, since, market: str = "KR") -> tuple[dict, dict]:
+    """시장별 채점된 합의: 방향 신호 적중 + 확률 보정 지표."""
+    from .ensemble.calibration import metrics
     with session_scope(app.engine) as s:
-        resolved = s.execute(select(ConsensusRecord.id, ConsensusRecord.action, ConsensusRecord.correct,
-                                    ConsensusRecord.realized_return).where(
-            ConsensusRecord.correct.is_not(None), ConsensusRecord.as_of >= since)).all()
-        traded_ids = set(s.scalars(select(OrderRecord.consensus_id).where(
-            OrderRecord.mode == book, OrderRecord.consensus_id.is_not(None),
-            OrderRecord.status.in_(("filled", "partial")))))
-    base = (sum((r or 0) > 0 for *_, r in resolved) / len(resolved)) if resolved else None
+        resolved = [r for r in s.execute(select(ConsensusRecord.symbol, ConsensusRecord.action, ConsensusRecord.correct,
+                                                ConsensusRecord.realized_return, ConsensusRecord.prob_up).where(
+            ConsensusRecord.correct.is_not(None), ConsensusRecord.as_of >= since)).all() if _is_market(r[0], market)]
     direc = [x for x in resolved if x[1] in ("BUY", "SELL")]
-    hits = sum(bool(c) for _, _, c, _ in direc)
-    traded = [x for x in direc if x[0] in traded_ids]
-    rets = [(r or 0) * (1 if a == "BUY" else -1) for _, a, _, r in traded]
-    signals = {"n": len(direc), "hits": hits, "base_rate": base, "resolved": len(resolved)}
-    conv = {"signals": len(direc), "correct": hits, "traded": len(traded),
-            "traded_correct": sum(bool(c) for _, _, c, _ in traded),
-            "avg_trade_return": round(float(np.mean(rets)), 5) if rets else None}
-    return signals, conv
+    hit = {"n": len(direc), "hits": sum(bool(x[2]) for x in direc), "resolved": len(resolved)}
+    cal = metrics([x[4] for x in resolved], [1.0 if (x[3] or 0) > 0 else 0.0 for x in resolved]) if resolved else {"n": 0}
+    return hit, cal
 
 
-def net_alpha_report(app, mode: str | None = None) -> dict:
-    mode = mode or main_mode(app)
+def data_check(app, market: str = "KR", limit: int = 3000) -> dict:
+    """① 판단에 쓴 입력이 그 시점에 알 수 있던 것인가: 최근 판단 limit 건의 저장된 근거(evidence) 속
+    뉴스·공시·마지막 봉 시각 vs 판단 시각."""
+    with session_scope(app.engine) as s:
+        rows = s.execute(select(ConsensusRecord.symbol, ConsensusRecord.as_of, ConsensusRecord.payload)
+                         .order_by(ConsensusRecord.id.desc()).limit(limit)).all()
+        src = dict(s.execute(select(PriceBar.source, func.count()).group_by(PriceBar.source)).all())
+    checked = viol = 0
+    examples = []
+    for sym, as_of, payload in rows:
+        if not _is_market(sym, market):
+            continue
+        ev = (payload or {}).get("evidence")
+        if not ev:
+            continue
+        checked += 1
+        t0 = pd.Timestamp(as_of)
+        t0 = t0.tz_localize("UTC") if t0.tz is None else t0
+        bad = [n.get("title") for n in ev.get("news", []) if n.get("ts") and _ts(n["ts"]) > t0]
+        bad += [d.get("title") for d in ev.get("disclosures", []) if d.get("date") and str(d["date"]) > str(t0.date())]
+        lb = (ev.get("price") or {}).get("last_bar")
+        if lb and _ts(lb) > t0:
+            bad.append("가격 봉")
+        if bad:
+            viol += 1
+            if len(examples) < 5:
+                examples.append({"symbol": sym, "as_of": str(as_of)[:16], "items": [str(x)[:60] for x in bad[:2]]})
+    dq = ops.get_state(app.engine, "data_quality")
+    kr = market == "KR"
+    return {"checked": checked, "ts_violations": viol, "examples": examples,
+            "adjusted": ("marcap" in src or not src) if kr else True,
+            "pit_universe": bool(ops.get_state(app.engine, "krx_universe")) if kr else False,
+            "forward_only": not kr, "quality_warnings": len(dq.get("warnings", [])) if isinstance(dq, dict) else 0,
+            "notes": [] if kr else ["미국은 과거 백테스트 없이 전진 기록만 (생존편향 회피)"]}
+
+
+def _ts(x) -> pd.Timestamp:
+    t = pd.Timestamp(x)
+    return t.tz_localize("UTC") if t.tz is None else t
+
+
+def net_alpha_report(app, mode: str | None = None, market: str = "KR") -> dict:
+    """증명 체인 6단계 + AI 알파 분리 + 수익 분해. market: KR(국내) / US(미국 가상 장부)."""
+    from . import global_market as gm
+    from .review.net_alpha import relative
+    us = market == "US"
+    prefix = gm.PREFIX if us else ""
+    mode = gm.MAIN if us else (mode or main_mode(app))
     eq = book_equity(app, mode)
-    flows = app.cashflows(mode) if hasattr(app, "cashflows") else []
+    flows = [] if us else (app.cashflows(mode) if hasattr(app, "cashflows") else [])
     if flows and len(eq):
         from .pipeline import time_weighted_index
         eq = time_weighted_index(eq, flows)
-    books = {b: book_equity(app, b) for b in ATTR_BOOKS}
+    books = {f"{prefix}{b}": book_equity(app, f"{prefix}{b}") for b in ATTR_BOOKS}
     books = {k: v for k, v in books.items() if len(v)}
-    _, bench, _ = app.market_data()
+    _, bench, _ = gm.market_data(app) if us else app.market_data()
     bench_close = bench["close"] if bench is not None and len(bench) else None
     regimes = regime_series(bench)["regime"] if bench is not None and len(bench) > 60 else None
     since = eq.index.min() if len(eq) else datetime.now(UTC) - timedelta(days=365)
     fee, slip = _book_costs(app, mode, since)
-    # 코어 전용이면 AI 신호는 실제 장부가 아니라 AI 섀도 장부(attr-full)에서 돈으로 이어진다
     ai_book = "attr-veto" if app.settings.ai_overlay == "veto" else "attr-full"
-    money_book = ai_book if app.settings.core_only else mode
-    signals, conv = _signal_stats(app, datetime.now(UTC) - timedelta(days=365), money_book)
-    rep = net_alpha(eq, bench_close, books=books, costs=fee, slippage=slip, signals=signals, conv=conv,
-                    regimes=regimes, ai_book=ai_book)
-    return rep | {"mode": mode, "money_book": money_book, "core_only": app.settings.core_only,
+    ai_cost_gap = 0.0
+    if f"{prefix}{ai_book}" in books and f"{prefix}attr-core" in books:
+        ai_c = sum(_book_costs(app, f"{prefix}{ai_book}", since))
+        core_c = sum(_book_costs(app, f"{prefix}attr-core", since))
+        start = float(books[f"{prefix}attr-core"].iloc[0]) or 1.0
+        ai_cost_gap = (ai_c - core_c) / start
+    hit, cal = _signal_stats(app, datetime.now(UTC) - timedelta(days=365), market)
+    # ⑤ 실제 주문: 실제 장부 vs 같은 규칙의 시뮬레이션 장부
+    live = not us and mode == "live" and app.settings.broker == "kis"
+    twin = f"{prefix}attr-core" if app.settings.core_only else f"{prefix}{ai_book}"
+    ex = execution_quality(app, mode, days=365)
+    execution = {"live": live, "twin": twin, "tracking": relative(eq, books[twin]) if twin in books and len(eq) else None,
+                 "slippage_mean": (ex.get("slippage_bps") or {}).get("mean"), "assumed": ex.get("assumed_slippage_bps"),
+                 "fill_rate": ex.get("fill_rate"), "n_orders": ex.get("orders") or 0}
+    rep = net_alpha(eq, bench_close, books=books, data_check=data_check(app, market), calibration=cal, hit=hit,
+                    main_cost=fee + slip, ai_cost_gap=ai_cost_gap, execution=execution, regimes=regimes,
+                    ai_book=ai_book, prefix=prefix)
+    for st in rep["steps"]:
+        st.pop("tracking", None)
+    return rep | {"mode": mode, "market": market, "bench_name": gm.BENCH if us else "KOSPI", "currency": "USD" if us else "KRW",
+                  "core_only": app.settings.core_only, "ai_book": f"{prefix}{ai_book}",
                   "books": {k: {"return": round(float(v.iloc[-1] / v.iloc[0] - 1), 5), "days": int(v.index.normalize().nunique())}
                             for k, v in books.items() if len(v) > 1}}
 

@@ -94,7 +94,8 @@ class Tools:
          {"symbol": {"type": "string", "description": "종목코드(005930) 또는 해외 티커(NVDA)"}}, ["symbol"]),
         ("market_overview", "국내 시장 상태(RISK ON/OFF 점수·국면)·지수 흐름·주요 뉴스 이벤트", {}, []),
         ("portfolio", "현재 운용 장부: 평가금액·현금·보유 종목·손익·리스크(VaR·베타)", {}, []),
-        ("net_alpha", "성과 검증: 적중률 → 돈으로 연결 → 비용 후 → KOSPI 대비 → 국면별, 그리고 수익 분해", {}, []),
+        ("net_alpha", "성과 증명 체인 6단계 (데이터 시점 정확성 → 확률 보정 → AI 가 코어 대비 추가한 수익 → 비용 후 → 실제 주문 동일성 → 반복성) + AI 알파 분리 + 수익 분해. market=KR 국내 / US 미국 가상 장부",
+         {"market": {"type": "string", "enum": ["KR", "US"]}}, []),
         ("safety_status", "자동 킬스위치 10개 조건과 현재 매매 상태 (TRADING/HALTED 등)", {}, []),
         ("ai_performance", "AI 별 적중률·보정 품질·AI 켜기 판정·무료 한도 사용량", {}, []),
         ("server_status", "서버 상태: DB·스케줄러·작업 실패·디스크·LLM 사용량·데이터 신뢰도", {}, []),
@@ -262,10 +263,10 @@ class Tools:
             out["risk_error"] = str(e)[:160]
         return out
 
-    def t_net_alpha(self) -> dict:
+    def t_net_alpha(self, market: str = "KR") -> dict:
         from .analytics import net_alpha_report
-        r = net_alpha_report(self.app)
-        return {"headline": r["headline"], "verdict": r["verdict"],
+        r = net_alpha_report(self.app, market="US" if str(market).upper() == "US" else "KR")
+        return {"market": r["market"], "headline": r["headline"], "verdict": r["verdict"], "ai_alpha": r.get("ai_alpha"),
                 "steps": [{k: x.get(k) for k in ("title", "status", "headline", "detail")} for x in r["steps"]],
                 "attribution": r["attribution"]}
 
@@ -317,7 +318,7 @@ INTENTS = [
     ("server_status", ("서버", "상태 어때", "헬스", "스케줄러", "작동", "살아", "에러", "오류")),
     ("db_status", ("db", "디비", "데이터베이스", "용량", "정리")),
     ("safety_status", ("킬스위치", "kill", "halt", "정지", "멈춤", "안전")),
-    ("net_alpha", ("알파", "성과", "수익률", "벤치마크", "초과수익", "돈 벌", "돈벌")),
+    ("net_alpha", ("알파", "성과", "수익률", "벤치마크", "초과수익", "돈 벌", "돈벌", "증명", "검증")),
     ("portfolio", ("포트폴리오", "보유", "잔고", "평가금액", "내 계좌", "손익")),
     ("market_overview", ("시장", "코스피", "장세", "증시", "오늘 장", "분위기")),
     ("ai_performance", ("ai 성적", "적중률", "보정", "ai 켜", "무료 한도", "한도")),
@@ -328,6 +329,8 @@ def route(app, text: str) -> list[tuple[str, dict]]:
     from .data.global_stocks import find_in_text
     t = text.lower()
     calls = [(name, {}) for name, keys in INTENTS if any(k in t for k in keys)]
+    if any(k in t for k in ("미국", "해외", "us ")):  # '해외장 AI 알파' 등
+        calls = [(n, {"market": "US"} if n == "net_alpha" else a) for n, a in calls]
     if "server_status" in [c[0] for c in calls] and "db_status" in [c[0] for c in calls] and "정리" not in t:
         calls = [c for c in calls if c[0] != "db_status"]
     with session_scope(app.engine) as s:
@@ -578,7 +581,7 @@ def rule_answer(text: str, pre: list[dict], tools: Tools, quota: bool = False, h
             parts.append(f"### 매매 상태: **{r['state']}**\n" + ("\n".join(
                 f"- {'⛔' if c['status'] == 'critical' else '⚠️'} {c['name']}: {c['detail']}" for c in bad) or "- 10개 조건 모두 정상"))
         elif name == "net_alpha":
-            parts.append(f"### 성과 검증: {r['verdict']['title']}\n" + "\n".join(
+            parts.append(f"### 증명 체인 ({'미국' if r.get('market') == 'US' else '국내'}): {r['verdict']['title']}\n" + "\n".join(
                 f"- {s['title']}: **{s['headline']}** — {s['detail']}" for s in r["steps"]))
         elif name == "portfolio":
             parts.append(f"### 장부 ({r['mode']})\n- 평가금액 **{r['equity']:,}원** · 현금 {_pct(r.get('cash_weight'), False)}\n"

@@ -293,6 +293,7 @@ class DashboardAPI:
         st = app.settings
         return {
             "demo": demo, "now": now.isoformat(), "mode": st.mode.value, "kill_switch": app.kill_switch_on(),
+            "halted": _ops.halted(self.engine), "kill_info": _ops.get_state(self.engine, "kill_switch"),
             "markets": {k: m.phase(now).value for k, m in MARKETS.items()},
             "indices": indices, "market": market, "macro": macro, "ai_summary": summary,
             "summary_time": _ts(recent[0].as_of) if recent else None,
@@ -543,9 +544,10 @@ class DashboardAPI:
         self._risk_cache[key] = (time.monotonic(), out)
         return out
 
-    def net_alpha(self, mode: str | None = None) -> dict:
+    def net_alpha(self, mode: str | None = None, market: str = "KR") -> dict:
         from ..analytics import net_alpha_report
-        return self._cached(f"net_alpha:{mode}", 60, lambda: net_alpha_report(self.app, mode))
+        market = "US" if (market or "").upper() == "US" else "KR"
+        return self._cached(f"net_alpha:{mode}:{market}", 60, lambda: net_alpha_report(self.app, mode, market))
 
     def guardian(self) -> dict:
         # 화면 조회는 판정만 (정지 실행은 스케줄러의 guardian 작업과 매매 사이클이 한다)

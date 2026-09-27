@@ -103,7 +103,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     if url.path == "/api/strategy-health":
                         return self._json(api.strategy_health(arg("mode")))
                     if url.path == "/api/net-alpha":
-                        return self._json(api.net_alpha(arg("mode")))
+                        return self._json(api.net_alpha(arg("mode"), arg("market", "KR")))
                     if url.path == "/api/guardian":
                         return self._json(api.guardian())
                     if url.path.startswith("/api/an/"):
@@ -164,6 +164,9 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
             if url.path == "/api/strategy-health":
                 return self._json(api.strategy_health(refresh=True))
             try:
+                if url.path == "/api/us-cycle":  # 미국 장부: 일봉 받기 + 한 사이클 (가상매매)
+                    from ..global_market import run_cycle, sync
+                    return self._json({"sync": sync(api.app), "cycle": run_cycle(api.app)})
                 if url.path == "/api/action":
                     return self._json(api.action(str(body.get("name", "")), start=True))
                 if url.path == "/api/chat":

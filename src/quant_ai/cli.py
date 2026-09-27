@@ -308,17 +308,31 @@ def cmd_guardian(args):
 
 
 def cmd_net_alpha(args):
-    """Net Alpha: 적중 → 돈 → 비용 후 → KOSPI 대비 → 국면별."""
+    """증명 체인: 시점 정확 → 확률 보정 → AI 추가수익 → 비용 후 → 실주문 동일 → 반복."""
     from .analytics import net_alpha_report
-    r = net_alpha_report(_app(args), args.mode)
+    r = net_alpha_report(_app(args), args.mode, args.market.upper())
     icon = {"pass": "🟢", "fail": "🔴", "insufficient": "⚪"}
-    print(f"Net Alpha [{r['mode']}] — {r['verdict']['title']}")
+    print(f"증명 체인 [{r['market']} · {r['mode']}] — {r['verdict']['title']}")
     for st in r["steps"]:
         print(f"  {icon[st['status']]} {st['title']:<18} {st['headline']:>10}   {st['detail']}")
     if r["attribution"]:
         print("\n수익 분해:")
         for a in r["attribution"]:
             print(f"  {a['label']:<30} {a['value']:+.2%}")
+
+
+def cmd_us(args):
+    from .global_market import run_cycle, sync
+    app = _app(args)
+    r = sync(app)
+    print(f"미국 일봉: 성공 {r['ok']} · 실패 {len(r['failed'])}" + (f" ({', '.join(r['failed'][:8])})" if r["failed"] else ""))
+    c = run_cycle(app, force=args.force)
+    if c.get("skipped"):
+        print("  ·", c["skipped"])
+    else:
+        print(f"  기준일 {c['as_of']} · AI 판단 {c['analyzed']}종목")
+        for b, x in c["books"].items():
+            print(f"  {b:<14} 체결 {x['fills']}건 · 코어 {', '.join(x['core'][:10])}" + (" (리밸런싱)" if x["rebalanced"] else ""))
 
 
 def cmd_db_clean(args):
@@ -603,7 +617,11 @@ def main(argv: list[str] | None = None) -> None:
     gd.set_defaults(fn=cmd_guardian)
     na = sub.add_parser("net-alpha", help="성과 검증 5단계 + 수익 분해")
     na.add_argument("--mode", default=None)
+    na.add_argument("--market", default="KR", help="KR(국내) / US(미국 가상 장부)")
     na.set_defaults(fn=cmd_net_alpha)
+    us = sub.add_parser("us", help="미국 코어 + AI 장부 (가상매매): 일봉 받기 + 한 사이클")
+    us.add_argument("--force", action="store_true", help="같은 일봉이어도 다시 실행")
+    us.set_defaults(fn=cmd_us)
     dc = sub.add_parser("db-clean", help="DB 정리 (기본 미리보기, --yes 로 실행)")
     dc.add_argument("--yes", action="store_true")
     dc.set_defaults(fn=cmd_db_clean)

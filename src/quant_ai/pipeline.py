@@ -219,7 +219,15 @@ class QuantAI:
                            .order_by(ModelRecord.created_at.desc()))
         if rec is None:
             return None, None
-        return rec, Predictor.load(Path(rec.artifact_path))
+        try:
+            return rec, Predictor.load(Path(rec.artifact_path))
+        except Exception as e:  # noqa: BLE001 - 모델 파일 손상·삭제: 그 모델만 빼고 계속 (다른 AI 는 판단)
+            log.warning("%s 모델 %s 불러오기 실패 → 제외: %s", status, rec.version, e)
+            key = f"model_load_error:{rec.version}"
+            if not ops.get_state(self.engine, key):
+                ops.set_state(self.engine, key, {"at": datetime.now(UTC).isoformat(), "error": str(e)[:300]})
+                self.notifier.send(f"{status} 모델 {rec.version} 파일을 불러오지 못해 제외했습니다: {e}", "warn")
+            return None, None
 
     def active_model(self) -> tuple[ModelRecord | None, Predictor | None]:
         """champion 우선. 없으면 연구/Paper 용으로 shadow → candidate 순 (Live 는 champion 만 허용)."""
@@ -259,9 +267,13 @@ class QuantAI:
         return []
 
     def decide(self, as_of: datetime | None = None, symbols: list[str] | None = None,
-               persist: bool = True, scenarios: bool = True) -> list[Decision]:
-        """연구/예측 모드: 모든 AI 의 독립 의견 → 합의 신호 (주문은 내지 않음)."""
-        bars, bench, sentiment = self.market_data(as_of)
+               persist: bool = True, scenarios: bool = True, market: str = "KR") -> list[Decision]:
+        """연구/예측 모드: 모든 AI 의 독립 의견 → 합의 신호 (주문은 내지 않음). market="US" 면 미국 유니버스."""
+        if market == "US":
+            from . import global_market
+            bars, bench, sentiment = global_market.market_data(self, as_of)
+        else:
+            bars, bench, sentiment = self.market_data(as_of)
         if not bars:
             return []
         reg = regime_series(bench)
@@ -285,7 +297,7 @@ class QuantAI:
             calibrators = calibrators_as_of(ops.get_state(self.engine, "calibration_history"),
                                             ops.get_state(self.engine, "calibration"), as_of)
             macro_series = load_macro(s, [k for k in FACTORS if k != "KOSPI"], as_of=as_of or datetime.now(UTC))
-            factors = {**macro_series, **({"KOSPI": bench["close"]} if bench is not None else {})}
+            factors = {**macro_series, **({("KOSPI" if market == "KR" else "SPY"): bench["close"]} if bench is not None else {})}
             mstate = market_state(bench, bars, vix=macro_series.get("VIXCLS"))
             for sym in symbols or list(bars):
                 if sym not in bars or bars[sym].empty:
@@ -297,7 +309,7 @@ class QuantAI:
                 ctx = build_context(s, sym, t.to_pydatetime(), self.horizon, bars[sym], frow, rrow,
                                     memory=self.memory, events=events, macro=macro, market=mstate,
                                     cross=cross_asset(bars[sym]["close"], {k: v for k, v in factors.items()
-                                                                           if k != sym}))
+                                                                           if k != sym}, lag_us=market == "KR"))
                 opinions = [a.analyze(ctx) for a in analysts]
                 sig = self.ensemble.combine(sym, opinions, board, calibrators)
                 cid = None
@@ -344,7 +356,8 @@ class QuantAI:
             snap = s.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
                             .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()))
         if snap is None:
-            return Portfolio(cash=self.settings.initial_cash)
+            from .global_market import CASH_USD, is_us_book
+            return Portfolio(cash=CASH_USD if is_us_book(mode) else self.settings.initial_cash)
         return Portfolio(cash=snap.cash, positions={
             k: Position(v["qty"], v["avg_price"]) for k, v in (snap.positions or {}).items()})
 
@@ -455,7 +468,9 @@ class QuantAI:
             quotes.setdefault(sym, MarketQuote(last=prices[sym]))
         equity = pf.equity(prices)
 
-        costs = CostModel(st.costs)
+        from .global_market import COSTS as US_COSTS
+        from .global_market import is_us_book
+        costs = CostModel(US_COSTS if is_us_book(name) else st.costs)  # 해외 장부: 해외주식 수수료, 매도세 없음
         if broker is None:
             broker = PaperBroker(pf, costs) if mode is Mode.PAPER else ShadowBroker(pf, costs)
         budget_ratio = 1.0
