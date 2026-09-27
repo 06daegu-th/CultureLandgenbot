@@ -97,6 +97,10 @@ class Settings:
     # 주가 데이터가 이 영업일 수보다 오래되면 자동매매를 멈춘다 (데이터 갱신 장애 시 낡은 순위로 매매 방지). 0 = 끔
     max_data_age_days: int = 5
     core_only: bool = False  # QUANT_CORE_ONLY=true → 코어-위성 전략에서 AI 오버레이 끔 (코어 100%)
+    # 코어 전용이어도 AI 는 하루 한 번 판단·채점만 한다 (주문에는 영향 없음) → AI 를 켜도 될지 증거를 쌓는다.
+    # QUANT_AI_SHADOW=false 로 끔. LLM 키가 하나도 없으면 자동으로 꺼진다.
+    ai_shadow: bool = True
+    ai_overlay: str = "full"  # AI 를 켰을 때: full(거부권+긴급청산+위성) / veto(거부권·긴급청산만, 위성 없음)
     kis_env: str = "demo"  # demo(모의투자) / real
 
     @classmethod
@@ -151,8 +155,15 @@ class Settings:
             strategy=e.get("QUANT_STRATEGY", cls.strategy),
             kis_env=e.get("KIS_ENV", cls.kis_env),
             core_only=e.get("QUANT_CORE_ONLY", "").lower() == "true",
+            ai_shadow=e.get("QUANT_AI_SHADOW", "true").lower() != "false",
+            ai_overlay="veto" if e.get("QUANT_AI_OVERLAY", "").lower() == "veto" else "full",
             max_data_age_days=int(f("QUANT_MAX_DATA_AGE_DAYS", cls.max_data_age_days)),
         )
+
+    @property
+    def has_llm(self) -> bool:
+        """LLM 공급자(무료 포함)가 하나라도 설정됐나 — 없으면 AI 는 휴리스틱만 쓴다."""
+        return bool(self.llm_providers or self.anthropic_enabled or self.nvidia_api_key)
 
     def assert_live_allowed(self, champion_ready: bool) -> None:
         """실매매 진입 전 반드시 호출. 하나라도 실패하면 예외."""

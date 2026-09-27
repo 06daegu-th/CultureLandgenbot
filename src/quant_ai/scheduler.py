@@ -180,6 +180,8 @@ def build_default_scheduler(app, mode) -> Scheduler:
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "strategy_health"):
         # 장 마감 후 하루 한 번 정도: 성과가 과거 검증 범위를 벗어나면(상태 변화 시) 알림
         sch.add("strategy_health", lambda now: app.strategy_health(mode.value), 12 * 3600, "closed")
+    if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "ai_verdict"):
+        sch.add("ai_verdict", lambda now: app.ai_verdict(), 12 * 3600, "closed")  # 추천 단계가 바뀌면 알림
     sch.add("shadow_eval", lambda now: app.evaluate_shadow_models(), 12 * 3600, "closed")
     sch.add("retrain_candidate", lambda now: app.train_candidate(), 24 * 3600, "closed")
     return sch

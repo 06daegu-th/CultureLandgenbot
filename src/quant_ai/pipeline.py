@@ -627,6 +627,9 @@ class QuantAI:
         """
         cfg = cfg or CoreSatelliteConfig(use_ai=not self.settings.core_only)
         ts = ts or datetime.now(UTC)
+        # 코어 전용이면 실제 장부는 AI 를 보지 않는다. 대신 AI 섀도: 하루 한 번(새 일봉마다) AI 가 판단·채점되고
+        # 가상 장부 3개로 "AI 를 켰다면" 을 측정 → AI 를 켜도 될지 증거가 쌓인다 (무료 한도 보호).
+        shadow_ai = not cfg.use_ai and attribution and self.settings.ai_shadow and self.settings.has_llm
         attribution = attribution and cfg.use_ai  # 코어 전용이면 세 장부가 같으므로 측정 불필요
         bars, bench, _ = self.market_data(as_of)
         last_ts = max(b.index.max() for b in bars.values())
@@ -688,7 +691,7 @@ class QuantAI:
             return trend["scale"] if due(st) or "trend_scale" not in st else st["trend_scale"]
 
         plan = build_plan(scores, prev_core, due(state), cfg, vetoes, exits, buys,
-                          use_veto=cfg.use_ai, use_satellite=cfg.use_ai,
+                          use_veto=cfg.use_ai, use_satellite=cfg.use_ai and self.settings.ai_overlay == "full",
                           core_scale=scale_for(state), unaffordable=unaffordable)
         self._apply_var_budget(plan, bars)
         if not cfg.use_ai:
@@ -719,6 +722,21 @@ class QuantAI:
             "last_rebalance": state.get("last_rebalance"), "rebalances": state.get("rebalances", 0),
             "ai": {"analyzed": len(decisions), "buys": len(buys), "vetoes": len(vetoes), "exits": len(exits)}})
 
+        shadow_key = f"ai-shadow:{mode.value}"
+        if shadow_ai and ops.get_state(self.engine, shadow_key).get("bar") != str(last_ts):
+            # 실제 주문을 낸 뒤에 AI 를 부른다 → LLM 지연·장애가 실제 주문을 늦추지 않는다
+            try:
+                decisions = self.decide(as_of=as_of, symbols=shortlist, scenarios=False)
+            except Exception as e:  # noqa: BLE001 - 섀도는 실제 운용에 영향을 주면 안 된다
+                log.warning("AI 섀도 판단 실패: %s", e)
+                decisions = []
+            if decisions:
+                vetoes, exits, buys = self._ai_overlay(decisions)
+                by_sym = {d.symbol: d for d in decisions}
+                attribution = True
+                ops.set_state(self.engine, shadow_key, {
+                    "bar": str(last_ts), "ts": ts.isoformat(), "analyzed": len(decisions), "buys": len(buys),
+                    "vetoes": len(vetoes), "exits": len(exits)})
         if attribution:
             for book, (use_veto, use_sat) in self.ATTRIBUTION_BOOKS.items():
                 bst = ops.get_state(self.engine, f"cs:{book}")
@@ -732,10 +750,33 @@ class QuantAI:
                     "core": bplan.core,
                     "last_rebalance": str(last_ts) if bplan.core_rebalanced else bst.get("last_rebalance"),
                     "trend_scale": trend["scale"] if bplan.core_rebalanced else bst.get("trend_scale", 1.0)})
-        if plan.exits:
+        if plan.exits and cfg.use_ai:
             self.notifier.send(f"[{mode.value}] AI 긴급 청산: " + ", ".join(f"{k}({v})" for k, v in plan.exits.items()),
                                "warn")
         return {"plan": plan, "fills": fills, "decisions": decisions}
+
+    def ai_verdict(self) -> dict:
+        """AI 를 켜도 되나: AI 섀도 가상 장부 3개 + 합의 확률 보정 품질 (review/promotion.py)."""
+        from .ensemble.calibration import calibration_report
+        from .review.promotion import ai_verdict
+        books = {}
+        with session_scope(self.engine) as s:
+            for book in self.ATTRIBUTION_BOOKS:
+                snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == book)
+                                  .order_by(PortfolioSnapshot.ts, PortfolioSnapshot.id)).all()
+                if snaps:
+                    eq = pd.Series([x.equity for x in snaps], index=pd.DatetimeIndex([x.ts for x in snaps]))
+                    books[book] = eq.groupby(eq.index.date).last()
+            cons = calibration_report(s, window_days=365)["consensus"]
+        mode = self.settings.mode.value
+        res = ai_verdict(books, cons, ops.get_state(self.engine, f"ai-shadow:{mode}"))
+        res |= {"core_only": self.settings.core_only, "ai_shadow": self.settings.ai_shadow and self.settings.has_llm,
+                "overlay": self.settings.ai_overlay}
+        prev = ops.get_state(self.engine, "ai_verdict")
+        ops.set_state(self.engine, "ai_verdict", {k: res[k] for k in ("status", "title", "message")})
+        if res["status"] == "promote" and prev.get("status") != "promote" and self.settings.core_only:
+            self.notifier.send(f"AI 섀도 판정: {res['title']}\n{res['message']}", "info")
+        return res
 
     def add_cashflow(self, mode: str, amount: float, day: date | None = None, memo: str = "") -> list[dict]:
         """입금(+)·출금(-) 기록. 건강검진 수익률에서 입출금 효과를 뺀다 (시간가중수익률)."""
