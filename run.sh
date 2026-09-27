@@ -153,6 +153,15 @@ cmd_test() {
   "$VENV/bin/pytest" -q "$@"
 }
 
+usage() {  # 파일 첫머리 주석 블록만 출력 (코드 줄은 제외)
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+  if [[ ! -d "$VENV" ]]; then
+    printf '\n처음이면: ./run.sh setup\n'
+  elif [[ ! -f .env ]]; then
+    printf '\n다음: cp .env.example .env 후 키 입력 (docs/ENV_KEYS.md)\n'
+  fi
+}
+
 main() {
   local cmd="${1:-help}"; shift || true
   case "$cmd" in
@@ -170,7 +179,7 @@ main() {
     down)       compose down ;;
     logs)       compose logs -f --tail 200 "$@" ;;
     test)       cmd_test "$@" ;;
-    help|-h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+    help|-h|--help) usage ;;
     *)          qa "$cmd" "$@" ;;
   esac
 }

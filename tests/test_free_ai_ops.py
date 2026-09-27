@@ -245,4 +245,5 @@ def test_run_sh_is_valid_bash():
     assert subprocess.run(["bash", "-n", str(root / "run.sh")], check=False).returncode == 0
     out = subprocess.run(["bash", str(root / "run.sh"), "help"], capture_output=True, text=True, check=True).stdout
     assert "./run.sh setup" in out and "./run.sh doctor" in out
+    assert "set -euo" not in out and "cd \"$(dirname" not in out  # 도움말에 코드 줄이 섞이지 않음
     assert not (root / "main.py").exists()
