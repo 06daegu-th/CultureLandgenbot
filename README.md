@@ -9,7 +9,19 @@ AI 에게 주문 권한은 없다. 신호는 반드시 **리스크 게이트**�
 > 실제 KRX 데이터(2026-09-23 기준)로 가상매매 장부를 돌린 화면입니다. LLM 키 없이 휴리스틱 AI 로 실행했고,
 > 뉴스·해외지표 칸은 키(RSS·FRED)를 넣으면 채워집니다.
 
-**요청 20개 항목 · 핵심 10 구현 현황과 한계: [docs/PLATFORM_STATUS.md](docs/PLATFORM_STATUS.md)**
+**이 플랫폼이 답하는 질문**
+- 데이터가 과거 시점에서 정확했나
+- AI 확률이 실제 확률과 맞나
+- AI 가 코어 대비 추가 수익을 만들었나
+- 비용을 빼도 남나
+- 실제 주문에서도 같은가
+- 반복되나
+
+국내·미국 모두 이 **증명 체인 6단계**로 판정해 홈 최상단에 보여준다.
+자동 킬스위치 10개 조건(→ HALTED), champion 자동 롤백, 사이트 채팅 AI 도 들어 있다.
+
+- **현황·결과·한계: [docs/PLATFORM_STATUS.md](docs/PLATFORM_STATUS.md)**
+- **지금 할 일과 다음 개선: [docs/ROADMAP.md](docs/ROADMAP.md)**
 
 ```text
 Market Data ─┬─▶ Primary AI (Gemini 무료 / Claude · 종합)  ─┐
@@ -70,7 +82,12 @@ KRX 데이터 받기·갱신 → 점검 → 대시보드(http://127.0.0.1:8050, 
 
 - `.env` 에 **KIS 모의투자 키 3개**를 넣으면 다음 실행부터 모의계좌로 자동매매 (없으면 가상매매) — 발급처: [docs/ENV_KEYS.md](docs/ENV_KEYS.md)
 - 무료 AI 키(Gemini·Groq·NVIDIA·Cloudflare)는 선택. 기본은 코어 전용(`QUANT_CORE_ONLY=true`)
-- 개별 명령: `./run.sh doctor --ai --kis --notify` · `./run.sh kis-check` · `./run.sh orders …` · `./run.sh up` (Docker) · `./run.sh help`
+- 대시보드가 먼저 뜨고, 뉴스·AI 판단·미국 장부는 뒤에서 채워진다 (`logs/warmup.log`, 홈의 '시작 체크리스트')
+- 개별 명령
+  - `./run.sh doctor --ai --kis --notify` · `./run.sh chat` (채팅 AI)
+  - `./run.sh proof [--market US]` (증명 체인) · `./run.sh guardian` (킬스위치 조건)
+  - `./run.sh us` (미국 장부) · `./run.sh db-clean` · `./run.sh kis-check` · `./run.sh orders …`
+  - `./run.sh up` (Docker) · `./run.sh help`
 
 가상 데이터 데모: `./run.sh demo && ./run.sh serve` · 테스트: `./run.sh test`
 
