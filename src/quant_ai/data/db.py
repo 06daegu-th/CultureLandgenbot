@@ -24,6 +24,33 @@ def make_engine(url: str, connect_timeout: int | None = None) -> Engine:
 
 def init_db(engine: Engine) -> None:
     Base.metadata.create_all(engine)
+    ensure_columns(engine)
+
+
+def ensure_columns(engine: Engine) -> list[str]:
+    """이미 만들어진 DB 에 새 버전의 컬럼을 추가한다 (nullable 컬럼만 · 데이터는 그대로).
+
+    create_all 은 없는 테이블만 만든다 → 예전 버전으로 만든 quant_ai.db 도 업데이트 후 그대로 쓰게 한다.
+    PostgreSQL 운영은 Alembic 마이그레이션이 같은 일을 한다 (migrations/versions)."""
+    from sqlalchemy import inspect, text
+    added = []
+    insp = inspect(engine)
+    existing = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing:
+                continue
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have or not col.nullable:
+                    continue
+                ddl = col.type.compile(dialect=engine.dialect)
+                conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}'))
+                added.append(f"{table.name}.{col.name}")
+                if col.unique:
+                    conn.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{table.name}_{col.name} "
+                                      f"ON {table.name} ({col.name})"))
+    return added
 
 
 @contextmanager

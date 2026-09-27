@@ -349,16 +349,16 @@ class QuantAI:
             exit_ops = [o for o in d.opinions if o.meta.get("exit")]
             if exit_ops and cur > 0:  # 치명적 위험: 보유분도 즉시 정리
                 out.append(Signal(d.symbol, 0.0, d.signal.prob_up,
-                                  f"RISK EXIT: {exit_ops[0].meta.get('exit_reason')}", d.consensus_id))
+                                  f"RISK EXIT: {exit_ops[0].meta.get('exit_reason')}", consensus_id=d.consensus_id))
                 continue
             if a == "BUY":
                 target = max_w * min(1.0, d.signal.confidence / 80)
                 out.append(Signal(d.symbol, max(target, cur), d.signal.prob_up,
-                                  f"CONSENSUS BUY {d.signal.confidence:.0f}", d.consensus_id))
+                                  f"CONSENSUS BUY {d.signal.confidence:.0f}", consensus_id=d.consensus_id))
             elif a == "SELL":
-                out.append(Signal(d.symbol, 0.0, d.signal.prob_up, "CONSENSUS SELL", d.consensus_id))
+                out.append(Signal(d.symbol, 0.0, d.signal.prob_up, "CONSENSUS SELL", consensus_id=d.consensus_id))
             elif cur > 0:  # HOLD / NO_TRADE: 보유분 유지 (신규 진입 없음)
-                out.append(Signal(d.symbol, cur, d.signal.prob_up, a, d.consensus_id))
+                out.append(Signal(d.symbol, cur, d.signal.prob_up, a, consensus_id=d.consensus_id))
         return out
 
     def trade(self, decisions: list[Decision], mode: Mode, ts: datetime | None = None,
@@ -401,8 +401,12 @@ class QuantAI:
         name = book or mode.value
         pf = self.load_portfolio(name)
         broker = None
+        if mode is not Mode.LIVE:
+            self.recover_orders(name)  # 가상 장부: 지난번 중단된 사이클의 미완료 기록 정리
         if mode is Mode.LIVE:
             broker = self._live_broker(pf)
+            if hasattr(broker, "recover"):
+                self.recover_orders(name, broker)  # 지난 사이클에 끝나지 않은 주문부터 정리 (중복 주문 방지)
             if hasattr(broker, "sync_portfolio"):
                 broker.sync_portfolio(self.symbols())  # 진실의 원천 = 증권사 잔고
                 if quotes is None:
@@ -437,8 +441,7 @@ class QuantAI:
         regime = next((d.context.regime.get("regime") for d in decisions if d.context.regime.get("regime")), None)
         mult = (EXPOSURE_MULTIPLIER[Regime(regime)] if regime else 1.0) * budget_ratio
         if signals_override is not None:
-            signals = [Signal(x.symbol, x.target_weight * budget_ratio, x.prob_up, x.reason, x.prediction_id)
-                       for x in signals_override]
+            signals = [replace(x, target_weight=x.target_weight * budget_ratio) for x in signals_override]
             mult = budget_ratio  # 코어-위성은 국면 배수를 쓰지 않는다 (실데이터 검증에서 효과 없음)
         else:
             signals = self.signals_from_decisions(decisions, pf, prices, budget_ratio)
@@ -627,11 +630,11 @@ class QuantAI:
                 if sym in sat:
                     out.append(Signal(sym, w, d.signal.prob_up if d else None,
                                       f"SATELLITE AI {d.signal.confidence:.0f}" if d else "SATELLITE",
-                                      d.consensus_id if d else None))
+                                      consensus_id=d.consensus_id if d else None))
                 else:
                     ai = f" · AI {d.signal.action} {d.signal.prob_up:.2f}" if d else ""
                     out.append(Signal(sym, w, None, f"CORE #{plan.ranks.get(sym, -1) + 1}{ai}",
-                                      d.consensus_id if d else None))
+                                      consensus_id=d.consensus_id if d else None))
             return out
 
         # 소액 계좌: 목표 금액보다 훨씬 비싼 종목은 1주도 못 산다 → 다음 순위로 대체
@@ -758,12 +761,70 @@ class QuantAI:
                                + ", ".join(f"{k} {a}→{b}" for k, (a, b) in list(drift.items())[:5]), "warn")
         return {"drift": drift, "cash": pf.cash, "positions": after}
 
+    def recover_orders(self, mode: str, broker=None) -> list[dict]:
+        """재시작 복구: DB 에 pending/submitted 로 남은 주문을 확정한다.
+
+        - 증권사 주문번호가 있으면: 체결 조회 → 남은 잔량 취소 → filled/partial/unfilled 로 확정
+        - 주문번호가 없으면(접수 응답 전에 종료): 증권사에 주문이 살아 있을 수 있다 → 'unknown' +
+          신규 매수 중단(킬스위치) + 알림. 사람이 증권사 앱에서 확인한 뒤 킬스위치를 끈다.
+        - 가상 장부(paper/shadow)의 미완료 기록은 주문이 실제로 나가지 않았으므로 취소로 확정."""
+        with session_scope(self.engine) as s:
+            rows = [{"id": r.id, "client_order_id": r.client_order_id, "broker_order_id": r.broker_order_id,
+                     "broker_orgno": r.broker_orgno, "created_at": r.created_at, "qty": r.qty, "symbol": r.symbol,
+                     "side": r.side}
+                    for r in s.scalars(select(OrderRecord).where(OrderRecord.mode == mode,
+                                                                 OrderRecord.status.in_(("pending", "submitted"))))]
+        if not rows:
+            return []
+        results = broker.recover(rows) if broker is not None and hasattr(broker, "recover") else \
+            [{**r, "status": "cancelled", "filled": 0, "avg_price": None} for r in rows]
+        unknown = []
+        with session_scope(self.engine) as s:
+            for r in results:
+                rec = s.get(OrderRecord, r["id"])
+                rec.status, rec.updated_at = r["status"], datetime.now(UTC)
+                rec.filled_qty = r.get("filled")
+                rec.avg_price = r.get("avg_price") or rec.avg_price
+                rec.reason = (rec.reason or "") + f" · 재시작 복구: {r['status']}"
+                if r["status"] == "unknown":
+                    unknown.append(f"{rec.symbol} {rec.side} {rec.qty:.0f}주 ({rec.client_order_id})")
+        DBJournal(mode, self.engine).note(datetime.now(UTC), "recovery",
+                                          f"미완료 주문 {len(results)}건 복구", results=[
+                                              {k: v for k, v in r.items() if k != "created_at"} for r in results])
+        if unknown:
+            self.set_kill_switch(True, "주문 상태 불명 — 증권사 앱에서 미체결 확인 필요", by="recovery")
+            self.notifier.send(f"[{mode}] 주문 상태 불명 {len(unknown)}건 → 신규 매수 중단(킬스위치). "
+                               f"증권사 앱에서 미체결을 확인·취소한 뒤 킬스위치를 끄세요: {', '.join(unknown[:5])}",
+                               "critical")
+        else:
+            self.notifier.send(f"[{mode}] 재시작 복구: 미완료 주문 {len(results)}건 확정 ("
+                               + ", ".join(f"{r['symbol']} {r['status']}" for r in results[:5]) + ")", "warn")
+        return results
+
+    def slippage_stats(self, mode: str = "live", days: int = 90) -> dict:
+        """실제 체결가 vs 주문 결정 시점 기준가 → 슬리피지(bps, 불리한 방향 +). 백테스트 비용 가정 검증용."""
+        since = datetime.now(UTC) - timedelta(days=days)
+        with session_scope(self.engine) as s:
+            rows = s.execute(select(OrderRecord.side, OrderRecord.ref_price, OrderRecord.avg_price,
+                                    OrderRecord.filled_qty).where(
+                OrderRecord.mode == mode, OrderRecord.created_at >= since, OrderRecord.ref_price.is_not(None),
+                OrderRecord.avg_price.is_not(None), OrderRecord.status.in_(("filled", "partial")))).all()
+        bps = [((avg - ref) / ref * 1e4) * (1 if side == "buy" else -1) for side, ref, avg, _ in rows if ref]
+        if not bps:
+            return {"n": 0, "assumed_bps": self.settings.costs.slippage_bps}
+        a = pd.Series(bps)
+        return {"n": len(a), "mean_bps": round(float(a.mean()), 2), "median_bps": round(float(a.median()), 2),
+                "p90_bps": round(float(a.quantile(0.9)), 2), "assumed_bps": self.settings.costs.slippage_bps,
+                "verdict": ("가정보다 나쁨 → QUANT_SLIPPAGE_BPS 상향 후 재검증" if a.mean() > self.settings.costs.slippage_bps
+                            else "가정 이내")}
+
     def _orders_today(self, mode: str, ts: datetime) -> int:
         start = datetime.combine(ts.date(), datetime.min.time(), UTC)
         with session_scope(self.engine) as s:
             return int(s.scalar(select(func.count()).select_from(OrderRecord).where(
                 OrderRecord.mode == mode, OrderRecord.created_at >= start,
-                OrderRecord.status.in_(("filled", "unfilled", "error")))) or 0)
+                OrderRecord.status.in_(("filled", "partial", "unfilled", "error", "pending", "submitted",
+                                        "unknown", "cancelled")))) or 0)
 
     def _day_start_equity(self, mode: str, ts: datetime, default: float) -> float:
         start = datetime.combine(ts.date(), datetime.min.time(), UTC)

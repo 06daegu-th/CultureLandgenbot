@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 from ..config import RiskLimits
@@ -92,5 +92,4 @@ class RiskEngine:
 
 
 def _with_qty(order: Order, qty: int) -> Order:
-    return Order(order.symbol, order.side, int(qty), order.order_type, order.limit_price,
-                 order.reason, order.prob_up, order.prediction_id)
+    return replace(order, qty=int(qty))

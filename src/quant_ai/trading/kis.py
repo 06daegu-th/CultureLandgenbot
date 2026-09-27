@@ -22,6 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -247,6 +248,36 @@ class KISBroker(Broker):
         self.max_slippage = max_slippage
         self.fill_timeout_s = fill_timeout_s
         self.poll_s = poll_s
+        self.on_placed = None  # (client_order_id, 주문번호, 주문조직번호) → 저널에 즉시 기록
+
+    def recover(self, open_orders: list[dict]) -> list[dict]:
+        """재시작 복구: 끝나지 않은 주문(DB 의 pending/submitted)을 증권사에서 확인하고 남은 잔량은 취소.
+
+        open_orders: [{client_order_id, broker_order_id, broker_orgno, created_at}] →
+        [{client_order_id, status, filled, avg_price}] (status: filled/partial/unfilled/unknown)."""
+        out = []
+        for o in open_orders:
+            odno = o.get("broker_order_id")
+            if not odno:  # 접수 응답을 받기 전에 죽음 → 증권사에 주문이 있는지 알 수 없다
+                out.append({**o, "status": "unknown", "filled": 0, "avg_price": None})
+                continue
+            day = o.get("created_at")
+            st = self.client.order_status(odno, day)
+            if st.get("remaining") is None and not st.get("filled"):  # 조회되지 않는 주문 → 확신할 수 없음
+                out.append({**o, "status": "unknown", "filled": 0, "avg_price": None})
+                continue
+            if (st.get("remaining") or 0) > 0 and not st.get("cancelled"):
+                try:
+                    self.client.cancel(odno, o.get("broker_orgno") or "")
+                    log.warning("복구: 미체결 잔량 취소 %s", odno)
+                except KISError as exc:
+                    log.error("복구: 잔량 취소 실패 %s %s", odno, exc)
+                st = self.client.order_status(odno, day)
+            filled = int(st.get("filled") or 0)
+            qty = int(o.get("qty") or 0)
+            status = "filled" if qty and filled >= qty else "partial" if filled > 0 else "unfilled"
+            out.append({**o, "status": status, "filled": filled, "avg_price": st.get("avg_price") or None})
+        return out
 
     def sync_portfolio(self, universe: list[str] | None = None) -> Portfolio:
         """증권사 잔고를 진실의 원천으로 포트폴리오를 덮어쓴다 (DB 스냅샷과 다르면 로그).
@@ -284,6 +315,8 @@ class KISBroker(Broker):
         limit_px = round_to_tick(limit, order.side)
         placed = self.client.order(code, order.side, order.qty, limit_px)
         odno = placed["odno"]
+        if self.on_placed and order.client_order_id:
+            self.on_placed(order.client_order_id, odno, placed.get("orgno"))
         deadline = time.monotonic() + self.fill_timeout_s
         st = {"filled": 0, "avg_price": 0.0, "remaining": order.qty}
         while time.monotonic() < deadline:
@@ -300,8 +333,7 @@ class KISBroker(Broker):
             st = self.client.order_status(odno)
         if st["filled"] <= 0:
             return None
-        filled = Order(order.symbol, order.side, st["filled"], "limit", limit_px, order.reason, order.prob_up,
-                       order.prediction_id)
+        filled = replace(order, qty=st["filled"], order_type="limit", limit_price=limit_px)
         fill = Fill(filled, ts, st["filled"], st["avg_price"] or limit_px,
                     self.costs.fee(order.side, st["avg_price"] or limit_px, st["filled"]))
         self.portfolio.apply(fill)

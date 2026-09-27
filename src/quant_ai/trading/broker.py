@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from ..config import Settings
@@ -73,8 +73,7 @@ class ShadowBroker(PaperBroker):
         if avail is not None and avail < order.qty:
             if int(avail) <= 0:
                 return None
-            order = Order(order.symbol, order.side, int(avail), order.order_type, order.limit_price,
-                          order.reason + " (호가잔량 부족: 부분체결)", order.prob_up, order.prediction_id)
+            order = replace(order, qty=int(avail), reason=order.reason + " (호가잔량 부족: 부분체결)")
         return self._fill(order, ref, ts)
 
 

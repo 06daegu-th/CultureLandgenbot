@@ -180,10 +180,19 @@ class OrderRecord(Base):
     qty: Mapped[float] = mapped_column(Float)
     order_type: Mapped[str] = mapped_column(String(16))
     limit_price: Mapped[float | None] = mapped_column(Float)
-    status: Mapped[str] = mapped_column(String(16))  # filled/rejected/submitted/...
+    # pending(제출 직전) → submitted(증권사 접수) → filled/partial/unfilled/cancelled · rejected(리스크) · error · unknown
+    status: Mapped[str] = mapped_column(String(16))
     reason: Mapped[str | None] = mapped_column(Text)
     broker_order_id: Mapped[str | None] = mapped_column(String(64))
     prediction_id: Mapped[int | None] = mapped_column(ForeignKey("predictions.id"))
+    # 멱등성 · 복구 · Evidence Chain · 슬리피지 (0002)
+    client_order_id: Mapped[str | None] = mapped_column(String(128), unique=True)
+    broker_orgno: Mapped[str | None] = mapped_column(String(16))
+    consensus_id: Mapped[int | None] = mapped_column(BigInteger)
+    ref_price: Mapped[float | None] = mapped_column(Float)
+    filled_qty: Mapped[float | None] = mapped_column(Float)
+    avg_price: Mapped[float | None] = mapped_column(Float)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class FillRecord(Base):

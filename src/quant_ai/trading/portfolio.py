@@ -23,7 +23,10 @@ class Order:
     limit_price: float | None = None
     reason: str = ""
     prob_up: float | None = None  # 이 주문을 만든 예측 확률 (리스크/복기용)
-    prediction_id: int | None = None
+    prediction_id: int | None = None  # predictions.id (Quant 모델 예측)
+    consensus_id: int | None = None  # consensus_signals.id (멀티 AI 합의 → Evidence Chain)
+    client_order_id: str | None = None  # 멱등 키: 같은 키로 두 번 주문하지 않는다
+    ref_price: float | None = None  # 주문 결정 시점 기준가 (슬리피지 실측)
 
     @property
     def signed_qty(self) -> int:

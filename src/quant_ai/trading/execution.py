@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from .broker import Broker, MarketQuote
@@ -22,6 +22,7 @@ class Signal:
     prob_up: float | None = None
     reason: str = ""
     prediction_id: int | None = None
+    consensus_id: int | None = None
 
 
 class ExecutionEngine:
@@ -60,23 +61,35 @@ class ExecutionEngine:
                 continue
             side = Side.BUY if delta_qty > 0 else Side.SELL
             orders.append(Order(sym, side, abs(delta_qty), reason=sig.reason, prob_up=sig.prob_up,
-                                prediction_id=sig.prediction_id))
+                                prediction_id=sig.prediction_id, consensus_id=sig.consensus_id, ref_price=price))
 
         # 매도 먼저 → 현금 확보 후 매수
         orders.sort(key=lambda o: 0 if o.side is Side.SELL else 1)
         fills: list[Fill] = []
+        # 증권사가 주문번호를 주는 즉시 기록 (체결 대기 중 죽어도 재시작 시 복구)
+        if hasattr(self.broker, "on_placed"):
+            self.broker.on_placed = self.journal.placed
         for order in orders:
             decision = self.risk.check(order, pf, prices, exposure_multiplier)
             if not decision.approved or decision.order is None:
                 self.journal.order(ts, order, "rejected", decision.reasons, None)
                 continue
+            approved = decision.order
+            # 멱등 키: 장부·거래일·종목·방향·주문 후 목표 수량 → 재시작해 같은 계획을 다시 돌려도 중복 주문 없음
+            target_after = pf.qty(approved.symbol) + approved.signed_qty
+            base = f"{self.journal.mode}:{ts.date().isoformat()}:{approved.symbol}:{approved.side.value}:{target_after}"
+            coid = self.journal.begin(ts, approved, base)
+            if coid is None:
+                continue
+            approved = replace(approved, client_order_id=coid)
             try:
-                fill = self.broker.submit(decision.order, quotes[order.symbol], ts)
+                fill = self.broker.submit(approved, quotes[order.symbol], ts)
             except Exception as exc:  # noqa: BLE001 - 한 종목 주문 실패가 나머지를 막으면 안 됨
-                self.journal.order(ts, decision.order, "error", [*decision.reasons, f"브로커 오류: {exc}"], None)
+                self.journal.order(ts, approved, "error", [*decision.reasons, f"브로커 오류: {exc}"], None)
                 self.errors.append(f"{order.symbol}: {exc}")
                 continue
-            self.journal.order(ts, decision.order, "filled" if fill else "unfilled", decision.reasons, fill)
+            status = "unfilled" if not fill else "filled" if fill.qty >= approved.qty else "partial"
+            self.journal.order(ts, approved, status, decision.reasons, fill)
             if fill:
                 fills.append(fill)
         return fills
