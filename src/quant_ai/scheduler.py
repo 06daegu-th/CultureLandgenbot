@@ -147,8 +147,9 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("decide", lambda now: app.decide(), 30 * 60, "always")
 
     # 주가 자동 갱신: 설정이 없어도 ./run.sh data 가 받아 둔 기본 위치가 있으면 쓴다 (없으면 데이터가 낡아 매매 중단)
-    marcap_dir = os.environ.get("QUANT_MARCAP_DIR") or (
-        "data/marcap/data" if Path("data/marcap/.git").exists() else None)
+    marcap_dir = os.environ.get("QUANT_MARCAP_DIR") or next(
+        (str(p / "data") for p in (Path(os.environ.get("QUANT_HOME") or Path.home() / ".quant-ai") / "data" / "marcap",
+                                   Path("data/marcap")) if (p / ".git").exists()), None)
     if marcap_dir and mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE, Mode.RESEARCH, Mode.PREDICT):
         from .data.collectors.marcap import sync_marcap
 

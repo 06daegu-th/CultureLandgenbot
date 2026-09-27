@@ -489,8 +489,9 @@ def cmd_doctor(args):
     if md:
         ok = Path(md).is_dir() and any(Path(md).glob("*.parquet"))
         add("ok" if ok else "fail", "marcap", md if ok else f"{md} 에 parquet 없음 → git clone FinanceData/marcap")
-    elif Path("data/marcap/.git").exists():
-        add("ok", "marcap", "기본 위치 data/marcap/data 사용 (스케줄러가 매일 자동 갱신)")
+    elif (Path(os.environ.get("QUANT_HOME") or Path.home() / ".quant-ai") / "data" / "marcap" / ".git").exists() \
+            or Path("data/marcap/.git").exists():
+        add("ok", "marcap", "기본 위치 사용 (스케줄러가 매일 자동 갱신)")
     else:
         add("warn", "marcap", "데이터 폴더 없음 → ./run.sh data 한 번 실행하면 이후 자동 갱신")
     roles = assign_roles(st)

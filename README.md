@@ -83,6 +83,9 @@ KRX 데이터 받기·갱신 → 점검 → 대시보드(http://127.0.0.1:8050, 
 - `.env` 에 **KIS 모의투자 키 3개**를 넣으면 다음 실행부터 모의계좌로 자동매매 (없으면 가상매매) — 발급처: [docs/ENV_KEYS.md](docs/ENV_KEYS.md)
 - 무료 AI 키(Gemini·Groq·NVIDIA·Cloudflare)는 선택. 기본은 코어 전용(`QUANT_CORE_ONLY=true`)
 - 대시보드가 먼저 뜨고, 뉴스·AI 판단·미국 장부는 뒤에서 채워진다 (`logs/warmup.log`, 홈의 '시작 체크리스트')
+- **새 버전으로 바꿀 때**: 새 폴더에서 `./run.sh` 를 실행하면 직전 버전 폴더의 `.env`(키)·`quant_ai.db`(기록)를 자동으로 가져온다.
+  - 가상환경·주가 데이터는 `~/.quant-ai` 에 한 번만 설치하고 모든 버전이 함께 쓴다.
+  - 디스크가 부족하면 `./run.sh clean-old` 로 옛 버전 폴더의 설치 파일을 정리한다(.env·DB 는 보존).
 - 개별 명령
   - `./run.sh doctor --ai --kis --notify` · `./run.sh chat` (채팅 AI)
   - `./run.sh proof [--market US]` (증명 체인) · `./run.sh guardian` (킬스위치 조건)

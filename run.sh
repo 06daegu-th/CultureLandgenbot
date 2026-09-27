@@ -21,14 +21,17 @@
 #   ./run.sh warmup           빈 화면 채우기 (뉴스·공시·거시 · AI 판단 1회)
 #   ./run.sh db-clean [--yes] DB 정리 (기본 미리보기 · 주문·판단 기록은 보존)
 #   ./run.sh up | down | logs Docker 로 상시 운영 (PostgreSQL + 스케줄러 + 대시보드)
+#   ./run.sh clean-old        옛 버전 폴더의 설치 파일·데이터 정리 (디스크 확보 · .env·DB 는 보존)
 #   ./run.sh test             테스트 + 린트
 #   ./run.sh <그 외>           quant-ai <그 외> 로 그대로 전달 (예: ./run.sh kill on)
 set -euo pipefail
 
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
-VENV="$ROOT/.venv"
-DATA_DIR="${DATA_DIR:-$ROOT/data}"
+# 가상환경(수백 MB)과 주가 데이터(100MB+)는 버전 폴더마다 새로 만들지 않고 한 곳에 공용으로 둔다
+QHOME="${QUANT_HOME:-$HOME/.quant-ai}"
+VENV="${QUANT_VENV:-$QHOME/venv}"
+DATA_DIR="${DATA_DIR:-$QHOME/data}"
 LOG_DIR="$ROOT/logs"
 PORT="${QUANT_WEB_PORT:-8050}"
 SQLITE_URL="sqlite:///quant_ai.db"
@@ -75,6 +78,7 @@ env_set() {  # .env 의 KEY= 가 비어 있을 때만 채운다 (사용자가 �
 
 # ------------------------------------------------------------------ 설치 (필요할 때만)
 ensure_env() {
+  migrate_from_previous
   if [[ ! -f .env ]]; then
     cp .env.example .env
     chmod 600 .env
@@ -87,6 +91,90 @@ venv_ok() {  # 이 폴더에서 만든 가상환경이고 파이썬이 동작하
   # 다른 폴더에서 복사해 온 가상환경은 실행 스크립트가 옛 경로의 파이썬을 가리킨다 → 옛 폴더를 지우면 전부 깨진다
   if [[ -f "$VENV/bin/quant-ai" ]] && [[ "$(head -3 "$VENV/bin/quant-ai")" != *"$VENV/bin/python"* ]]; then return 1; fi
   return 0
+}
+
+# ------------------------------------------------------------------ 버전 폴더 · 디스크
+old_folders() {  # 같은 곳에 풀어 둔 다른 버전 폴더들 (quant-ai, quant-ai 2, … — 이 폴더 제외), NUL 구분
+  local d
+  while IFS= read -r -d '' d; do
+    [[ "$d" == "$ROOT" || ! -f "$d/run.sh" ]] && continue
+    printf '%s\0' "$d"
+  done < <(find "$(dirname "$ROOT")" -maxdepth 1 -type d -name 'quant-ai*' -print0 2>/dev/null)
+}
+
+migrate_from_previous() {  # 새 버전 폴더에 .env 가 없으면: 가장 최근 버전 폴더의 .env(키) · DB(판단 기록) 를 가져온다
+  [[ -f .env ]] && return 0
+  local prev="" d ans="y"
+  while IFS= read -r -d '' d; do
+    [[ -f "$d/.env" ]] || continue
+    if [[ -z "$prev" || "$d/.env" -nt "$prev/.env" ]]; then prev="$d"; fi
+  done < <(old_folders)
+  [[ -n "$prev" ]] || return 0
+  if [[ -t 0 ]]; then
+    printf '이전 버전 폴더 발견: %s\n  → .env(키) · quant_ai.db(판단·매매 기록) 를 가져올까요? [Y/n] ' "$(basename "$prev")"
+    read -r ans || ans="y"
+  fi
+  [[ "$ans" =~ ^[Nn] ]] && return 0
+  cp "$prev/.env" .env && chmod 600 .env
+  local md; md="$(env_get QUANT_MARCAP_DIR)"
+  if [[ "$md" == "$prev/"* ]]; then  # 옛 폴더 안의 주가 데이터 → 공용 위치로 옮긴다 (다시 받지 않고, 옛 폴더를 지워도 되게)
+    if [[ -d "$prev/data/marcap/.git" && ! -e "$DATA_DIR/marcap" ]]; then
+      mkdir -p "$DATA_DIR" && mv "$prev/data/marcap" "$DATA_DIR/marcap" && touch "$DATA_DIR/.last_sync"
+    fi
+    env_replace QUANT_MARCAP_DIR "$DATA_DIR/marcap/data"
+  fi
+  local url; url="$(env_get DATABASE_URL)"
+  if [[ -f "$prev/quant_ai.db" && ! -f quant_ai.db && ( -z "$url" || "$url" == "sqlite:///quant_ai.db" ) ]]; then
+    local f
+    for f in quant_ai.db quant_ai.db-wal quant_ai.db-shm; do
+      [[ -f "$prev/$f" ]] && { cp "$prev/$f" "$f" || warn "$f 복사 실패 (디스크 공간 확인)"; }
+    done
+  fi
+  ok "이전 버전($(basename "$prev"))의 설정·기록을 가져왔습니다 — 옛 폴더는 ./run.sh clean-old 로 정리할 수 있습니다"
+}
+
+free_mb() { df -Pk "$1" 2>/dev/null | awk 'NR==2 {print int($4/1024)}'; }
+
+disk_full_help() {
+  local n=0 d
+  while IFS= read -r -d '' d; do n=$((n + 1)); done < <(old_folders)
+  warn "디스크 공간이 부족합니다 (남은 공간 $(free_mb "$HOME")MB)."
+  [[ $n -gt 0 ]] && warn "  옛 버전 폴더 ${n}개에 설치 파일이 남아 있습니다 → ./run.sh clean-old 로 확인 후 정리"
+  warn "  그 외: 휴지통 비우기 · 다운로드 폴더의 큰 파일 정리 (설치에 약 1.5GB 필요)"
+}
+
+check_disk() {
+  mkdir -p "$QHOME"
+  local mb; mb="$(free_mb "$QHOME")"
+  [[ -n "$mb" && "$mb" -lt 1500 ]] && disk_full_help
+  return 0
+}
+
+cmd_clean_old() {  # 옛 버전 폴더의 다시 만들 수 있는 것(가상환경 · 주가 데이터)만 지운다. .env · DB 는 그대로
+  local list=() d p sub ans=""
+  [[ -d "$ROOT/.venv" && "$VENV" != "$ROOT/.venv" ]] && list+=("$ROOT/.venv")  # 예전 방식의 폴더별 가상환경
+  while IFS= read -r -d '' d; do
+    for sub in .venv data/marcap; do
+      p="$d/$sub"
+      [[ -d "$p" && ! -L "$p" && "$p" != "$VENV" && "$p" != "$DATA_DIR/marcap" ]] && list+=("$p")
+    done
+  done < <(old_folders)
+  # 예전 버전이 남긴 pip 다운로드 캐시 (설치할 때마다 수백 MB 씩 쌓였을 수 있음)
+  local py="" cache=""
+  for p in "$VENV/bin/python" "$(find_python 2>/dev/null || true)"; do
+    [[ -n "$p" && -x "$(command -v "$p" 2>/dev/null || echo "$p")" ]] || continue
+    cache="$("$p" -m pip cache dir 2>/dev/null || true)"
+    [[ -n "$cache" && -d "$cache" ]] && { py="$p"; break; }
+  done
+  if [[ ${#list[@]} -eq 0 && -z "$py" ]]; then ok "정리할 옛 설치 파일이 없습니다 (남은 공간 $(free_mb "$HOME")MB)"; return 0; fi
+  say "다시 만들 수 있는 옛 설치 파일 (.env · DB · 로그는 지우지 않음)"
+  for p in "${list[@]}"; do printf '  %7s  %s\n' "$(du -sh "$p" 2>/dev/null | cut -f1)" "$p"; done
+  [[ -n "$py" ]] && printf '  %7s  %s (pip 다운로드 캐시)\n' "$(du -sh "$cache" 2>/dev/null | cut -f1)" "$cache"
+  if [[ -t 0 ]]; then printf '위 항목을 지울까요? [y/N] '; read -r ans || ans=""; fi
+  if [[ ! "$ans" =~ ^[Yy] ]]; then warn "지우지 않았습니다"; return 0; fi
+  for p in "${list[@]}"; do rm -rf "$p"; done
+  [[ -n "$py" ]] && { "$py" -m pip cache purge >/dev/null 2>&1 || true; }
+  ok "정리 완료 — 남은 공간 $(free_mb "$HOME")MB"
 }
 
 clean_broken_pip() {  # 중단된 pip 업그레이드가 남긴 깨진 폴더(~ip…) → "Ignoring invalid distribution" 경고의 원인
@@ -124,9 +212,14 @@ ensure_installed() {
   local want="$hash:$extras"
   if [[ $need -eq 1 ]]; then
     say "패키지 설치 (.[${extras}]) — 처음 한 번 1~2분"
-    "$VENV/bin/python" -m pip install -q --upgrade pip || warn "pip 업그레이드 실패 — 기존 pip 로 계속"
-    "$VENV/bin/python" -m pip install -q -e ".[${extras}]" || die "패키지 설치 실패 — 인터넷 연결 확인 후 다시 ./run.sh
-  (계속 실패하면: rm -rf .venv 후 ./run.sh)"
+    check_disk
+    "$VENV/bin/python" -m pip install -q --no-cache-dir --upgrade pip >/dev/null 2>&1 || warn "pip 업그레이드 실패 — 기존 pip 로 계속"
+    local out
+    if ! out="$("$VENV/bin/python" -m pip install -q --no-cache-dir -e ".[${extras}]" 2>&1)"; then
+      printf '%s\n' "$out" | tail -5 >&2
+      if [[ "$out" == *"No space left"* ]]; then disk_full_help; fi
+      die "패키지 설치 실패 — 인터넷 연결 확인 후 다시 ./run.sh  (계속 실패하면: rm -rf \"$VENV\" 후 ./run.sh)"
+    fi
     printf '%s' "$want" > "$VENV/.installed"
     ok "설치 완료"
   fi
@@ -137,7 +230,8 @@ qa() {
   if [[ ! -x "$VENV/bin/quant-ai" ]] || ! venv_ok || ! "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then
     ensure_env; ensure_installed
   fi
-  "$VENV/bin/quant-ai" "$@"
+  # 공용 가상환경이라도 코드는 항상 '이 폴더' 의 src 를 쓴다 (여러 버전 폴더가 있어도 섞이지 않게)
+  PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}" "$VENV/bin/python" -m quant_ai.cli "$@"
 }
 
 # ------------------------------------------------------------------ DB: PostgreSQL 이 없으면 SQLite 로
@@ -365,7 +459,7 @@ cmd_up() {
 cmd_test() {
   ensure_installed
   "$VENV/bin/ruff" check src tests
-  "$VENV/bin/pytest" -q "$@"
+  PYTHONPATH="$ROOT/src" "$VENV/bin/pytest" -q "$@"
 }
 
 usage() {  # 파일 첫머리 주석 블록만 출력 (코드 줄은 제외)
@@ -390,6 +484,7 @@ main() {
     down)       compose down ;;
     logs)       compose logs -f --tail 200 "$@" ;;
     test)       cmd_test "$@" ;;
+    clean-old)  cmd_clean_old ;;
     help|-h|--help) usage ;;
     *)          qa "$cmd" "$@" ;;
   esac
