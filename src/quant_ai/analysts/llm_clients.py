@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import threading
 import time
@@ -117,7 +118,8 @@ FREE_PROVIDERS: dict[str, ProviderSpec] = {
                            ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"), "GEMINI_API_KEY",
                            daily_requests=300, rpm=8, signup="aistudio.google.com → Get API key"),
     "nvidia": ProviderSpec("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1",
-                           ("nvidia/nemotron-3-super-120b-a12b",), "NVIDIA_API_KEY",
+                           ("nvidia/nemotron-3-super-120b-a12b", "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+                            "meta/llama-3.3-70b-instruct"), "NVIDIA_API_KEY",
                            daily_requests=1000, rpm=30, signup="build.nvidia.com → Get API Key"),
     "groq": ProviderSpec("groq", "Groq", "https://api.groq.com/openai/v1",
                          ("openai/gpt-oss-120b", "llama-3.3-70b-versatile"), "GROQ_API_KEY",
@@ -129,8 +131,53 @@ FREE_PROVIDERS: dict[str, ProviderSpec] = {
                                signup="dash.cloudflare.com → AI → Workers AI → REST API 토큰 + Account ID"),
 }
 
+USER_AGENT = "quant-ai/1.0 (+https://github.com/06daegu-th)"  # 파이썬 기본 서명은 일부 공급자(Cloudflare 1010)가 차단
+FALLBACK_CODES = (404, 429, 500, 502, 503, 504)  # 이 응답이면 다음 모델로
+_DISCOVERED: dict[tuple, list[str]] = {}
+
+
+class ModelUnavailable(Exception):
+    def __init__(self, code: int, detail: str = ""):
+        super().__init__(f"HTTP {code} {detail}")
+        self.code, self.detail = code, detail
+
+
+_SKIP = ("embed", "tts", "image", "imagen", "veo", "audio", "live", "native", "aqa", "vision", "guard", "reward",
+         "rerank", "whisper", "speech", "robotics", "computer-use", "nano", "vl-", "-vl", "parse", "safety", "retriever")
+
+
+def rank_models(provider: str, ids: list[str]) -> list[str]:
+    """모델 목록 → 분석용 채팅 모델을 품질 순으로 (최신 버전 · 큰 모델 우선, 미리보기는 약간 뒤로)."""
+    out = []
+    for raw in ids:
+        m = raw.split("/", 1)[1] if provider == "gemini" and raw.startswith("models/") else raw
+        low = m.lower()
+        if not m or any(x in low for x in _SKIP):
+            continue
+        if provider == "gemini":
+            if "gemini" not in low:
+                continue
+            ver = re.search(r"gemini-(\d+(?:\.\d+)?)", low)
+            tier = 3 if "-pro" in low else 1 if "flash-lite" in low else 2 if "flash" in low else 0
+            if not ver or not tier:
+                continue
+            score = (tier, float(ver.group(1)), -("preview" in low or "exp" in low))
+        elif provider == "nvidia":
+            tier = 3 if "nemotron" in low and "super" in low else 2 if "llama-3.3-70b" in low or "nemotron" in low and "ultra" in low \
+                else 1 if "70b" in low or "gpt-oss" in low else 0
+            if not tier:
+                continue
+            score = (tier, 0.0, -("preview" in low))
+        else:
+            tier = 3 if "gpt-oss-120b" in low else 2 if "70b" in low or "llama-4" in low else 1
+            score = (tier, 0.0, 0)
+        out.append((score, m))
+    return [m for _, m in sorted(out, key=lambda x: x[0], reverse=True)]
+
+
 _LAST_CALL: dict[str, float] = {}
 _RATE_LOCK = threading.Lock()
+log = logging.getLogger(__name__)
 
 
 class OpenAICompatClient(LLMClient):
@@ -185,10 +232,29 @@ class OpenAICompatClient(LLMClient):
         req = urllib.request.Request(  # noqa: S310 - https 검사됨
             url, data=json.dumps(body).encode(), method="POST",
             headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json",
-                     "Accept": "application/json"},
+                     "Accept": "application/json", "User-Agent": USER_AGENT},
         )
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - https 확인됨
             return json.loads(resp.read())
+
+    def _get(self, path: str) -> dict:
+        req = urllib.request.Request(  # noqa: S310 - https 검사됨
+            f"{self.base_url}{path}", headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json",
+                                               "User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=min(self.timeout, 20)) as resp:  # noqa: S310
+            return json.loads(resp.read())
+
+    def discover_models(self) -> list[str]:
+        """공급자의 모델 목록(/models)에서 채팅용 모델을 품질 순으로. 설정한 모델이 모두 사라졌을 때 쓴다."""
+        key = (self.provider, self.base_url)
+        if key not in _DISCOVERED:
+            try:
+                ids = [str(d.get("id", "")) for d in (self._get("/models").get("data") or [])]
+            except Exception as e:  # noqa: BLE001
+                log.warning("%s 모델 목록 조회 실패: %s", self.provider, e)
+                ids = []
+            _DISCOVERED[key] = rank_models(self.provider, ids)
+        return _DISCOVERED[key]
 
     def _post(self, path: str, body: dict, retries: int | None = None) -> dict:
         if not self.base_url.startswith("https://"):
@@ -199,12 +265,12 @@ class OpenAICompatClient(LLMClient):
             try:
                 return self._send(f"{self.base_url}{path}", body)
             except urllib.error.HTTPError as exc:
-                if exc.code in (404, 429) and len(self.models) > 1:
-                    raise  # 모델 폴백은 호출자가 처리
                 try:  # 공급자가 준 이유(예: "API key not valid")를 오류에 담는다
-                    detail = exc.read()[:300].decode("utf-8", "replace").replace("\n", " ")
+                    detail = exc.read()[:500].decode("utf-8", "replace").replace("\n", " ")
                 except Exception:  # noqa: BLE001
                     detail = ""
+                if exc.code in FALLBACK_CODES and path == "/chat/completions":
+                    raise ModelUnavailable(exc.code, detail) from exc  # 다음 모델로 (호출자가 처리)
                 last = RuntimeError(f"HTTP {exc.code} {detail}".strip())
                 if exc.code not in (429, 500, 502, 503, 504):  # 4xx 는 재시도해도 소용없음
                     break
@@ -213,10 +279,8 @@ class OpenAICompatClient(LLMClient):
             time.sleep(min(2 ** attempt, 8))
         raise LLMError(f"{self.base_url}{path} 호출 실패: {last}") from last
 
-    def _chat(self, messages: list[dict]) -> dict:
-        today = datetime.now(UTC).date().isoformat()
-        errors = []
-        for m in self.models:
+    def _try_models(self, models, messages, errors: list[str], today: str) -> dict | None:
+        for m in models:
             if self.exhausted.get(m) == today:
                 continue
             try:
@@ -224,9 +288,29 @@ class OpenAICompatClient(LLMClient):
                                                           "max_tokens": self.max_tokens})
                 self.model = m  # 실제로 답한 모델 (감사 로그·성적표용)
                 return payload
-            except urllib.error.HTTPError as exc:
-                errors.append(f"{m}: HTTP {exc.code}")
-                self.exhausted[m] = today  # 한도 초과·없는 모델 → 오늘은 다음 모델로
+            except ModelUnavailable as exc:
+                errors.append(f"{m}: HTTP {exc.code} {exc.detail[:120]}".strip())
+                if exc.code in (404, 429):  # 없는 모델·한도 초과 → 오늘은 다음 모델로 (503 과부하는 다음 호출에 다시)
+                    self.exhausted[m] = today
+        return None
+
+    def _chat(self, messages: list[dict]) -> dict:
+        today = datetime.now(UTC).date().isoformat()
+        errors: list[str] = []
+        payload = self._try_models(self.models, messages, errors, today)
+        if payload is not None:
+            return payload
+        if any(": HTTP 404" in e for e in errors) and all(": HTTP 404" in e or ": HTTP 503" in e for e in errors):
+            # 설정한 모델이 모두 사라짐(예: 구세대 모델 종료) → 공급자 목록에서 현재 쓸 수 있는 최고 모델을 찾는다
+            found = [m for m in self.discover_models() if m not in self.models][:3]
+            if found:
+                payload = self._try_models(found, messages, errors, today)
+                if payload is not None:
+                    log.warning("%s: 설정한 모델을 쓸 수 없어 %s 로 자동 전환 (QUANT_%s_MODELS 로 고정 가능)",
+                                self.provider, self.model, self.provider.upper())
+                    self.models = (self.model, *[m for m in self.models if m != self.model])
+                    self._switched = True
+                    return payload
         raise LLMError(f"{self.provider}: 사용 가능한 모델 없음 ({'; '.join(errors) or '오늘 한도 모두 소진'})")
 
     def complete_json(self, system: str, user: str, schema: dict) -> dict:

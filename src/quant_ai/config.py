@@ -61,7 +61,8 @@ def _llm_providers(e) -> dict:
             continue
         models = [m.strip() for m in e.get(f"QUANT_{name.upper()}_MODELS", "").split(",") if m.strip()]
         if name == "nvidia" and not models and e.get("QUANT_NVIDIA_MODEL"):
-            models = [e["QUANT_NVIDIA_MODEL"]]
+            # 지정 모델을 먼저, 과부하(503)·종료(404) 때 넘어갈 기본 후보를 뒤에
+            models = list(dict.fromkeys([e["QUANT_NVIDIA_MODEL"], *spec.models]))
         out[name] = {"key": key, "models": tuple(models) or spec.models,
                      "account": e.get("CLOUDFLARE_ACCOUNT_ID") if name == "cloudflare" else None,
                      "daily": int(e.get(f"QUANT_{name.upper()}_DAILY_LIMIT") or spec.daily_requests)}

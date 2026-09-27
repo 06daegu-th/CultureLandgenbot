@@ -195,3 +195,91 @@ def test_keyboard_interrupt_is_friendly(monkeypatch, capsys):
         cli.main(["guardian"])
     assert e.value.code == 130 and "중단했습니다" in capsys.readouterr().err
     assert datetime.now(UTC) - timedelta(seconds=1) < datetime.now(UTC)
+
+
+# ------------------------------------------------------------------ 실제 키로 나온 오류들 (Gemini 404 · NVIDIA 503 · Groq 1010)
+def _http_error(code, body=b""):
+    import io
+    import urllib.error
+    return urllib.error.HTTPError("https://x", code, "err", {}, io.BytesIO(body))
+
+
+def test_retired_models_are_replaced_by_discovery(monkeypatch):
+    from quant_ai.analysts import llm_clients as lc
+    lc._DISCOVERED.clear()
+    c = lc.OpenAICompatClient.from_spec(lc.FREE_PROVIDERS["gemini"], "k")
+    sent = []
+
+    def send(url, body):
+        sent.append(body["model"])
+        if body["model"].startswith("gemini-2.5"):
+            raise _http_error(404, b'{"error":{"message":"models/gemini-2.5-pro is not found"}}')
+        return {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    monkeypatch.setattr(c, "_send", send)
+    monkeypatch.setattr(c, "_get", lambda path: {"data": [{"id": f"models/{m}"} for m in (
+        "gemini-3-flash", "gemini-3-pro-preview", "gemini-embedding-001", "gemini-3-flash-lite", "gemini-2.0-flash-tts")]})
+    c.min_interval = 0
+    assert c.complete_json("s", "u", {}) == {"ok": True}
+    assert sent[:3] == ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    assert c.model == "gemini-3-pro-preview" and c.models[0] == "gemini-3-pro-preview"
+    sent.clear()
+    c.complete_json("s", "u", {})
+    assert sent == ["gemini-3-pro-preview"]  # 다음 호출부터 바로 새 모델
+    assert lc.rank_models("gemini", ["models/gemini-3-flash", "models/gemini-2.5-pro", "models/text-embedding-004"]) == \
+        ["gemini-2.5-pro", "gemini-3-flash"]
+
+
+def test_overloaded_model_falls_back_without_blacklisting(monkeypatch):
+    from quant_ai.analysts import llm_clients as lc
+    from quant_ai.config import Settings
+    st = Settings.from_env({"NVIDIA_API_KEY": "k", "QUANT_NVIDIA_MODEL": "nvidia/nemotron-3-super-120b-a12b"})
+    models = st.llm_providers["nvidia"]["models"]
+    assert models[0] == "nvidia/nemotron-3-super-120b-a12b" and len(models) >= 3  # 지정 모델 + 대체 후보
+    c = lc.OpenAICompatClient.from_spec(lc.FREE_PROVIDERS["nvidia"], "k", models)
+    c.min_interval = 0
+    calls = []
+
+    def send(url, body):
+        calls.append(body["model"])
+        if body["model"] == models[0]:
+            raise _http_error(503, b'{"error":{"message":"Service temporarily overloaded"}}')
+        return {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    monkeypatch.setattr(c, "_send", send)
+    c.complete_json("s", "u", {})
+    assert calls == [models[0], models[1]] and c.model == models[1]
+    assert models[0] not in c.exhausted  # 과부하는 일시적 → 다음 호출에 다시 시도
+
+
+def test_requests_carry_program_user_agent(monkeypatch):
+    import urllib.request
+
+    from quant_ai.analysts import llm_clients as lc
+    seen = {}
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"{\\"ok\\": true}"}}]}'
+
+    def urlopen(req, timeout=None):
+        seen.update({k.lower(): v for k, v in req.header_items()})
+        return R()
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    c = lc.OpenAICompatClient.from_spec(lc.FREE_PROVIDERS["groq"], "k")
+    c.min_interval = 0
+    c.complete_json("s", "u", {})
+    assert seen["user-agent"].startswith("quant-ai/")  # 'Python-urllib' 은 Cloudflare 1010 으로 차단됨
+
+
+def test_doctor_hints_for_real_errors():
+    from quant_ai.cli import _ai_hint
+    assert "1010" in _ai_hint('HTTP 403 {"type":"https://developers.cloudflare.com/.../cloudflare-1xxx-errors/error-1010"}')
+    assert "Workers AI" in _ai_hint('HTTP 403 {"errors":[{"message":"AiError: Ai: This account is not allowed'
+                                    ' to access this model"}]} cloudflare')
+    assert "과부하" in _ai_hint('HTTP 503 {"error":{"message":"Service temporarily overloaded"}}')
+    assert "키 값" in _ai_hint("HTTP 400 Please pass a valid API key")

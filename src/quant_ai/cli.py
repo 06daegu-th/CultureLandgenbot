@@ -388,6 +388,15 @@ def cmd_cashflow(args):
 def _ai_hint(msg: str) -> str:
     """오류 문구 → 사용자가 할 일 한 줄."""
     m = msg.lower()
+    if "error-10" in m or "1010" in m or "banned your access" in m:
+        return " → 요청 서명 차단(Cloudflare 1010): 최신 버전으로 업데이트하면 해결"
+    if "workers ai" in m or ("not allowe" in m and "cloudflare" in m) or "aierror" in m:
+        return (" → Cloudflare API 토큰에 'Workers AI' 권한 필요: dash.cloudflare.com → 내 프로필 → API 토큰 → "
+                "'Workers AI' 템플릿으로 새 토큰 → .env CLOUDFLARE_API_TOKEN 교체 (계정 ID 도 확인)")
+    if "http 503" in m or "overloaded" in m or "unavailable" in m:
+        return " → 공급자 일시 과부하: 다른 모델로 자동 전환됨, 잠시 후 다시"
+    if "사용 가능한 모델 없음" in msg and "404" in m:
+        return " → 설정한 모델이 종료됨: 쓸 수 있는 모델을 자동으로 찾았지만 실패 — QUANT_<공급자>_MODELS 를 비우거나 최신 모델명으로"
     if any(x in m for x in ("tunnel connection", "timed out", "name or service", "nodename", "connection refused",
                             "network is unreachable", "urlopen error", "ssl")):
         return " → 네트워크·방화벽·VPN 확인 (회사망이면 차단됐을 수 있음)"
@@ -423,10 +432,13 @@ def _doctor_ai(app) -> list[tuple[str, str, str]]:
                 if hasattr(c, k):
                     setattr(c, k, v)
             r = c.complete_json("연결 점검이다.", '{"ok": true} 를 그대로 출력하라.', schema)
-            res = ("ok" if r.get("ok") is True else "warn", f"{prov} · {c.model} 응답 정상 ({_t.monotonic() - t0:.1f}초)")
+            first = (getattr(c, "models", None) or [c.model])[0]
+            note = " · 설정 모델 대신 자동 전환" if c.model != first or getattr(c, "_switched", False) else ""
+            res = ("ok" if r.get("ok") is True else "warn",
+                   f"{prov} · {c.model} 응답 정상 ({_t.monotonic() - t0:.1f}초){note}")
         except Exception as e:  # noqa: BLE001
             msg = str(e)
-            res = ("fail", f"{prov}: {msg[:180]}{_ai_hint(msg)}")
+            res = ("fail", f"{prov}: {msg[:260]}{_ai_hint(msg)}")
         checked[prov] = res
         out.append((res[0], f"AI {role}", res[1]))
     return out
