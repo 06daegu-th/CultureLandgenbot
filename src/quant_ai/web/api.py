@@ -13,6 +13,7 @@ from ..data.db import load_bars, session_scope
 from ..data.models import (
     ConsensusRecord,
     Disclosure,
+    FillRecord,
     Instrument,
     JobRun,
     JournalEntry,
@@ -83,6 +84,7 @@ class DashboardAPI:
         self.app = app
         self.engine = app.engine
         self._cache: tuple[float, dict] | None = None
+        self._risk_cache: dict[str, tuple[float, dict]] = {}
 
     # ------------------------------------------------------------------ 공통
     def _instruments(self, s):
@@ -299,6 +301,8 @@ class DashboardAPI:
             "system": {
                 "last_bar": _ts(last_bar),
                 "ai_roles": ai_roles_info(st),
+                "broker": st.broker, "kis_env": st.kis_env, "core_only": st.core_only,
+                "initial_cash": st.initial_cash,
                 "embeddings": app.memory.embedder.model,
                 "live_enabled": st.live_enabled,
                 "risk": st.risk.__dict__,
@@ -473,10 +477,18 @@ class DashboardAPI:
         return {"rows": rows, "roles": ai_roles_info(self.app.settings), "labels": CATEGORY_LABELS}
 
     def risk(self, mode: str | None = None) -> dict:
+        """전체 시세를 읽어 계산하므로 장부별 60초 캐시."""
+        import time
+        key = mode or "_"
+        hit = self._risk_cache.get(key)
+        if hit and time.monotonic() - hit[0] < 60:
+            return hit[1]
         try:
-            return self.app.portfolio_risk(mode)
+            out = self.app.portfolio_risk(mode)
         except Exception as e:  # noqa: BLE001 - 대시보드는 계속 떠야 한다
             return {"error": str(e)}
+        self._risk_cache[key] = (time.monotonic(), out)
+        return out
 
     def orders(self, mode: str | None = None, limit: int = 200) -> dict:
         with session_scope(self.engine) as s:
@@ -486,6 +498,15 @@ class DashboardAPI:
                 q = q.where(OrderRecord.mode == mode)
             else:
                 q = q.where(~OrderRecord.mode.startswith("attr-"))
+            recs = list(s.scalars(q))
+            fills: dict[int, float] = {}
+            for oid, fp in s.execute(select(FillRecord.order_id, FillRecord.price).where(
+                    FillRecord.order_id.in_([r.id for r in recs]))):
+                fills[oid] = fp
+            for r in recs:  # 예전 기록은 체결가를 체결 테이블에서
+                if r.avg_price is None and r.id in fills:
+                    r.avg_price = fills[r.id]
+            s.expunge_all()
             rows = [{"id": r.id, "ts": _ts(r.created_at), "mode": r.mode, "symbol": r.symbol,
                      "name": inst[r.symbol].name if r.symbol in inst else r.symbol, "side": r.side, "qty": r.qty,
                      "status": r.status, "reason": r.reason, "limit_price": _f(r.limit_price, 2),
@@ -494,7 +515,7 @@ class DashboardAPI:
                      "consensus_id": r.consensus_id,
                      "slippage_bps": _f((r.avg_price - r.ref_price) / r.ref_price * 1e4 * (1 if r.side == "buy" else -1), 2)
                      if r.avg_price and r.ref_price else None}
-                    for r in s.scalars(q)]
+                    for r in recs]
         counts: dict[str, int] = {}
         for r in rows:
             counts[r["status"]] = counts.get(r["status"], 0) + 1

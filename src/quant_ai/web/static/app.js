@@ -7,6 +7,7 @@ const S = {
   symbol: null,
   pfMode: "paper",
   newsKind: "all",
+  idxTab: "kr", watchTab: "all", feedTab: "all", chartN: 260, chartSym: null, param: null,
   charts: [],
   token: new URLSearchParams(location.search).get("token") || safeGet("qa_token") || "",
 };
@@ -41,7 +42,7 @@ function time(ts, withDate = false) {
 }
 function date(ts) { if (!ts) return "-"; const d = new Date(ts); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; }
 const badge = (a) => a ? `<span class="badge b-${esc(a)}">${a === "NO_TRADE" ? "NO TRADE" : esc(a)}</span>` : '<span class="badge b-none">-</span>';
-const card = (title, body, right = "", cls = "") => `<div class="card ${cls}"><div class="card-h"><h3>${title}</h3><div class="right">${right}</div></div>${body}</div>`;
+const card = (title, body, right = "", cls = "") => `<div class="card ${cls}">${title || right ? `<div class="card-h"><h3>${title}</h3><div class="right">${right}</div></div>` : ""}${body}</div>`;
 const empty = (msg = "데이터 없음") => `<div class="empty">${esc(msg)}</div>`;
 
 async function api(path, opts = {}) {
@@ -115,9 +116,10 @@ function chartOpts(el) {
   };
 }
 
-async function candleChart(el, symbol) {
+async function candleChart(el, symbol, n = 260) {
+  if (!el) return;
   if (!window.LightweightCharts) { el.innerHTML = empty("차트 라이브러리를 불러오지 못했습니다 (오프라인?)"); return; }
-  const d = await api(`/api/chart?symbol=${encodeURIComponent(symbol)}`);
+  const d = await api(`/api/chart?symbol=${encodeURIComponent(symbol)}&n=${n}`);
   if (!d.bars.length) { el.innerHTML = empty(); return; }
   const chart = LightweightCharts.createChart(el, chartOpts(el));
   S.charts.push(chart);
@@ -165,7 +167,7 @@ function consensusBlock(c, labels, compact = false) {
     const left = st === null ? 50 : st >= 0 ? 50 : 50 + st * 50, width = st === null ? 0 : Math.abs(st) * 50;
     const col = st === null ? "transparent" : st >= 0 ? css("--up") : css("--down");
     const acc = v.accuracy === null || v.accuracy === undefined ? "신규" : `${Math.round(v.accuracy * 100)}%`;
-    return `<div class="voter" title="${esc(v.summary)}">
+    return `<div class="voter" title="${esc(v.summary)}">${aiIcon(providerOf(v.backend), v.analyst, v.backend, 26)}
       <div class="name">${esc(labels[v.analyst] || v.analyst)}${v.veto ? ' <span class="chip neg">VETO</span>' : ""}<small>${esc(v.backend)}</small></div>
       <div class="stance"><div style="left:${left}%;width:${width}%;background:${col}"></div></div>
       <div class="mono r ${st === null ? "flat" : st >= 0 ? "up" : "down"}" style="text-align:right">${v.analyst === "risk" && st === null ? (v.veto ? '<span class="down">VETO</span>' : '<span style="color:var(--good)">통과</span>') : st === null ? "기권" : (st >= 0 ? "+" : "") + st.toFixed(2)}</div>
@@ -183,51 +185,323 @@ function consensusBlock(c, labels, compact = false) {
   </div>`;
 }
 
-// ------------------------------------------------------------ 뷰: 대시보드
+// ------------------------------------------------------------ 공통 (새 UI)
+const ROLE_LABEL = { primary: "Primary AI", nvidia: "Second AI", panel: "Panel AI", quant: "Quant Model", regime: "Market Regime", risk: "Risk AI", challenger: "Challenger" };
+const NT_LABEL = { veto: "리스크 거부권", few_responders: "의견 부족", high_conflict: "AI 충돌", weak_signal: "신호 약함" };
+const CAT_LABEL = { direction: "단기 방향", news: "뉴스 해석", macro: "거시경제", trend: "추세", risk: "위험 경고" };
+function homeMode(d) {
+  if (["paper", "shadow", "live"].includes(d.mode)) return d.mode;
+  return ["live", "paper", "shadow"].find((m) => d.portfolios[m]?.equity) || "paper";
+}
+function roleProvider(d, role) {
+  const r = (d.system.ai_roles || []).find((x) => x.role === role);
+  return r && r.models.length ? providerOf(r.models[0]) || r.provider : null;
+}
+function aiRoleIcon(d, role, size = 26) { return aiIcon(roleProvider(d, role), role, null, size); }
+const krw = (v) => v == null ? "-" : "₩" + num(v);
+const pctRaw = (v, dgt = 1) => v == null ? "-" : `${(v * 100).toFixed(dgt)}%`;
+
+// ------------------------------------------------------------ 뷰: 홈 (대시보드)
 function viewDashboard(d) {
-  const idx = d.indices.length ? `<div class="idx-row">${d.indices.map((i) => `<div class="idx"><div class="n">${esc(i.name)}</div>
-      <div class="v num">${num(i.last, 2)}</div><div class="small">${pct(i.chg_pct)}</div>${spark(i.spark)}</div>`).join("")}</div>` : empty();
-
-  const m = d.market;
-  const mkt = m.regime ? `<div class="mkt"><div><div class="gauge-l" style="color:${m.score >= 60 ? "var(--good)" : m.score < 40 ? "var(--bad)" : "var(--warn)"}">${esc(m.risk_label)}</div>${gauge(m.score, "시장 심리")}</div>
-    <div class="kv">${d.macro.map((x) => `<div class="muted">${esc(x.label)}</div><div class="num">${num(x.last, 2)}</div><div class="small">${pct(x.chg_pct)}</div>`).join("") || '<div class="muted">경제지표 없음</div><div></div><div></div>'}</div></div>` : empty("국면 계산에 필요한 데이터 부족");
-
-  const summary = d.ai_summary.length ? `<ul class="plain">${d.ai_summary.map((s) => `<li><span class="chk">◉</span><span>${esc(s)}</span></li>`).join("")}</ul>` : empty();
-
-  const watch = d.watchlist.length ? `<div class="scroll" style="max-height:600px"><table class="tight watch-table"><thead><tr><th>종목명</th><th class="r">AI 신호</th><th class="r">현재가</th></tr></thead><tbody>
-    ${d.watchlist.map((w) => `<tr class="click" data-sym="${esc(w.symbol)}"><td><b>${esc(w.name)}</b><span class="sub">${esc(w.symbol)}</span></td>
-      <td class="r">${badge(w.action)}<span class="sub num">${w.prob_up === null ? "" : "P " + (w.prob_up * 100).toFixed(0) + "%"}</span></td>
-      <td class="r num">${price(w.last, w.symbol)}<span class="sub">${pct(w.chg_pct)}</span></td></tr>`).join("")}</tbody></table></div>` : empty();
-
-  const pf = d.portfolios[S.pfMode] || {};
-  const pfBody = pf.equity ? portfolioSummary(pf) : empty(`${S.pfMode} 포트폴리오 기록 없음`);
-
-  const news = d.news.slice(0, 7).map((n) => `<tr><td class="dim small">${time(n.ts, true)}</td><td style="white-space:normal">${esc(n.title)}</td><td class="r">${sentChip(n.sentiment)}</td></tr>`).join("");
-
-  const board = scoreMatrix(d, true);
-
-  const trades = d.trades.slice(0, 7).map((t) => `<tr><td class="dim small">${time(t.ts, true)}<span class="sub">${esc(t.mode)}</span></td><td>${esc(t.name)}<span class="sub ${t.side === "buy" ? "up" : "down"}">${t.side === "buy" ? "매수" : "매도"}</span></td><td class="r num">${num(t.qty)}주<span class="sub">@${price(t.price, t.symbol)}</span></td></tr>`).join("");
-
-  const top = d.watchlist.find((w) => w.action === "BUY") || d.watchlist[0];
-  S.symbol = S.symbol || top?.symbol;
-
+  const mode = homeMode(d);
+  const m = d.market || {};
+  // 1) 주요 지수 (국내 / 해외 / 거시)
+  const glob = Object.fromEntries((d.macro || []).map((x) => [x.id, x]));
+  const tabsIdx = { kr: "국내", us: "해외", macro: "금리·환율" };
+  const idxCards = (() => {
+    if (S.idxTab === "us") return ["SP500", "NASDAQCOM", "VIXCLS", "DTWEXBGS"].map((k) => glob[k]).filter(Boolean)
+      .map((x) => ({ name: x.label, last: x.last, chg: x.chg, chg_pct: x.chg_pct, spark: x.spark }));
+    if (S.idxTab === "macro") return ["DGS10", "DGS2", "DEXKOUS", "DCOILWTICO"].map((k) => glob[k]).filter(Boolean)
+      .map((x) => ({ name: x.label, last: x.last, chg: x.chg, chg_pct: x.rate ? null : x.chg_pct, bp: x.rate ? x.chg : null, spark: x.spark }));
+    const w = d.watchlist.slice(0, Math.max(0, 4 - d.indices.length));
+    return [...d.indices.map((i) => ({ name: i.symbol === "KOSPI" ? "KOSPI (대용)" : i.name, last: i.last, chg: i.chg, chg_pct: i.chg_pct, spark: i.spark })),
+      ...w.map((x) => ({ name: x.name, last: x.last, chg_pct: x.chg_pct, spark: null, sym: x.symbol }))];
+  })();
+  const idx = idxCards.length ? `<div class="idx-row">${idxCards.map((i) => `<div class="idx"><div class="n">${esc(i.name)}</div>
+      <div class="v num">${i.sym ? price(i.last, i.sym) : num(i.last, 2)}</div><div class="small">${i.bp != null ? `<span class="${i.bp >= 0 ? "up" : "down"}">${i.bp >= 0 ? "▲ +" : "▼ "}${(i.bp * 100).toFixed(1)}bp</span>` : pct(i.chg_pct)}</div>${spark(i.spark)}</div>`).join("")}</div>`
+    : empty(S.idxTab === "kr" ? "지수 데이터 없음" : "FRED_API_KEY 설정 후 자동 수집됩니다");
+  // 2) 시장 상태
+  const hasMacroKV = ["VIXCLS", "DTWEXBGS", "DGS10", "DCOILWTICO", "DEXKOUS"].some((k) => glob[k]);
+  const mk = m.score != null ? `<div class="${hasMacroKV ? "mkt" : "mkt-col"}"><div><div class="gauge-l" style="color:${m.score >= 60 ? "var(--good)" : m.score <= 40 ? "var(--bad)" : "var(--warn)"}">${esc(m.risk_label)}</div>${gauge(m.score, "시장 심리")}<div class="gauge-sub">${esc(m.type || "")} · ${esc(m.regime_label || "")}</div></div>
+    ${(() => {
+      const kv = ["VIXCLS", "DTWEXBGS", "DGS10", "DCOILWTICO", "DEXKOUS"].map((k) => glob[k]).filter(Boolean).map((x) => `<div class="muted">${esc(x.label)}</div><div class="num">${num(x.last, 2)}</div><div class="small">${x.rate ? `<span class="${x.chg >= 0 ? "up" : "down"}">${x.chg >= 0 ? "+" : ""}${(x.chg * 100).toFixed(0)}bp</span>` : pct(x.chg_pct)}</div>`).join("");
+      // 거시 지표가 있으면 지표, 없으면 점수 구성 요소 (추세·폭·모멘텀·변동성·낙폭)
+      return kv ? `<div class="kv">${kv}</div>` : `<div style="display:grid;gap:9px;min-width:0">${(m.components || []).map((c) => `<div class="comp"><span class="muted">${esc(c.name)}</span><div class="bar"><div style="width:${c.score * 100}%"></div></div><span class="num r small">${esc(c.value)}</span></div>`).join("")}</div>`;
+    })()}</div>`
+    : empty("시장 상태 계산에 필요한 지수 데이터 부족");
+  // 3) 뉴스 이벤트
+  const news = (d.news_events || []).slice(0, 6).map((n) => `<div class="news-it">${catIcon(n.category)}<span class="cat-chip">${esc(n.category || "시장")}</span>
+    <span class="t" title="${esc(n.title)}">${esc(n.title)}</span><span class="dim xs mono">${n.n_articles > 1 ? `<span class="cnt-chip">${n.n_articles}건</span> ` : ""}${time(n.ts)}</span></div>`).join("");
+  // 4) 관심 종목
+  const held = new Set((d.portfolios[mode]?.positions || []).map((p) => p.symbol));
+  const wl = d.watchlist.filter((w) => S.watchTab === "held" ? held.has(w.symbol) : S.watchTab === "buy" ? w.action === "BUY" : true);
+  const watch = wl.length ? `<div class="scroll" style="max-height:430px"><table class="tight watch-table"><thead><tr><th>종목명</th><th class="r">현재가</th><th class="r">등락률</th><th class="r">AI 신호</th></tr></thead><tbody>
+    ${wl.map((w) => `<tr class="click" data-sym="${esc(w.symbol)}"><td><b>${esc(w.name)}</b>${held.has(w.symbol) ? ' <span class="chip ok">보유</span>' : ""}</td>
+      <td class="r num">${price(w.last, w.symbol)}</td><td class="r">${pct(w.chg_pct)}</td><td class="r">${badge(w.action)}</td></tr>`).join("")}</tbody></table></div>` : empty();
+  // 5) 포트폴리오
+  const pf = d.portfolios[mode] || {};
+  const curve = pf.curve || [];
+  const dayPnl = curve.length >= 2 ? curve[curve.length - 1][1] - curve[curve.length - 2][1] : null;
+  const stock = (pf.positions || []).reduce((a, p) => a + (p.value || 0), 0);
+  const eq = pf.equity || 0;
+  const segs = eq ? [{ label: "주식", value: stock, color: "#22c55e" }, { label: "현금", value: Math.max(pf.cash, 0), color: "#3b82f6" }] : [];
+  const pfBody = eq ? `<div class="donut-wrap">${donut(segs, krw(eq))}<div class="legend">${segs.map((s) => `<div><span class="sw" style="background:${s.color}"></span>${s.label}<b class="num">${pctRaw(s.value / eq)}</b></div>`).join("")}
+      <div class="small muted" style="margin-top:6px">누적 ${pct(pf.return_pct)}</div></div></div>
+    <div class="stat-row" style="grid-template-columns:repeat(3,1fr);margin-top:12px">
+      <div class="stat"><div class="l">일일 손익</div><div class="num ${dayPnl >= 0 ? "up" : "down"}"><b>${dayPnl == null ? "-" : (dayPnl >= 0 ? "+" : "") + num(dayPnl)}</b></div></div>
+      <div class="stat"><div class="l">보유 종목</div><div class="num"><b>${(pf.positions || []).length}</b></div></div>
+      <div class="stat"><div class="l">현금 비중</div><div class="num"><b>${pctRaw(pf.cash / eq)}</b></div></div></div>
+    <div style="height:46px;margin-top:8px">${spark(curve.slice(-120).map((x) => x[1]), 400, 46)}</div>` : empty(`${mode.toUpperCase()} 장부 기록 없음 — ./run.sh 가 첫 사이클을 실행합니다`);
+  // 6) AI 실시간 분석
+  const feed = (d.ai_feed || []).filter((f) => S.feedTab === "buy" ? f.action === "BUY" : S.feedTab === "nt" ? ["NO_TRADE", "HOLD"].includes(f.action) : true)
+    .slice(0, 8).map((f) => `<div class="feed-it" data-ev="${f.id}"><span class="dim xs mono">${time(f.ts, true)}</span><span class="t"><b>${esc(f.name)}</b> <span class="muted">${esc(f.text || f.action)}</span></span><span class="tone ${f.tone}">${f.tone}</span></div>`).join("");
+  // 7) 매매 신호
+  const sigs = (d.signals || []).slice(0, 6).map((s) => `<tr class="click" data-sym="${esc(s.symbol)}"><td><b>${esc(s.name)}</b></td><td>${badge(s.action)}</td><td class="r num">${pctRaw(s.prob_up, 0)}</td><td class="r dim small">${time(s.ts, true)}</td></tr>`).join("");
+  // 8) 이벤트 · 글로벌
+  const evs = (d.events || []).slice(0, 6).map((e) => `<div class="ev-it">${flag(e.country)}<span><span class="imp ${e.importance >= 0.8 ? "hi" : e.importance < 0.5 ? "lo" : ""}"></span>${esc(e.name)}</span><span class="dim xs mono">${date(e.ts).slice(5)} ${time(e.ts)}</span></div>`).join("");
+  const globRows = ["SP500", "NASDAQCOM", "VIXCLS", "DTWEXBGS", "DGS10", "DCOILWTICO"].map((k) => glob[k]).filter(Boolean)
+    .map((x) => `<tr><td>${esc(x.label)}</td><td class="r num">${num(x.last, 2)}</td><td class="r">${x.rate ? `<span class="${x.chg >= 0 ? "up" : "down"}">${(x.chg * 100).toFixed(0)}bp</span>` : pct(x.chg_pct)}</td></tr>`).join("");
+  S.symbol = S.symbol || d.watchlist.find((w) => w.action === "BUY")?.symbol || d.watchlist[0]?.symbol;
+  const chartSym = S.chartSym || (d.indices[0]?.symbol) || S.symbol;
+  const tabs = (id, obj, cur) => `<div class="tabs" id="${id}">${Object.entries(obj).map(([k, v]) => `<button data-k="${k}" class="${cur === k ? "on" : ""}">${v}</button>`).join("")}</div>`;
+  const lessons = (d.lessons || []).slice(0, 5);
   return `
-  <div class="grid g-top">
-    ${card("주요 지수", idx)}
-    ${card("시장 현황", mkt, m.regime ? `<span class="chip">${esc(m.regime_label)}</span>` : "")}
-    ${card("오늘의 AI 요약", summary, `<span class="small dim">${time(d.summary_time, true)}</span>`)}
+  <div class="grid h1">
+    ${card("주요 지수", idx, tabs("idx-tabs", tabsIdx, S.idxTab))}
+    ${card("시장 상태", mk, `<a class="link" href="#market">상세 ${ICONS.arrow}</a>`)}
+    ${card("오늘의 주요 뉴스", news ? `<div class="news-list">${news}</div>` : empty("뉴스 없음 — QUANT_NEWS_FEEDS 설정 시 수집"), `<a class="link" href="#news">더보기 ${ICONS.arrow}</a>`)}
   </div>
-  <div class="grid g-mid">
-    ${card(`<span id="chart-title">${esc(nameOf(S.symbol))}</span>`, `<div id="main-chart" class="chart tall"></div>`, `<span class="small muted">MA5 · MA20 · MA60 · AI 신호</span>`)}
-    ${card("관심 종목", watch, `<span class="small muted">${d.watchlist.length}종목</span>`)}
-    ${card("AI 합의 신호", `<div id="cons-box">${empty("불러오는 중…")}</div>`, `<a class="link" href="#analysis">상세 분석 →</a>`)}
+  <div class="grid h2">
+    ${card(`<span id="chart-title">${esc(chartSym === "KOSPI" ? "KOSPI (시총가중 대용)" : nameOf(chartSym))}</span>`, `<div id="main-chart" class="chart tall"></div>`,
+      tabs("range-tabs", { 60: "3M", 130: "6M", 260: "1Y", 750: "3Y" }, String(S.chartN)) + (chartSym !== "KOSPI" && d.indices[0] ? ` <button class="btn-sm" id="chart-kospi">KOSPI</button>` : ""))}
+    ${card("관심 종목", watch, tabs("watch-tabs", { all: "전체", held: "보유", buy: "BUY" }, S.watchTab))}
+    ${card("AI 종합 분석", `<div id="ai-box">${empty("불러오는 중…")}</div>`)}
   </div>
-  <div class="grid g-bot">
-    ${card("포트폴리오", pfBody, pfTabs())}
-    ${card("최근 뉴스 & 이벤트", news ? `<div class="scroll"><table><tbody>${news}</tbody></table></div>` : empty(), `<a class="link" href="#news">전체 →</a>`)}
-    ${card("AI 성적표 <span class='small dim'>단기 방향</span>", board, `<a class="link" href="#review">전체 →</a>`)}
-    ${card("거래 내역", trades ? `<div class="scroll"><table class="tight"><tbody>${trades}</tbody></table></div>` : empty("체결 없음"), `<a class="link" href="#trades">전체 →</a>`)}
+  <div class="grid h3">
+    ${card(`포트폴리오 현황 <span class="chip">${mode.toUpperCase()}</span>`, pfBody, `<a class="link" href="#portfolio">상세 ${ICONS.arrow}</a>`)}
+    ${card("AI 실시간 분석", feed || empty("아직 분석 없음"), tabs("feed-tabs", { all: "전체", buy: "BUY", nt: "보류" }, S.feedTab))}
+    <div class="stack">
+      ${card("최근 매매 신호", sigs ? `<table class="tight"><tbody>${sigs}</tbody></table>` : empty(), `<a class="link" href="#journal">저널 ${ICONS.arrow}</a>`)}
+      ${card("포지션 비중 <span class='small dim'>같이 움직이는 묶음</span>", `<div id="pos-box">${empty("계산 중…")}</div>`, `<a class="link" href="#risk">리스크 ${ICONS.arrow}</a>`)}
+    </div>
+    <div class="stack">
+      ${card("주요 경제 이벤트", evs || empty("등록된 일정 없음 (artifacts/events.json)"))}
+      ${card("글로벌 시장 현황", globRows ? `<table class="tight"><tbody>${globRows}</tbody></table>` : empty("FRED_API_KEY 설정 시 표시"))}
+    </div>
+  </div>
+  <div class="grid h4">
+    ${card("시스템 상태 & 진행 현황", `<div id="pipe-box">${empty("불러오는 중…")}</div>`, `<a class="link" href="#ops">운영 ${ICONS.arrow}</a>`)}
+    ${card("최근 복기가 찾은 교훈", lessons.length ? `<ul class="plain">${lessons.map((l) => `<li><span class="chk">✓</span><span class="small">${esc(l)}</span></li>`).join("")}</ul>` : empty("복기가 쌓이면 표시됩니다 (장 마감 후 자동)"), "", "notice")}
+    ${card("바로가기", `<div class="shortcuts">${[["#portfolio", "포트폴리오"], ["#risk", "리스크 관리"], ["#journal", "판단 저널"], ["#ai", "AI 성적 · 보정"], ["#sheet", "리밸런싱 주문표"], ["#research", "백테스트"]].map(([h, t]) => `<a href="${h}">${t}${ICONS.arrow}</a>`).join("")}</div>`)}
   </div>`;
+}
+
+async function fillHome(d) {
+  const chartSym = S.chartSym || d.indices[0]?.symbol || S.symbol;
+  if (chartSym) candleChart($("#main-chart"), chartSym, S.chartN);
+  if (S.symbol) fillAI(d, S.symbol);
+  api("/api/ops").then((o) => { const b = $("#pipe-box"); if (b) b.innerHTML = pipeline(d, o); }).catch(() => {});
+  api(`/api/risk?mode=${homeMode(d)}`).then((r) => { const b = $("#pos-box"); if (b) b.innerHTML = posWeights(r); }).catch(() => {});
+}
+
+async function fillAI(d, sym) {
+  const a = await api(`/api/analysis?symbol=${encodeURIComponent(sym)}`);
+  const box = $("#ai-box");
+  if (!box) return;
+  const c = a.consensus;
+  const w = d.watchlist.find((x) => x.symbol === sym) || {};
+  if (!c) { box.innerHTML = empty("이 종목의 AI 분석이 아직 없습니다"); return; }
+  const roles = (c.contributions || []).filter((v) => ["primary", "nvidia", "panel", "risk", "quant"].includes(v.analyst));
+  const checks = (a.checklist || []).map((x) => `<div class="check-it ${x.ok ? "ok" : "no"}">${x.ok ? ICONS.check : ICONS.x}<b>${esc(x.key)}</b><span class="muted">${esc(x.text)}</span></div>`).join("");
+  const rg = a.range;
+  box.innerHTML = `<div class="ai-head">${aiRoleIcon(d, "primary", 40)}<div><div class="nm">${esc(a.name)} <span class="dim small">${esc(a.symbol)}</span></div>
+      <div class="sub2">현재가 <b class="num" style="color:var(--text)">${price(w.last ?? rg?.last, sym)}</b> ${pct(w.chg_pct)}</div></div>
+      <span class="badge big-badge b-${esc(c.action)}">${c.action === "NO_TRADE" ? "NO TRADE" : esc(c.action)}</span></div>
+    <div style="margin-top:12px" class="small muted">AI 신뢰도 <b class="num" style="color:var(--text)">${Math.round(c.confidence)}</b> · P(상승) <b class="num" style="color:var(--text)">${pctRaw(c.prob_up)}</b> · 충돌 <b class="conflict-${esc(c.conflict)}">${{ low: "낮음", medium: "보통", high: "높음" }[c.conflict] || c.conflict}</b></div>
+    <div class="conf-bar" style="margin-top:6px"><div style="width:${Math.min(100, c.confidence)}%"></div></div>
+    <div class="small muted" style="margin-top:12px"><b style="color:var(--text)">분석 요약</b></div><div class="checks">${checks || empty()}</div>
+    ${rg ? `<div class="rng"><span class="muted">${rg.horizon}거래일 예상 범위 (1σ)</span><span class="num">${num(rg.lower)} ~ ${num(rg.upper)}</span>
+      <span class="muted">변동성 손절선 (2σ)</span><span class="num down">${num(rg.stop)} (${pctRaw(rg.stop / rg.last - 1)})</span></div>` : ""}
+    <div class="ai-roles" style="margin-top:12px">${roles.map((v) => `<span class="ai-role" title="${esc(v.summary || "")}">${aiIcon(providerOf(v.backend), v.analyst, v.backend, 20)}${esc(ROLE_LABEL[v.analyst] || v.analyst)} <b class="num ${v.prob_up == null ? "flat" : v.prob_up >= 0.5 ? "up" : "down"}">${v.prob_up == null ? (v.veto ? "VETO" : "통과") : pctRaw(v.prob_up, 0)}</b></span>`).join("")}</div>
+    <button class="btn-wide" onclick="location.hash='#evidence/${c.id}'">근거 추적 (Evidence Chain) 보기 ${ICONS.arrow}</button>`;
+}
+
+function pipeline(d, o) {
+  const job = (n) => (o.jobs || []).find((j) => j.job === n);
+  const st = (j, okText = "정상") => !j ? ["대기", "var(--dim)"] : j.ok === false ? ["실패", "var(--bad)"] : j.ok ? [okText, "var(--good)"] : ["실행 중", "var(--warn)"];
+  const roles = (d.system.ai_roles || []).filter((r) => r.models.length);
+  const stages = [
+    ["데이터 수집", ICONS.data, "#0ea5e9", st(job("krx_data") || job("krx_bootstrap")), `마지막 ${date(d.system.last_bar)}`],
+    ["뉴스 분석", ICONS.news, "#8b5cf6", st(job("news") || job("news_offhours"), "수집 중"), (d.news_events || []).length ? `이벤트 ${(d.news_events || []).length}` : "피드 미설정"],
+    ["AI 모델", ICONS.ai, "#6366f1", [roles.length ? `${roles.length}개 연결` : "휴리스틱", roles.length ? "var(--good)" : "var(--warn)"], `오늘 $${(o.llm?.today_cost || 0).toFixed(2)}`],
+    ["주문 엔진", ICONS.engine, "#22c55e", [o.kill_switch?.on ? "매수 정지" : "대기", o.kill_switch?.on ? "var(--bad)" : "var(--good)"], o.broker === "kis" ? (o.kis_env === "real" ? "KIS 실전" : "KIS 모의") : "가상매매"],
+    ["포트폴리오 감시", ICONS.portfolio, "#f59e0b", st(job("strategy_health") || job("core_satellite")), "건강검진 · 리스크"],
+    ["학습 / 복기", ICONS.learn, "#ec4899", st(job("review"), "완료"), "보정 · 교훈"],
+  ];
+  return `<div class="pipe">${stages.map(([n, ic, col, [s, sc], sub]) => `<div class="pipe-it"><span class="pi" style="background:${col}">${ic}</span><div style="min-width:0"><b>${n}</b><span style="color:${sc}">${s}</span> <span class="dim">· ${esc(sub)}</span></div></div>`).join("")}</div>`;
+}
+
+function posWeights(r) {
+  if (!r || r.error || !r.n_positions) return empty("보유 종목 없음");
+  const inCluster = new Set((r.clusters || []).flatMap((c) => c.symbols));
+  const rows = [...(r.clusters || []).map((c) => ({ label: c.members.slice(0, 2).join("·") + (c.members.length > 2 ? ` 외 ${c.members.length - 2}` : ""), w: c.weight })),
+    ...(r.risk_contrib || []).filter((x) => !inCluster.has(x.symbol)).map((x) => ({ label: x.name, w: x.weight }))].sort((a, b) => b.w - a.w).slice(0, 5);
+  return rows.map((x) => `<div class="wbar"><span class="small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.label)}</span><div class="bar"><div style="width:${Math.min(100, x.w * 100 / Math.max(r.gross, 0.01))}%"></div></div><span class="num small r">${pctRaw(x.w, 0)}</span></div>`).join("")
+    + `<div class="small dim" style="margin-top:8px">1일 VaR95 ${pctRaw(r.var95)} · 베타 ${r.beta ?? "-"} · 현금 ${pctRaw(r.cash_weight, 0)}</div>`;
+}
+
+// ------------------------------------------------------------ 뷰: AI 성적 · 확률 보정
+async function viewAIScore(el) {
+  const [sb, cal] = await Promise.all([api("/api/ai-scoreboard"), api("/api/calibration")]);
+  const roles = sb.roles.map((r) => `<div class="prov-card"><div class="hd">${aiIcon(r.models.length ? providerOf(r.models[0]) || r.provider : null, r.role, null, 34)}<div><b>${esc(r.label)}</b><div class="small muted">${esc(r.desc)}</div></div>${r.free && r.models.length ? '<span class="chip ok" style="margin-left:auto">무료</span>' : ""}</div>
+    <div class="small">${esc(r.provider)}</div><div class="xs mono dim" style="white-space:normal">${r.models.map(esc).join(" → ") || "-"}</div>${r.daily ? `<div class="xs dim">하루 한도 ${r.daily}회</div>` : ""}</div>`).join("");
+  const byProv = {};
+  sb.rows.forEach((r) => { (byProv[r.provider] ||= []).push(r); });
+  const prov = Object.entries(byProv).map(([p, rows]) => `<div class="prov-card"><div class="hd">${aiIcon(p, null, rows[0].model, 32)}<div><b>${esc(p)}</b><div class="xs mono dim">${esc([...new Set(rows.map((r) => r.model))].join(", "))}</div></div></div>
+    ${rows.map((r) => `<div class="skill"><span>${esc(r.label)}</span><div class="bar"><div style="width:${(r.accuracy ?? 0) * 100}%;background:${heatColor(r.accuracy)}"></div></div><span class="num r"><b>${pctRaw(r.accuracy, 0)}</b><span class="xs dim"> ${r.n}</span></span></div>`).join("")}</div>`).join("");
+  const an = Object.entries(cal.analysts || {});
+  const calRows = an.map(([a, v]) => `<tr><td><b>${esc(ROLE_LABEL[a] || a)}</b></td><td class="r num">${v.raw.n}</td><td class="r num">${pctRaw(v.raw.accuracy)}</td><td class="r num">${v.raw.brier?.toFixed(4) ?? "-"}</td><td class="r num">${v.raw.logloss?.toFixed(4) ?? "-"}</td>
+    <td class="r num ${v.raw.ece >= 0.08 ? "bad-t" : "good"}">${pctRaw(v.raw.ece)}</td><td class="r num">${v.calibrator ? `a=${v.calibrator.a.toFixed(2)} b=${v.calibrator.b.toFixed(2)}<span class="sub">ECE ${pctRaw(v.calibrator.before.ece)} → ${pctRaw(v.calibrator.after.ece)}</span>` : '<span class="dim">표본 50개 전</span>'}</td></tr>`).join("");
+  const curves = an.filter(([, v]) => v.raw.curve?.length).map(([a, v]) => `<div class="prov-card"><div class="hd"><b>${esc(ROLE_LABEL[a] || a)}</b><span class="small dim" style="margin-left:auto">n=${v.raw.n}</span></div>${reliabilitySvg(v.raw.curve)}</div>`).join("");
+  const cons = cal.consensus || {};
+  el.innerHTML = `
+  ${card("AI 역할 배정 <span class='small dim'>역할마다 다른 회사 모델 → 오류가 겹치지 않게</span>", `<div class="op-grid">${roles}</div>`)}
+  ${card("AI 별 성적표 <span class='small dim'>실제 결과로 자동 채점 · 최근 1년</span>", prov ? `<div class="op-grid">${prov}</div>` : empty("채점된 의견이 아직 없습니다 (horizon 경과 후 자동 채점)"))}
+  <div class="grid g-2">
+    ${card("확률 보정 지표 <span class='small dim'>AI 가 말한 확률 vs 실제 적중</span>", calRows ? `<div class="scroll"><table><thead><tr><th>AI</th><th class="r">표본</th><th class="r">적중률</th><th class="r">Brier</th><th class="r">LogLoss</th><th class="r">ECE</th><th class="r">보정 (Platt)</th></tr></thead><tbody>${calRows}</tbody></table></div>
+      <div class="small dim" style="margin-top:8px">ECE = 확률이 실제 적중률과 평균 몇 %p 어긋나는지. 8%p 이상이면 과신/소심. 표본 50개부터 AI 별 자동 보정 → 앙상블에는 보정된 확률이 들어갑니다.</div>` : empty())}
+    ${card("합의 신호 보정", cons.n ? `<div class="stat-row" style="grid-template-columns:repeat(3,1fr)"><div class="stat"><div class="l">표본</div><div class="big num">${cons.n}</div></div><div class="stat"><div class="l">Brier</div><div class="big num">${cons.brier?.toFixed(3)}</div></div><div class="stat"><div class="l">ECE</div><div class="big num">${pctRaw(cons.ece)}</div></div></div>${reliabilitySvg(cons.curve)}` : empty("채점된 합의 신호 없음"))}
+  </div>
+  ${curves ? card("신뢰도 곡선 (Reliability) <span class='small dim'>대각선에 가까울수록 정직한 확률</span>", `<div class="op-grid">${curves}</div>`) : ""}`;
+}
+
+function reliabilitySvg(curve) {
+  if (!curve || !curve.length) return empty();
+  const W = 260, H = 190, P = 26;
+  const x = (v) => P + v * (W - P - 8), y = (v) => H - P - v * (H - P - 8);
+  const pts = curve.map((b) => `${x(b.pred).toFixed(1)},${y(b.actual).toFixed(1)}`).join(" ");
+  const dots = curve.map((b) => `<circle cx="${x(b.pred)}" cy="${y(b.actual)}" r="${Math.min(7, 2 + Math.sqrt(b.n) / 3)}" fill="#60a5fa" fill-opacity=".85"><title>예측 ${pctRaw(b.pred)} · 실제 ${pctRaw(b.actual)} · n=${b.n}</title></circle>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-height:220px"><rect x="${P}" y="8" width="${W - P - 8}" height="${H - P - 8}" fill="none" stroke="${css("--line-2")}"/>
+    <line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" stroke="${css("--dim")}" stroke-dasharray="4 4"/>
+    <polyline points="${pts}" fill="none" stroke="#60a5fa" stroke-width="2"/>${dots}
+    <text x="${W / 2}" y="${H - 6}" font-size="10" fill="${css("--muted")}" text-anchor="middle">AI 가 말한 확률</text>
+    <text x="10" y="${H / 2}" font-size="10" fill="${css("--muted")}" text-anchor="middle" transform="rotate(-90 10 ${H / 2})">실제 적중</text></svg>`;
+}
+
+// ------------------------------------------------------------ 뷰: 리스크 관리
+async function viewRisk(el) {
+  const d = S.data;
+  const mode = S.riskMode || homeMode(d);
+  const r = await api(`/api/risk?mode=${mode}`);
+  const tabs = `<div class="tabs" id="risk-tabs">${["paper", "shadow", "live"].map((m) => `<button data-k="${m}" class="${mode === m ? "on" : ""}">${m.toUpperCase()}</button>`).join("")}</div>`;
+  if (r.error || !r.n_positions) { el.innerHTML = card("리스크 관리", empty(r.error || `${mode.toUpperCase()} 장부에 보유 종목이 없습니다`), tabs); bindRiskTabs(); return; }
+  const warn = (r.warnings || []).map((w) => `<div class="veto" style="margin-bottom:6px">⚠ ${esc(w)}</div>`).join("");
+  const contrib = (r.risk_contrib || []).slice(0, 10).map((x) => `<div class="wbar"><span class="small">${esc(x.name)}</span><div class="bar"><div style="width:${Math.max(0, x.share) * 100 * 3}%;background:linear-gradient(90deg,#f59e0b,#ef4444)"></div></div><span class="num small r">${pctRaw(x.share, 0)}</span></div>`).join("");
+  const clusters = (r.clusters || []).map((c) => `<tr><td style="white-space:normal">${c.members.map(esc).join(", ")}</td><td class="r num ${c.weight > (r.limits?.max_cluster_weight ?? 0.4) ? "bad-t" : ""}">${pctRaw(c.weight)}</td></tr>`).join("");
+  const liq = (r.liquidity || []).slice(0, 12).map((x) => `<tr><td>${esc(x.name)}</td><td class="r num">${num(x.adv / 1e8, 1)}억</td><td class="r num ${x.days_to_liquidate > 3 ? "bad-t" : ""}">${x.days_to_liquidate == null ? "-" : x.days_to_liquidate < 0.01 ? "<0.01일 (즉시)" : x.days_to_liquidate.toFixed(2) + "일"}</td></tr>`).join("");
+  el.innerHTML = `
+  <div class="card"><div class="card-h"><h3>포트폴리오 리스크 <span class="small dim">최근 ${r.days}거래일 실제 수익률 × 현재 비중 (과거 시뮬레이션)</span></h3><div class="right">${tabs}</div></div>
+    <div class="stat-row">
+      <div class="stat"><div class="l">1일 VaR95</div><div class="big num">${pctRaw(r.var95)}</div><div class="small muted">${krw(r.var95_krw)} · 한도 ${pctRaw(r.limits?.max_var95, 0)}</div></div>
+      <div class="stat"><div class="l">1일 ES95 (최악 5% 평균)</div><div class="big num">${pctRaw(r.es95)}</div><div class="small muted">${krw(r.es95_krw)}</div></div>
+      <div class="stat"><div class="l">KOSPI 베타 · 상관</div><div class="big num">${r.beta ?? "-"}</div><div class="small muted">상관 ${r.corr_to_market ?? "-"} · 연변동성 ${pctRaw(r.vol)}</div></div>
+      <div class="stat"><div class="l">시장 -10% 시나리오</div><div class="big num down">${pctRaw(r["stress_market_-10pct"])}</div><div class="small muted">최악의 날 ${pctRaw(r.worst_day)} (${esc(r.worst_day_date || "")})</div></div>
+    </div>${warn ? `<div style="margin-top:12px">${warn}</div>` : ""}</div>
+  <div class="grid g-3">
+    ${card("손실 꼬리 기여도 <span class='small dim'>최악 5% 날의 손실 몫</span>", contrib || empty())}
+    ${card("같이 움직이는 묶음 <span class='small dim'>상관 ≥ 0.6 · 섹터 대용</span>", clusters ? `<table><thead><tr><th>종목</th><th class="r">합산 비중</th></tr></thead><tbody>${clusters}</tbody></table>` : empty("강하게 묶인 종목 없음 (분산 양호)"))}
+    ${card("노출 · 통화", `<table><tbody><tr><td>주식 비중</td><td class="r num">${pctRaw(r.gross)}</td></tr><tr><td>현금</td><td class="r num">${pctRaw(r.cash_weight)}</td></tr><tr><td>보유 종목</td><td class="r num">${r.n_positions}</td></tr><tr><td>종목 간 평균 상관</td><td class="r num">${r.avg_corr ?? "-"}</td></tr>
+      ${Object.entries(r.currency || {}).map(([k, v]) => `<tr><td>통화 ${esc(k)}</td><td class="r num">${pctRaw(v)}</td></tr>`).join("")}</tbody></table>`)}
+  </div>
+  ${card("유동성 <span class='small dim'>20일 평균 거래대금 · 참여율 10% 로 청산에 걸리는 일수 · 주문은 거래대금의 5% 이내로 자동 제한</span>", liq ? `<div class="scroll"><table><thead><tr><th>종목</th><th class="r">일 거래대금</th><th class="r">청산 일수</th></tr></thead><tbody>${liq}</tbody></table></div>` : empty())}`;
+  bindRiskTabs();
+}
+function bindRiskTabs() { document.querySelectorAll("#risk-tabs button").forEach((b) => b.onclick = () => { S.riskMode = b.dataset.k; render(); }); }
+
+// ------------------------------------------------------------ 뷰: 판단 저널 (AI Journal)
+async function viewJournal(el) {
+  const act = { all: "", buy: "BUY", sell: "SELL", nt: "NO_TRADE,HOLD" }[S.journalTab || "all"];
+  S.journalLimit = S.journalLimit || 30;
+  const j = await api(`/api/journal?limit=${S.journalLimit}${act ? "&action=" + act : ""}`);
+  const tabs = `<div class="tabs" id="journal-tabs">${Object.entries({ all: "전체", buy: "BUY", sell: "SELL", nt: "보류 (NO TRADE)" }).map(([k, v]) => `<button data-k="${k}" class="${(S.journalTab || "all") === k ? "on" : ""}">${v}</button>`).join("")}</div>`;
+  const rows = j.rows.map((r) => `<div class="jr" data-ev="${r.id}">
+    <div><span class="lbl">시각</span><span class="mono small">${date(r.as_of).slice(2)}</span><div>${badge(r.action)}</div></div>
+    <div><span class="lbl">종목</span><b>${esc(r.name)}</b><div class="xs dim">${esc(r.symbol)} · 신뢰도 ${Math.round(r.confidence)}</div></div>
+    <div><span class="lbl">왜</span>${r.why.slice(0, 3).map((w) => `<div class="small">${esc(w)}</div>`).join("")}</div>
+    <div><span class="lbl">예상</span><span class="small">${esc(r.expected)}</span></div>
+    <div><span class="lbl">실제</span>${r.actual == null ? '<span class="dim small">채점 대기</span>' : `${pct(r.actual)} ${r.correct ? '<span class="chip ok">적중</span>' : '<span class="chip bad">빗나감</span>'}`}${r.order_status ? `<div class="xs dim">주문: ${esc(r.order_status)}</div>` : ""}</div>
+    <div><span class="lbl">왜 틀렸나</span><span class="small muted">${esc(r.cause || (r.correct ? "—" : ""))}</span></div></div>`).join("");
+  const nt = (j.no_trade || []).map((x) => `<tr><td>${esc(x.label)}</td><td class="r num">${x.n}</td><td class="r num">${pctRaw(x.avoided_loss_rate, 0)}</td><td class="r">${pct(x.avg_return_if_entered)}</td></tr>`).join("");
+  el.innerHTML = `
+  ${card("AI 판단 저널 <span class='small dim'>왜 샀나 → 무엇을 예상했나 → 실제 → 왜 틀렸나 · 행을 누르면 근거 추적</span>",
+    rows ? `<div class="jr head"><div>시각 · 신호</div><div>종목</div><div>왜 (상위 AI · 근거)</div><div>예상</div><div>실제</div><div>왜 틀렸나</div></div>${rows}
+      ${j.rows.length >= S.journalLimit ? `<button class="btn-wide" id="journal-more">더 보기 (${S.journalLimit}건 표시 중)</button>` : ""}` : empty("아직 판단 기록이 없습니다"), tabs)}
+  ${card("NO TRADE 판단의 가치 <span class='small dim'>진입을 보류한 사유별로 — 실제로 손실을 피했나</span>", nt ? `<div class="scroll"><table><thead><tr><th>사유</th><th class="r">건수</th><th class="r">하락 회피율</th><th class="r">진입했다면 평균</th></tr></thead><tbody>${nt}</tbody></table></div>` : empty("채점된 보류 판단이 아직 없습니다"))}`;
+  document.querySelectorAll("#journal-tabs button").forEach((b) => b.onclick = () => { S.journalTab = b.dataset.k; S.journalLimit = 30; render(); });
+  const more = $("#journal-more");
+  if (more) more.onclick = () => { S.journalLimit += 30; render(); };
+  document.querySelectorAll("[data-ev]").forEach((x) => x.onclick = () => { location.hash = `#evidence/${x.dataset.ev}`; });
+}
+
+// ------------------------------------------------------------ 뷰: Evidence Chain
+async function viewEvidence(el, id) {
+  const e = await api(`/api/evidence?id=${encodeURIComponent(id)}`);
+  if (e.error) { el.innerHTML = card("근거 추적", empty("해당 판단을 찾을 수 없습니다")); return; }
+  const icon = { news: "📰", disclosure: "📄", price: "📈", market: "🌐", ai: "🤖", ensemble: "⚖️", risk: "🛡️", order: "🧾", outcome: "🎯" };
+  const body = (st) => {
+    const it = st.items;
+    if (st.stage === "news" || st.stage === "disclosure") return it.length ? it.map((n) => `<div class="news-it" style="grid-template-columns:30px 1fr auto">${catIcon(n.category || (st.stage === "disclosure" ? "공시" : null))}<span class="t" style="white-space:normal">${esc(n.title)}</span><span class="xs dim">${n.n_articles > 1 ? `<span class="cnt-chip">${n.n_articles}건 → 1 이벤트</span> ` : ""}${n.sentiment == null ? "" : sentChip(n.sentiment)}</span></div>`).join("") : '<span class="dim small">없음</span>';
+    if (st.stage === "price" && !Object.keys(it || {}).length) return '<span class="dim small">이 판단은 근거 저장 기능 이전 기록이라 당시 지표가 없습니다</span>';
+    if (st.stage === "price") {
+      const L = { last_close: ["종가", "n"], last_bar: ["기준 봉", "s"], ret_1: ["1일 수익률", "p"], ret_5: ["5일 수익률", "p"], ret_20: ["20일 수익률", "p"],
+        vol_20: ["20일 변동성 (일)", "p"], vol_ratio: ["변동성 비율 (5/60일)", "x"], jump_sigma: ["당일 급변 (σ)", "x"], rsi_14: ["RSI (14)", "r"],
+        dist_52w: ["52주 고점 거리", "p"], ma_20_gap: ["20일선 대비", "p"], ma_60_gap: ["60일선 대비", "p"] };
+      const fmt = (t, v) => typeof v !== "number" ? esc(String(v ?? "-")).slice(0, 10) : t === "p" ? pct(v) : t === "r" ? (v <= 1 ? v * 100 : v).toFixed(0) : t === "x" ? v.toFixed(2) : num(v, 0);
+      return `<div class="kvs">${Object.entries(it || {}).map(([k, v]) => { const [lb, t] = L[k] || [k, "x"]; return `<div><span class="muted">${esc(lb)}</span><b class="num">${fmt(t, v)}</b></div>`; }).join("")}</div>`;
+    }
+    if (st.stage === "market") {
+      const mk = it.market || {};
+      return `<div class="kvs"><div><span class="muted">시장 상태</span><b>${esc(mk.label || "-")} ${mk.score ?? ""}</b></div><div><span class="muted">유형</span><b>${esc(mk.type || "-")}</b></div><div><span class="muted">국면</span><b>${esc(REGIME_KO[it.regime?.regime] || it.regime?.regime || "-")}</b></div>
+        ${(it.cross_asset || []).map((c) => `<div><span class="muted">${esc(c.name)} 상관</span><b class="num">${c.corr.toFixed(2)}</b></div>`).join("")}</div>
+        ${(it.events || []).length ? `<div class="small muted" style="margin-top:8px">예정 이벤트: ${it.events.map((x) => esc(x.name)).join(", ")}</div>` : ""}`;
+    }
+    if (st.stage === "ai") return `<div class="op-grid">${it.map((a) => `<div class="op"><h4><span style="display:flex;gap:8px;align-items:center">${aiIcon(a.provider, a.analyst, a.model, 26)}${esc(a.label)}</span><span class="small dim">${a.weight == null ? "" : "가중 " + pctRaw(a.weight, 0)}</span></h4>
+      <div class="xs dim">${esc(a.provider || "")} · ${esc(a.model || "")}${a.track_accuracy != null ? ` · 과거 적중 ${pctRaw(a.track_accuracy, 0)} (n=${a.n_scored})` : ""}</div>
+      ${Object.values(a.scores || {}).map((s) => `<div class="small" style="margin-top:4px">${esc(s.label)} <b class="num">${pctRaw(s.prob_up, 0)}</b>${s.prob_cal != null ? ` <span class="dim">→ 보정 ${pctRaw(s.prob_cal, 0)}</span>` : ""}${s.correct == null ? "" : s.correct ? ' <span class="chip ok">적중</span>' : ' <span class="chip bad">빗나감</span>'}</div>`).join("")}
+      <div class="small" style="margin-top:6px">${esc(a.summary || "")}</div>${a.veto ? `<div class="veto" style="margin-top:6px">⛔ ${esc(a.veto_reason || "VETO")}</div>` : ""}
+      ${(a.reasons || []).length ? `<ul>${a.reasons.slice(0, 4).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}</div>`).join("")}</div>`;
+    if (st.stage === "ensemble") return `<div class="cons-top"><div class="cons-action ${esc(it.action)}">${it.action === "NO_TRADE" ? "NO TRADE" : esc(it.action)}</div><div class="small muted">P(상승) <b class="num" style="color:var(--text)">${pctRaw(it.prob_up)}</b> · 신뢰도 ${Math.round(it.confidence)} · 충돌 <b class="conflict-${esc(it.conflict)}">${esc(it.conflict)}</b></div></div>
+      ${(it.reasons || []).slice(0, 5).map((r) => `<div class="small">• ${esc(r)}</div>`).join("")}`;
+    if (st.stage === "risk") return `${(it.vetoes || []).map((v) => `<div class="veto" style="margin-bottom:6px">⛔ ${esc(v)}</div>`).join("")}${(it.no_trade || []).map((v) => `<span class="chip">${esc(v)}</span>`).join("")}${(it.explanation || []).map((x) => `<div class="small muted">• ${esc(x)}</div>`).join("")}${(() => { const q = it.data_quality || {}; const bad = [q.halt && `거래정지 의심: ${q.halt}`, q.stale && `시세 지연: ${q.stale}`, q.jump_sigma >= 4 && `급변 ${q.jump_sigma}σ`].filter(Boolean); return bad.length ? `<div class="small warn-t">데이터 품질: ${esc(bad.join(" · "))}</div>` : ""; })()}${!(it.vetoes || []).length && !(it.explanation || []).length ? '<span class="small good">통과 — 거부권·보류 사유 없음</span>' : ""}`;
+    if (st.stage === "order") return it.length ? `<div class="scroll"><table><thead><tr><th>장부</th><th>구분</th><th class="r">수량</th><th>상태</th><th class="r">기준가</th><th class="r">체결가</th><th class="r">슬리피지</th><th>멱등 키</th></tr></thead><tbody>${it.map((o) => `<tr><td><span class="chip">${esc(o.mode)}</span></td><td class="${o.side === "buy" ? "up" : "down"}">${o.side === "buy" ? "매수" : "매도"}</td><td class="r num">${num(o.qty)}</td><td>${esc(o.status)}</td><td class="r num">${num(o.ref_price)}</td><td class="r num">${num(o.avg_price)}</td><td class="r num">${o.slippage_bps == null ? "-" : o.slippage_bps.toFixed(1) + "bp"}</td><td class="xs mono dim">${esc((o.client_order_id || "").split(":").slice(-3).join(":"))}</td></tr>`).join("")}</tbody></table></div>` : '<span class="dim small">이 판단으로 나간 주문 없음</span>';
+    if (st.stage === "outcome") return it.correct == null ? `<span class="dim small">${it.horizon || ""}거래일 경과 후 자동 채점</span>` : `<div class="cons-top"><div class="big ${it.realized_return >= 0 ? "up" : "down"}">${pct(it.realized_return)}</div>${it.correct ? '<span class="chip ok">예측 적중</span>' : '<span class="chip bad">빗나감</span>'}</div>${it.cause ? `<div class="lesson" style="margin-top:8px">원인: ${esc(it.cause)}</div>` : ""}`;
+    return "";
+  };
+  el.innerHTML = `
+  <div class="card"><div class="card-h"><h3>근거 추적 (Evidence Chain) · ${esc(e.name)} <span class="dim small">${esc(e.symbol)} · ${date(e.as_of)}</span></h3><div class="right">${badge(e.action)} <a class="link" href="#journal">저널로 ${ICONS.arrow}</a></div></div>
+    <div class="small muted">이 판단을 내릴 때 AI 들이 본 재료부터 실제 결과까지 한 번에 추적합니다. 그때의 데이터를 판단과 함께 저장하므로 나중에 봐도 같은 근거가 재현됩니다.</div></div>
+  ${card("", `<div class="chain">${e.chain.map((st) => `<div class="step"><span class="node">${icon[st.stage] || "•"}</span><h4>${esc(st.title)}</h4><div class="box">${body(st)}</div></div>`).join("")}</div>`)}`;
+}
+
+// ------------------------------------------------------------ 뷰: 주문 내역 (멱등성 · 복구 · 슬리피지)
+async function viewOrderHistory(el) {
+  const o = await api(`/api/orders${S.orderMode ? "?mode=" + S.orderMode : ""}`);
+  const stCls = { filled: "ok", partial: "", unfilled: "", cancelled: "", rejected: "bad", error: "bad", unknown: "bad", pending: "", submitted: "" };
+  const stKo = { filled: "체결", partial: "부분체결", unfilled: "미체결", cancelled: "취소", rejected: "거부", error: "오류", unknown: "상태 불명", pending: "제출 대기", submitted: "접수" };
+  const tabs = `<div class="tabs" id="om-tabs">${Object.entries({ "": "전체", live: "LIVE", shadow: "SHADOW", paper: "PAPER" }).map(([k, v]) => `<button data-k="${k}" class="${(S.orderMode || "") === k ? "on" : ""}">${v}</button>`).join("")}</div>`;
+  const rows = o.rows.map((r) => `<tr ${r.consensus_id ? `class="click" data-ev="${r.consensus_id}"` : ""}><td class="dim small">${time(r.ts, true)}</td><td><span class="chip">${esc(r.mode)}</span></td><td><b>${esc(r.name)}</b></td>
+    <td class="${r.side === "buy" ? "up" : "down"}">${r.side === "buy" ? "매수" : "매도"}</td><td class="r num">${num(r.qty)}</td><td><span class="chip ${stCls[r.status] || ""}">${stKo[r.status] || esc(r.status)}</span></td>
+    <td class="r num">${r.avg_price ? num(r.avg_price) : "-"}</td><td class="r num">${r.slippage_bps == null ? "-" : r.slippage_bps.toFixed(1) + "bp"}</td>
+    <td class="xs mono dim" title="${esc(r.client_order_id || "")}">${esc((r.client_order_id || "-").split(":").slice(-2).join(":"))}${r.broker_order_id ? `<div>#${esc(r.broker_order_id)}</div>` : ""}</td>
+    <td class="small muted" style="white-space:normal;max-width:360px">${esc(r.reason || "")}</td></tr>`).join("");
+  const sl = Object.entries(o.slippage || {}).map(([m, s]) => `<div class="stat"><div class="l">${m.toUpperCase()} 슬리피지</div><div class="big num">${s.n ? s.mean_bps.toFixed(1) + "bp" : "-"}</div><div class="small muted">${s.n ? `n=${s.n} · p90 ${s.p90_bps}bp · 가정 ${s.assumed_bps}bp` : `체결 기록 없음 · 가정 ${s.assumed_bps}bp`}</div></div>`).join("");
+  el.innerHTML = `
+  <div class="card"><div class="card-h"><h3>주문 내역 <span class="small dim">모든 주문은 멱등 키로 추적 · 재시작하면 미완료 주문을 증권사에서 확인·취소 후 확정</span></h3><div class="right">${tabs}</div></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${Object.entries(o.counts).map(([k, v]) => `<span class="chip ${stCls[k] || ""}">${stKo[k] || k} ${v}</span>`).join("")}</div>
+    <div class="stat-row" style="grid-template-columns:repeat(3,1fr)">${sl}</div></div>
+  ${card("", rows ? `<div class="scroll" style="max-height:640px"><table><thead><tr><th>시각</th><th>장부</th><th>종목</th><th>구분</th><th class="r">수량</th><th>상태</th><th class="r">체결가</th><th class="r">슬리피지</th><th>멱등 키 · 주문번호</th><th>사유</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty("주문 기록 없음"))}`;
+  document.querySelectorAll("#om-tabs button").forEach((b) => b.onclick = () => { S.orderMode = b.dataset.k; render(); });
+  document.querySelectorAll("tr[data-ev]").forEach((x) => x.onclick = () => { location.hash = `#evidence/${x.dataset.ev}`; });
 }
 
 function pfTabs() {
@@ -677,21 +951,33 @@ function viewSettings(d) {
     <li><span class="chk">◉</span>킬스위치 ON 시 신규 매수 즉시 중단 (매도·위험 축소는 허용)</li></ul>`)}`;
 }
 
+// ------------------------------------------------------------ 내비게이션
+const NAV = [
+  ["메인", [["dashboard", "home", "홈"], ["market", "market", "시장 분석"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
+  ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
+  ["검증 · 학습", [["journal", "journal", "판단 저널"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
+  ["시스템", [["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
+];
+function buildNav() {
+  $("#nav").innerHTML = NAV.map(([g, items]) => `<div class="grp">${g}</div>` + items.map(([v, ic, label]) =>
+    `<a href="#${v}" data-view="${v}">${ICONS[ic] || ""}<span>${label}</span></a>`).join("")).join("");
+}
+
 // ------------------------------------------------------------ 렌더링
 async function render() {
-  const el = $("#view");
+  // 화면마다 새 컨테이너: 느린 이전 화면의 응답이 늦게 도착해도 지금 화면을 덮어쓰지 않는다
+  const el = document.createElement("div");
+  el.className = "view-inner";
+  el.innerHTML = `<div class="card">${empty("불러오는 중…")}</div>`;
+  $("#view").replaceChildren(el);
   clearCharts();
-  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === S.view));
+  const navView = S.view === "evidence" ? "journal" : S.view;
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === navView));
   const d = S.data;
   if (!d) { el.innerHTML = empty("불러오는 중…"); return; }
   try {
-    if (S.view === "dashboard") {
-      el.innerHTML = viewDashboard(d);
-      if (S.symbol) {
-        candleChart($("#main-chart"), S.symbol);
-        api(`/api/analysis?symbol=${encodeURIComponent(S.symbol)}`).then((a) => { const b = $("#cons-box"); if (b) b.innerHTML = `<div class="small muted" style="margin-bottom:10px"><b style="color:var(--text)">${esc(a.name)}</b> ${esc(a.symbol)}</div>` + consensusBlock(a.consensus, d.analyst_labels, true); });
-      }
-    } else if (S.view === "analysis") await viewAnalysis(el);
+    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); }
+    else if (S.view === "analysis") await viewAnalysis(el);
     else if (S.view === "market") {
       el.innerHTML = viewMarket(d);
       const first = d.indices[0];
@@ -710,8 +996,14 @@ async function render() {
       await viewCore(el);
       const hb = $("#health-refresh");
       if (hb) hb.onclick = async () => { hb.disabled = true; hb.textContent = "검사 중…"; await api("/api/strategy-health", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); render(); };
-    } else if (S.view === "orders") await viewOrders(el);
+    } else if (S.view === "sheet") await viewOrders(el);
+    else if (S.view === "orders") await viewOrderHistory(el);
+    else if (S.view === "ai") await viewAIScore(el);
+    else if (S.view === "risk") await viewRisk(el);
+    else if (S.view === "journal") await viewJournal(el);
+    else if (S.view === "evidence") await viewEvidence(el, S.param);
     else if (S.view === "settings") el.innerHTML = viewSettings(d);
+    else el.innerHTML = card("페이지 없음", empty(`'${esc(S.view)}' 화면이 없습니다`));
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
   }
@@ -721,27 +1013,53 @@ async function render() {
 function bindCommon() {
   document.querySelectorAll("tr[data-sym]").forEach((tr) => tr.onclick = () => {
     S.symbol = tr.dataset.sym;
-    if (S.view === "dashboard") render(); else { location.hash = "#analysis"; }
+    if (S.view === "dashboard") { S.chartSym = tr.dataset.sym; render(); } else { location.hash = "#analysis"; }
   });
   document.querySelectorAll("tr[data-model]").forEach((tr) => tr.onclick = () => { S.modelId = Number(tr.dataset.model); render(); });
   document.querySelectorAll("#pf-tabs button").forEach((b) => b.onclick = () => { S.pfMode = b.dataset.m; render(); });
   document.querySelectorAll("#news-tabs button").forEach((b) => b.onclick = () => { S.newsKind = b.dataset.k; render(); });
+  const tabBind = (id, key, num = false) => document.querySelectorAll(`#${id} button`).forEach((b) => b.onclick = () => { S[key] = num ? Number(b.dataset.k) : b.dataset.k; render(); });
+  tabBind("idx-tabs", "idxTab"); tabBind("watch-tabs", "watchTab"); tabBind("feed-tabs", "feedTab"); tabBind("range-tabs", "chartN", true);
+  const kb = $("#chart-kospi");
+  if (kb) kb.onclick = () => { S.chartSym = S.data.indices[0]?.symbol; render(); };
+  document.querySelectorAll(".feed-it[data-ev]").forEach((x) => x.onclick = () => { location.hash = `#evidence/${x.dataset.ev}`; });
+}
+
+function modeInfo(d) {
+  const sys = d.system;
+  const mode = homeMode(d);
+  if (mode === "live" && sys.broker === "kis") return sys.kis_env === "real"
+    ? { title: "실전 거래", sub: "KIS 실계좌 · 실제 돈", color: "#ef4444", icon: "●" }
+    : { title: "모의투자 자동매매", sub: "KIS 모의계좌 · 실제 돈 아님", color: "#22c55e", icon: "▶" };
+  if (mode === "shadow") return { title: "Shadow Trading", sub: "호가 기준 가상 체결", color: "#8b5cf6", icon: "◐" };
+  return { title: "Paper Trading", sub: "가상매매 · 실제 주문 없음", color: "#3b82f6", icon: "◆" };
 }
 
 function renderChrome(d) {
   $("#demo-badge").hidden = !d.demo;
-  const mb = $("#mode-badge");
-  mb.textContent = d.mode.toUpperCase();
-  mb.className = "pill " + d.mode;
-  $("#market-badges").innerHTML = Object.entries(d.markets).map(([k, v]) => `<span class="pill ${v === "open" ? "open" : ""}">${k} ${v === "open" ? "장중" : v === "pre_open" ? "장전" : "장외"}</span>`).join(" ");
+  const mi = modeInfo(d);
+  $("#mode-card").innerHTML = `<div class="t">운영 모드</div><div class="mode-box"><span class="ic" style="background:${mi.color}">${mi.icon}</span><div><b>${esc(mi.title)}</b><span class="xs muted">${esc(mi.sub)}${d.system.core_only ? " · 코어 전용" : ""}</span></div></div>`;
+  const pf = d.portfolios[homeMode(d)] || {};
+  $("#balance-card").innerHTML = `<div class="t">계좌 평가금액 (${homeMode(d).toUpperCase()})</div><div class="bal num">${pf.equity ? krw(pf.equity) : "-"}</div><div class="small">${pf.equity ? pct(pf.return_pct) + ' <span class="muted">누적</span>' : '<span class="muted">기록 없음</span>'}</div>`;
   const kb = $("#kill-btn");
   kb.classList.toggle("on", d.kill_switch);
-  kb.textContent = d.kill_switch ? "KILL SWITCH ON" : "KILL SWITCH";
-  $("#sys-last").textContent = d.system.last_bar ? `${date(d.system.last_bar)}` : "-";
+  kb.innerHTML = d.kill_switch ? `${ICONS.play} 매수 정지 중 · 해제` : `${ICONS.stop} 긴급 정지`;
+  $("#market-badges").innerHTML = Object.entries(d.markets).map(([k, v]) => `<span class="pill ${v === "open" ? "open" : ""}">${k} ${v === "open" ? "장중" : v === "pre_open" ? "장전" : "장외"}</span>`).join(" ");
+  $("#sys-last").textContent = d.system.last_bar ? `데이터 ${date(d.system.last_bar)}` : "-";
+  $("#avatar").textContent = homeMode(d).slice(0, 2).toUpperCase();
   api("/api/health").then((h) => {
     const bad = !h.ok || h.recent_job_failures > 0;
-    $("#sys-status").innerHTML = `<span class="dot ${bad ? "bad" : "ok"}"></span>${!h.ok ? "DB 오류" : h.recent_job_failures ? `작업 실패 ${h.recent_job_failures}건` : h.kill_switch ? "정상 · 매수 정지" : "정상"}`;
+    const sp = $("#sys-status");
+    sp.classList.toggle("bad", bad);
+    sp.innerHTML = `<span class="dot ${bad ? "bad" : "ok"}"></span>${!h.ok ? "DB 오류" : h.recent_job_failures ? `작업 실패 ${h.recent_job_failures}건` : h.kill_switch ? "정상 · 매수 정지" : "시스템 정상"}`;
   }).catch(() => { $("#sys-status").innerHTML = `<span class="dot bad"></span>연결 실패`; });
+}
+
+function tickClock() {
+  const k = new Date(Date.now() + 9 * 3600e3);
+  const p = (n) => String(n).padStart(2, "0");
+  const c = $("#clock");
+  if (c) c.textContent = `${k.getUTCFullYear()}.${p(k.getUTCMonth() + 1)}.${p(k.getUTCDate())} ${p(k.getUTCHours())}:${p(k.getUTCMinutes())}:${p(k.getUTCSeconds())} (KST)`;
 }
 
 async function refresh() {
@@ -755,8 +1073,11 @@ async function refresh() {
 }
 
 function route() {
-  S.view = (location.hash || "#dashboard").slice(1) || "dashboard";
+  const h = (location.hash || "#dashboard").slice(1) || "dashboard";
+  const [v, param] = h.split("/");
+  S.view = v; S.param = param || null;
   $(".side").classList.remove("open");
+  window.scrollTo(0, 0);
   render();
 }
 
@@ -770,24 +1091,45 @@ $("#search").addEventListener("input", (e) => {
   box.classList.add("open");
   box.querySelectorAll("a").forEach((a) => a.onclick = () => { S.symbol = a.dataset.sym; box.classList.remove("open"); e.target.value = ""; location.hash = "#analysis"; route(); });
 });
-document.addEventListener("click", (e) => { if (!e.target.closest(".search")) $("#search-results").classList.remove("open"); });
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".search")) $("#search-results").classList.remove("open");
+  if (!e.target.closest(".bell-wrap")) $("#bell-panel").classList.remove("open");
+});
 
 $("#kill-btn").onclick = async () => {
   const on = !S.data?.kill_switch;
   let reason = "";
   if (on) {
-    reason = prompt("킬스위치를 켜면 모든 신규 매수가 즉시 중단됩니다 (매도·위험 축소는 계속).\n사유를 입력하세요:", "수동 정지");
+    reason = prompt("긴급 정지: 모든 신규 매수가 즉시 중단됩니다 (매도·위험 축소는 계속).\n사유를 입력하세요:", "수동 정지");
     if (reason === null) return;
-  } else if (!confirm("킬스위치를 끄고 신규 매수를 재개할까요?")) return;
+  } else if (!confirm("긴급 정지를 해제하고 신규 매수를 재개할까요?")) return;
   await api("/api/killswitch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on, reason }) });
   await refresh(); render();
 };
-$("#theme-btn").onclick = () => {
-  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-  document.documentElement.dataset.theme = next; safeSet("qa_theme", next); render();
+$("#bell-btn").onclick = async () => {
+  const p = $("#bell-panel");
+  p.classList.toggle("open");
+  if (!p.classList.contains("open")) return;
+  p.innerHTML = empty("불러오는 중…");
+  try {
+    const o = await api("/api/ops");
+    p.innerHTML = o.notifications.length ? o.notifications.map((n) => `<div class="lesson" style="border-left-color:${n.level === "critical" ? "var(--bad)" : n.level === "warn" ? "var(--warn)" : "var(--accent)"}">${esc(n.message)}</div>`).join("") : empty(o.notifier_enabled ? "새 알림 없음" : "알림 채널 미설정 (Discord/Slack/Telegram)");
+  } catch { p.innerHTML = empty("불러오기 실패"); }
 };
+function setTheme(t) {
+  document.documentElement.dataset.theme = t; safeSet("qa_theme", t);
+  $("#theme-btn").innerHTML = t === "light" ? ICONS.moon : ICONS.sun;
+}
+$("#theme-btn").onclick = () => { setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"); render(); };
 $("#menu-btn").onclick = () => $(".side").classList.toggle("open");
-document.documentElement.dataset.theme = safeGet("qa_theme") || "dark";
+
+$("#brand-logo").innerHTML = ICONS.logo;
+$("#search-ico").innerHTML = ICONS.search;
+$("#settings-btn").innerHTML = ICONS.settings;
+$("#bell-btn").innerHTML = ICONS.bell;
+setTheme(safeGet("qa_theme") || "dark");
+buildNav();
+tickClock(); setInterval(tickClock, 1000);
 
 window.addEventListener("hashchange", route);
 refresh().then(route).catch(() => route());
