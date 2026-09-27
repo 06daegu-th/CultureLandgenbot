@@ -7,6 +7,8 @@
 - 비정상 급변 (로그수익률이 최근 변동성의 N배 이상 — 상하한가 30% 초과 등)
 - 긴 공백 (거래일 기준 N일 이상 데이터 누락)
 - 거래량 음수
+- 미래 시각 (수집 시스템 시계 오류·시간대 뒤틀림)
+- 거래정지 의심 (거래량 0 + 가격 변화 없음이 이어짐)
 """
 
 from __future__ import annotations
@@ -49,6 +51,9 @@ def validate_bars(bars: pd.DataFrame, symbol: str = "", max_jump: float = 0.35, 
         df = df.sort_index()
         rep.warnings.append("타임스탬프 정렬 안 됨 → 정렬")
     drop(pd.Series(df.index.duplicated(keep="last"), index=df.index), "중복 타임스탬프")
+    idx = pd.DatetimeIndex(df.index)
+    now = pd.Timestamp.now(tz="UTC") if idx.tz is not None else pd.Timestamp.now()
+    drop(pd.Series(idx > now + pd.Timedelta(days=1), index=df.index), "미래 시각")
     px = df[["open", "high", "low", "close"]]
     drop(~np.isfinite(px).all(axis=1) | (px <= 0).any(axis=1), "가격 0 이하/결측")
     drop(df["volume"].fillna(0) < 0, "거래량 음수")
@@ -62,6 +67,12 @@ def validate_bars(bars: pd.DataFrame, symbol: str = "", max_jump: float = 0.35, 
         jumps = (lr.abs() > max_jump) | (lr.abs() > jump_sigma * vol)
         for ts in df.index[jumps.fillna(False)]:
             rep.warnings.append(f"{ts.date()} 급변 {lr[ts]:+.1%} (액면분할·권리락·데이터 오류 확인 필요)")
+        still = (df["volume"].fillna(0) == 0) & (df["close"].diff() == 0)
+        runs = still.groupby((~still).cumsum()).cumsum()
+        for ts in df.index[(runs == 3)]:  # 3거래일 이상 이어진 구간의 시작 무렵 한 번만 경고
+            rep.warnings.append(f"{ts.date()} 전후 거래정지 의심 (거래량 0 · 가격 불변 3일+)")
+        if bool(still.iloc[-1]):
+            rep.warnings.append(f"최근 봉 {df.index[-1].date()} 거래량 0 · 가격 불변 → 신규 편입 금지 대상")
         gaps = df.index.to_series().diff().dt.days
         for ts, g in gaps[gaps > max_gap_days * 7 / 5].items():
             rep.warnings.append(f"{ts.date()} 이전 {int(g)}일 공백 (거래정지/수집 누락?)")

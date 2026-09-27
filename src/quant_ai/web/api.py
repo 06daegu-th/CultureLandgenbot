@@ -19,6 +19,7 @@ from ..data.models import (
     MacroObservation,
     ModelRecord,
     NewsArticle,
+    OrderRecord,
     PortfolioSnapshot,
     PriceBar,
     ReviewReport,
@@ -27,7 +28,9 @@ from ..data.models import (
 from ..engines.regime import EXPOSURE_MULTIPLIER, Regime, regime_series
 from ..ensemble.tracker import CATEGORY_LABELS, scoreboard, scoreboard_table
 
+GLOBAL_ORDER = ("SP500", "NASDAQCOM", "VIXCLS", "DGS10", "DTWEXBGS", "DEXKOUS", "DCOILWTICO", "DGS2", "DFF")
 MACRO_LABELS = {"VIXCLS": "VIX", "DGS10": "美 10년", "DGS2": "美 2년", "DEXKOUS": "달러/원",
+                "NASDAQCOM": "나스닥", "SP500": "S&P 500", "DTWEXBGS": "달러지수",
                 "DCOILWTICO": "WTI", "DFF": "기준금리"}
 REGIME_LABELS = {"bull_quiet": "안정적 상승", "bull_volatile": "변동성 상승", "sideways": "횡보",
                  "bear_quiet": "완만한 하락", "bear_volatile": "변동성 하락", "crisis": "위기"}
@@ -135,14 +138,13 @@ class DashboardAPI:
                 if len(reg):
                     last = reg.iloc[-1]
                     r = Regime(last["regime"])
-                    # 0~100 시장 심리: 추세 + 변동성 + 낙폭
-                    score = 50 + 250 * float(last["trend"]) - 30 * (float(last["vol_pct"]) - 0.5) \
-                        + 100 * float(last["drawdown"]) * 0.5
-                    score = float(np.clip(score, 0, 100))
+                    from ..engines.market_intel import load_macro, market_state
+                    vix = load_macro(s, ["VIXCLS"]).get("VIXCLS")
+                    ms = market_state(bench, {k: v for k, v in bars.items() if k not in idx_syms}, vix=vix)
                     market = {
                         "regime": r.value, "regime_label": REGIME_LABELS[r.value],
-                        "risk_label": "RISK ON" if score >= 60 else ("RISK OFF" if score < 40 else "NEUTRAL"),
-                        "score": round(score), "trend": _f(last["trend"]), "vol_pct": _f(last["vol_pct"]),
+                        "risk_label": ms["label"], "type": ms.get("type"), "components": ms.get("components", []),
+                        "score": ms["score"], "trend": _f(last["trend"]), "vol_pct": _f(last["vol_pct"]),
                         "drawdown": _f(last["drawdown"]), "exposure_multiplier": EXPOSURE_MULTIPLIER[r],
                         "momentum": _f(bench["close"].pct_change(20).iloc[-1]),
                         "support": _f(bench["low"].iloc[-20:].min(), 2),
@@ -152,13 +154,17 @@ class DashboardAPI:
 
             # ---- 거시
             macro = []
-            for sid in s.scalars(select(MacroObservation.series_id).distinct()):
+            ids = list(s.scalars(select(MacroObservation.series_id).distinct()))
+            for sid in sorted(ids, key=lambda x: GLOBAL_ORDER.index(x) if x in GLOBAL_ORDER else 99):
                 rows = s.scalars(select(MacroObservation).where(MacroObservation.series_id == sid)
-                                 .order_by(MacroObservation.ts.desc()).limit(2)).all()
+                                 .order_by(MacroObservation.ts.desc()).limit(60)).all()[::-1]
                 if rows:
-                    prev = rows[1].value if len(rows) > 1 else rows[0].value
-                    macro.append({"id": sid, "label": MACRO_LABELS.get(sid, sid), "last": _f(rows[0].value, 2),
-                                  "chg_pct": _f(rows[0].value / prev - 1 if prev else 0)})
+                    prev = rows[-2].value if len(rows) > 1 else rows[-1].value
+                    macro.append({"id": sid, "label": MACRO_LABELS.get(sid, sid), "last": _f(rows[-1].value, 2),
+                                  "chg": _f(rows[-1].value - prev, 3),
+                                  "chg_pct": _f(rows[-1].value / prev - 1 if prev else 0),
+                                  "rate": sid.startswith(("DGS", "DFF")), "ts": str(rows[-1].ts),
+                                  "spark": [_f(r.value, 3) for r in rows]})
 
             # ---- 관심 종목
             watch = []
@@ -221,6 +227,25 @@ class DashboardAPI:
                       "kind": "disclosure", "sentiment": _f(d.sentiment, 2), "events": d.events or [], "source": "DART"}
                      for d in s.scalars(select(Disclosure).order_by(Disclosure.filed_at.desc()).limit(10))]
             news.sort(key=lambda x: x["ts"] or "", reverse=True)
+            from ..engines.market_intel import cluster_news, news_category
+            events_news = cluster_news([n for n in news if n["kind"] == "news"])
+            for e in events_news:
+                e["kind"] = "news"
+            for n in news:
+                n["category"] = news_category(n["title"], n.get("events"))
+            news_events = sorted(events_news + [{**n, "n_articles": 1} for n in news if n["kind"] == "disclosure"],
+                                 key=lambda x: x.get("ts") or "", reverse=True)
+
+            # ---- AI 실시간 분석 피드 (합의 신호 + 핵심 근거)
+            ai_feed = []
+            for r in recent:
+                p = r.payload or {}
+                why = (p.get("reasons") or p.get("explanation") or [""])[0]
+                ai_feed.append({"id": r.id, "ts": _ts(r.as_of), "symbol": r.symbol,
+                                "name": inst[r.symbol].name if r.symbol in inst else r.symbol,
+                                "action": r.action, "prob_up": _f(r.prob_up), "confidence": r.confidence,
+                                "text": why.split("] ", 1)[-1][:120],
+                                "tone": "긍정" if r.prob_up >= 0.55 else "부정" if r.prob_up <= 0.45 else "중립"})
 
             # ---- 포트폴리오 / 체결 / 리스크 로그
             portfolios = {m: self._portfolio(s, m, bars, inst) for m in ("paper", "shadow", "live")}
@@ -266,7 +291,9 @@ class DashboardAPI:
             "markets": {k: m.phase(now).value for k, m in MARKETS.items()},
             "indices": indices, "market": market, "macro": macro, "ai_summary": summary,
             "summary_time": _ts(recent[0].as_of) if recent else None,
-            "watchlist": watch, "all_symbols": all_symbols, "signals": signals, "news": news[:30], "portfolios": portfolios,
+            "watchlist": watch, "all_symbols": all_symbols, "signals": signals, "news": news[:30],
+            "news_events": news_events[:20], "ai_feed": ai_feed, "events": self._events(),
+            "lessons": (review.lessons or [])[:6] if review else [], "portfolios": portfolios,
             "trades": trades[:100], "risk_log": risk_log[:100], "scoreboard": board,
             "category_labels": CATEGORY_LABELS, "analyst_labels": ANALYST_LABELS, "models": models,
             "system": {
@@ -277,6 +304,23 @@ class DashboardAPI:
                 "risk": st.risk.__dict__,
             },
         }
+
+    def _events(self) -> list[dict]:
+        """예정 경제 이벤트 (국가 · 중요도)."""
+        out = []
+        now = datetime.now(UTC)
+        for e in self.app.load_events():
+            ts = pd.Timestamp(e["ts"])
+            ts = ts.tz_localize("UTC") if ts.tz is None else ts
+            if ts < now - pd.Timedelta(days=2):
+                continue
+            name = e.get("name", "")
+            country = e.get("country") or ("US" if any(k in name for k in ("FOMC", "미국", "US", "NFP", "CPI"))
+                                           else "KR" if any(k in name for k in ("한국", "한은", "금통위", "KOSPI"))
+                                           else "")
+            out.append({"ts": ts.isoformat(), "name": name, "importance": e.get("importance"), "country": country,
+                        "symbol": e.get("symbol")})
+        return sorted(out, key=lambda x: x["ts"])[:12]
 
     def _portfolio(self, s, mode, bars, inst) -> dict:
         snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
@@ -348,7 +392,10 @@ class DashboardAPI:
         for o in ops:
             if o.category == "direction" or o.analyst == "risk":
                 details.setdefault(o.analyst, o.payload or {})
+        with session_scope(self.engine) as s:
+            b = self._bars(s, [symbol]).get(symbol)
         return {
+            "checklist": self._checklist(c, b), "range": self._range(b, (c.payload or {}).get("horizon", 5) if c else 5),
             "symbol": symbol, "name": inst[symbol].name if symbol in inst else symbol,
             "market": inst[symbol].market if symbol in inst else "",
             "consensus": ({**(c.payload or {}), "as_of": _ts(c.as_of), "id": c.id} if c else None),
@@ -356,6 +403,103 @@ class DashboardAPI:
             "history": [{"ts": _ts(h.as_of), "action": h.action, "prob_up": _f(h.prob_up), "confidence": h.confidence,
                          "correct": h.correct, "realized": _f(h.realized_return)} for h in hist],
         }
+
+    @staticmethod
+    def _checklist(c, b) -> list[dict]:
+        """AI 종합 분석 체크리스트: 기술 · 뉴스 · 수급(거래량) · 거시 — 각 항목 판정과 근거."""
+        if b is None or len(b) < 60:
+            return []
+        close, vol = b["close"], b["volume"]
+        ret20 = float(close.iloc[-1] / close.iloc[-21] - 1)
+        ma20, ma60 = float(close.iloc[-20:].mean()), float(close.iloc[-60:].mean())
+        d = close.diff()
+        up, dn = d.clip(lower=0).iloc[-14:].mean(), (-d.clip(upper=0)).iloc[-14:].mean()
+        rsi = float(100 - 100 / (1 + up / dn)) if dn > 0 else 100.0
+        tech = "상승" if close.iloc[-1] > ma20 > ma60 else "하락" if close.iloc[-1] < ma20 < ma60 else "혼조"
+        vr = float(vol.iloc[-5:].mean() / vol.iloc[-60:].mean()) if vol.iloc[-60:].mean() > 0 else 1.0
+        p = (c.payload or {}) if c else {}
+        ev = p.get("evidence") or {}
+        news = ev.get("news") or []
+        ns = [x.get("sentiment") for x in news if x.get("sentiment") is not None]
+        nscore = float(np.mean(ns)) if ns else None
+        mk = ev.get("market") or {}
+        cross = ev.get("cross_asset") or []
+        return [
+            {"key": "기술", "ok": tech == "상승", "tone": tech,
+             "text": f"{tech} 추세 · 20일 {ret20:+.1%} · RSI {rsi:.0f}"},
+            {"key": "뉴스", "ok": (nscore or 0) > 0.1, "tone": "긍정" if (nscore or 0) > 0.1 else "부정" if (nscore or 0) < -0.1 else "중립",
+             "text": (f"이벤트 {len(news)}건 · 평균 감성 {nscore:+.2f}" if nscore is not None else "관련 뉴스 없음")},
+            {"key": "수급", "ok": vr >= 1.1 and ret20 > 0, "tone": "유입" if vr >= 1.1 else "보통" if vr >= 0.8 else "감소",
+             "text": f"5일 거래량 60일 평균의 {vr:.1f}배 (외국인·기관 수급 데이터는 미연결)"},
+            {"key": "거시", "ok": mk.get("label") == "RISK ON", "tone": mk.get("label") or "-",
+             "text": (f"시장 {mk.get('label')} {mk.get('score')}점" if mk else "시장 상태 없음")
+             + (f" · {cross[0]['name']} 상관 {cross[0]['corr']:+.2f}" if cross else "")},
+        ]
+
+    @staticmethod
+    def _range(b, horizon: int = 5) -> dict | None:
+        """변동성 기준 예상 범위 (목표가 예측이 아니다): horizon 거래일 1σ 범위와 2σ 손절선."""
+        if b is None or len(b) < 30:
+            return None
+        last = float(b["close"].iloc[-1])
+        sig = float(np.log(b["close"]).diff().iloc[-60:].std() * np.sqrt(horizon))
+        return {"last": _f(last, 2), "horizon": horizon, "sigma": _f(sig),
+                "upper": _f(last * np.exp(sig), 0), "lower": _f(last * np.exp(-sig), 0),
+                "stop": _f(last * np.exp(-2 * sig), 0)}
+
+    # ------------------------------------------------------------------ 근거 · 저널 · 보정 · 성적 · 리스크 · 주문
+    def evidence(self, consensus_id: int) -> dict:
+        from ..review.evidence import evidence_chain
+        with session_scope(self.engine) as s:
+            return evidence_chain(s, consensus_id) or {"error": "not found"}
+
+    def journal(self, symbol: str | None = None, limit: int = 60, action: str | None = None) -> dict:
+        from ..review.evidence import ai_journal, no_trade_value
+        with session_scope(self.engine) as s:
+            rows = ai_journal(s, limit=limit, symbol=symbol or None,
+                              actions=tuple(action.split(",")) if action else None)
+            return {"rows": rows, "no_trade": no_trade_value(s)}
+
+    def calibration(self) -> dict:
+        from ..ensemble.calibration import calibration_report
+        from ..ops import get_state
+        with session_scope(self.engine) as s:
+            return calibration_report(s, fitted=get_state(self.engine, "calibration"))
+
+    def ai_scoreboard(self) -> dict:
+        from ..ensemble.tracker import provider_scoreboard
+        with session_scope(self.engine) as s:
+            rows = provider_scoreboard(s)
+        return {"rows": rows, "roles": ai_roles_info(self.app.settings), "labels": CATEGORY_LABELS}
+
+    def risk(self, mode: str | None = None) -> dict:
+        try:
+            return self.app.portfolio_risk(mode)
+        except Exception as e:  # noqa: BLE001 - 대시보드는 계속 떠야 한다
+            return {"error": str(e)}
+
+    def orders(self, mode: str | None = None, limit: int = 200) -> dict:
+        with session_scope(self.engine) as s:
+            inst = self._instruments(s)
+            q = select(OrderRecord).order_by(OrderRecord.created_at.desc(), OrderRecord.id.desc()).limit(limit)
+            if mode:
+                q = q.where(OrderRecord.mode == mode)
+            else:
+                q = q.where(~OrderRecord.mode.startswith("attr-"))
+            rows = [{"id": r.id, "ts": _ts(r.created_at), "mode": r.mode, "symbol": r.symbol,
+                     "name": inst[r.symbol].name if r.symbol in inst else r.symbol, "side": r.side, "qty": r.qty,
+                     "status": r.status, "reason": r.reason, "limit_price": _f(r.limit_price, 2),
+                     "ref_price": _f(r.ref_price, 2), "avg_price": _f(r.avg_price, 2), "filled_qty": r.filled_qty,
+                     "client_order_id": r.client_order_id, "broker_order_id": r.broker_order_id,
+                     "consensus_id": r.consensus_id,
+                     "slippage_bps": _f((r.avg_price - r.ref_price) / r.ref_price * 1e4 * (1 if r.side == "buy" else -1), 2)
+                     if r.avg_price and r.ref_price else None}
+                    for r in s.scalars(q)]
+        counts: dict[str, int] = {}
+        for r in rows:
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+        return {"rows": rows, "counts": counts,
+                "slippage": {m: self.app.slippage_stats(m) for m in ("live", "shadow", "paper")}}
 
     # ------------------------------------------------------------------ 운영
     def health(self) -> dict:

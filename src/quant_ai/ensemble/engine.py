@@ -70,6 +70,8 @@ class ConsensusSignal:
     reasons: list[str]
     risks: list[str]
     explanation: list[str]
+    # NO_TRADE/HOLD 사유 코드: veto · few_responders · high_conflict · weak_signal (복기에서 사유별로 가치 측정)
+    no_trade_codes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -146,14 +148,18 @@ class EnsembleEngine:
 
         vetoes = [f"{op.analyst}: {op.veto_reason or 'veto'}" for op in opinions if op.veto]
         explanation: list[str] = []
+        codes: list[str] = []
         if vetoes:
             action = "NO_TRADE"
+            codes.append("veto")
             explanation.append("리스크 veto → 신규 진입 금지")
         elif len(voters) < cfg.min_responders:
             action = "NO_TRADE"
+            codes.append("few_responders")
             explanation.append(f"방향 의견을 낸 AI {len(voters)}개 < {cfg.min_responders}")
         elif conflict == "high":
             action = "NO_TRADE"
+            codes.append("high_conflict")
             explanation.append(f"AI 간 의견 충돌 높음 (반대: {', '.join(strong_opposite) or '분산 큼'})")
         elif prob >= cfg.buy_prob and confidence >= cfg.min_confidence:
             action = "BUY"
@@ -161,12 +167,13 @@ class EnsembleEngine:
             action = "SELL"
         else:
             action = "HOLD"
+            codes.append("weak_signal")
             explanation.append("확률·신뢰도가 매매 기준 미달")
 
         reasons = [f"[{op.analyst}] {r}" for op in opinions for r in op.reasons[:3] if op.analyst != "risk"]
         risks = [f"[{op.analyst}] {r}" for op in opinions for r in op.risks[:3]]
         return ConsensusSignal(symbol, action, prob, round(confidence, 1), conflict, round(conflict_score, 3),
-                               contribs, vetoes, reasons[:10], risks[:10], explanation)
+                               contribs, vetoes, reasons[:10], risks[:10], explanation, codes)
 
 
 def records_for(scoreboard: dict[tuple[str, str], TrackRecord], category: str = DIRECTION) -> dict[str, TrackRecord]:

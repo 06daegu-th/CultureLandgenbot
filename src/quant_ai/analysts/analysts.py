@@ -122,7 +122,8 @@ class HeuristicAnalyst(Analyst):
         wm, wn, wmac = self.WEIGHTS.get(self.name, (0.5, 0.3, 0.2))
         p = ctx.price
         mom = math.tanh(8 * (p.get("ret_20") or 0) + 4 * (p.get("dist_ma20") or 0))
-        news = float(np.mean([n["sentiment"] for n in ctx.news])) if ctx.news else 0.0
+        sents = [n["sentiment"] for n in ctx.news if n.get("sentiment") is not None]
+        news = float(np.mean(sents)) if sents else 0.0
         macro = float(ctx.macro.get("_risk_appetite", 0.0))
         score = wm * mom + wn * news + wmac * macro
         prob = 1 / (1 + math.exp(-1.2 * score))
@@ -222,13 +223,18 @@ class RiskAnalyst(Analyst):
             hard.append(f"시세 데이터 지연/정지: {dq['stale']}")
         if dq.get("jump_sigma") and dq["jump_sigma"] >= self.max_jump_sigma:
             hard.append(f"가격 이상 급변 ({dq['jump_sigma']:.1f}σ) — 데이터 오류 또는 이벤트 가능성")
-        bad_news = [n for n in ctx.news if n.get("sentiment", 0) <= -0.6 and n.get("importance", 0) >= 0.6]
+        if dq.get("halt"):
+            hard.append(f"거래정지 의심: {dq['halt']}")
+        bad_news = [n for n in ctx.news if (n.get("sentiment") or 0) <= -0.6 and (n.get("importance") or 0) >= 0.6]
         if any("delisting" in (n.get("events") or []) for n in ctx.news + ctx.disclosures):
             hard.append("상장폐지/거래정지 관련 공시·뉴스")
         elif bad_news:
             soft.append(f"강한 악재 뉴스 {len(bad_news)}건")
         if (p.get("rsi_14") or 0.5) >= 0.85:
             soft.append("RSI 과열 구간")
+        ms = getattr(ctx, "market_state", None) or {}
+        if ms.get("label") == "RISK OFF":
+            soft.append(f"[시장] RISK OFF (점수 {ms.get('score')})")
         return hard, soft
 
     def analyze(self, ctx: MarketContext) -> Opinion:

@@ -87,6 +87,21 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.core_satellite())
                     if url.path == "/api/research":
                         return self._json(api.research())
+                    arg = lambda k, d=None: (qs.get(k) or [d])[0]  # noqa: E731
+                    if url.path == "/api/evidence":
+                        return self._json(api.evidence(int(arg("id", "0"))))
+                    if url.path == "/api/journal":
+                        return self._json(api.journal(arg("symbol"), int(arg("limit", "60")), arg("action")))
+                    if url.path == "/api/calibration":
+                        return self._json(api.calibration())
+                    if url.path == "/api/ai-scoreboard":
+                        return self._json(api.ai_scoreboard())
+                    if url.path == "/api/risk":
+                        return self._json(api.risk(arg("mode")))
+                    if url.path == "/api/orders":
+                        return self._json(api.orders(arg("mode"), int(arg("limit", "200"))))
+                    if url.path == "/api/strategy-health":
+                        return self._json(api.strategy_health(arg("mode")))
                 except Exception as exc:  # noqa: BLE001
                     log.exception("API 오류")
                     return self._json({"error": str(exc)}, 500)

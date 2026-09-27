@@ -108,6 +108,9 @@ def build_context(
         dq["jump_sigma"] = _r(f["jump_sigma"], 2)
     if last is not None and (pd.Timestamp(as_of) - hist.index[-1]) > pd.Timedelta(days=5):
         dq["stale"] = f"마지막 봉 {hist.index[-1].date()}"
+    if len(hist) >= 2 and "volume" in hist and float(hist["volume"].iloc[-1] or 0) == 0 \
+            and float(hist["close"].iloc[-1]) == float(hist["close"].iloc[-2]):
+        dq["halt"] = f"{hist.index[-1].date()} 거래량 0 · 가격 변화 없음"
 
     similar = []
     if memory is not None:

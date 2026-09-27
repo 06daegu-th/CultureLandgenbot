@@ -85,8 +85,8 @@ def daily_review(session: Session, review_date: date, lookback_days: int = 30,
         if summary.get("no_trade_avoided_loss_rate", 0) >= 0.55:
             lessons.append(f"NO_TRADE 판정의 {summary['no_trade_avoided_loss_rate']:.0%} 가 실제 하락을 피함 → Risk AI 유효")
 
-    names = {"primary": "Primary AI", "nvidia": "NVIDIA AI", "quant": "Quant Model", "regime": "Market Regime",
-             "risk": "Risk AI", "challenger": "Challenger"}
+    names = {"primary": "Primary AI", "nvidia": "Second AI", "panel": "Panel AI", "quant": "Quant Model",
+             "regime": "Market Regime", "risk": "Risk AI", "challenger": "Challenger"}
     board = scoreboard(session, since=start)
     summary["scoreboard"] = scoreboard_table(board)
     for row in summary["scoreboard"]:
@@ -96,6 +96,8 @@ def daily_review(session: Session, review_date: date, lookback_days: int = 30,
                 lessons.append(f"{names.get(row['analyst'], row['analyst'])} {label} 적중률 {row['accuracy']:.0%} (n={row['n']}) → 가중치 상향")
             elif row["accuracy"] < 0.45:
                 lessons.append(f"{names.get(row['analyst'], row['analyst'])} {label} 적중률 {row['accuracy']:.0%} (n={row['n']}) → 가중치 자동 하향 중")
+
+    _extended_review(session, start, end, summary, lessons)
 
     report = ReviewReport(review_date=review_date, mode="review", created_at=datetime.now(UTC),
                           summary=_clean(summary), lessons=lessons)
@@ -107,6 +109,39 @@ def daily_review(session: Session, review_date: date, lookback_days: int = 30,
         for lesson in lessons:
             memory.add(session, "review", f"복기 교훈: {lesson}", ts=end)
     return report
+
+
+def _extended_review(session: Session, start: datetime, end: datetime, summary: dict, lessons: list[str]) -> None:
+    """장후 리뷰 확장: AI(공급자)별 성적 · 확률 보정 · NO TRADE 사유별 가치 · 실제 슬리피지."""
+    from ..data.models import OrderRecord
+    from ..ensemble.calibration import calibration_report
+    from ..ensemble.tracker import provider_scoreboard
+    from .evidence import no_trade_value
+
+    days = max((end - start).days, 1)
+    summary["providers"] = provider_scoreboard(session, window_days=days)
+    for r in summary["providers"]:
+        if r["n"] >= 20 and r["accuracy"] is not None and r["category"] == "news" and r["accuracy"] < 0.45:
+            lessons.append(f"{r['provider']} 뉴스 해석 적중률 {r['accuracy']:.0%} (n={r['n']}) → 뉴스 오판 잦음, 가중치 하향 중")
+    cal = calibration_report(session, window_days=max(days, 90))
+    summary["calibration"] = {a: {k: v["raw"].get(k) for k in ("n", "ece", "brier", "logloss", "accuracy")}
+                              for a, v in cal["analysts"].items()}
+    summary["consensus_calibration"] = {k: cal["consensus"].get(k) for k in ("n", "ece", "brier", "logloss")}
+    for a, m in summary["calibration"].items():
+        if (m.get("n") or 0) >= 50 and (m.get("ece") or 0) >= 0.08:
+            lessons.append(f"{a} 의 확률이 실제 적중률과 평균 {m['ece']:.0%}p 어긋남 → 자동 확률 보정 적용")
+    summary["no_trade_by_reason"] = no_trade_value(session, since=start)
+    for r in summary["no_trade_by_reason"]:
+        if r["n"] >= 10 and r["avoided_loss_rate"] >= 0.6:
+            lessons.append(f"NO TRADE '{r['label']}' 판정의 {r['avoided_loss_rate']:.0%} 가 실제 하락을 피함 → 유지")
+        elif r["n"] >= 10 and r["avg_return_if_entered"] > 0.01:
+            lessons.append(f"NO TRADE '{r['label']}' 로 놓친 평균 수익 {r['avg_return_if_entered']:+.1%} → 기준 완화 검토")
+    rows = session.execute(select(OrderRecord.side, OrderRecord.ref_price, OrderRecord.avg_price).where(
+        OrderRecord.mode == "live", OrderRecord.created_at >= start, OrderRecord.ref_price.is_not(None),
+        OrderRecord.avg_price.is_not(None))).all()
+    if rows:
+        bps = [((a - r) / r * 1e4) * (1 if s == "buy" else -1) for s, r, a in rows if r]
+        summary["live_slippage_bps"] = {"n": len(bps), "mean": round(sum(bps) / len(bps), 2)}
 
 
 def _clean(obj):
