@@ -133,6 +133,9 @@ def test_scheduler_trades_only_in_krx_window():
                           engine=None, run_core_satellite=lambda mode, ts: calls.append(ts),
                           review=lambda d: None, evaluate_shadow_models=lambda: None, train_candidate=lambda: None)
     sch = build_default_scheduler(app, Mode.LIVE)
+    names = [j.name for j in sch.jobs]
+    # 회귀: QUANT_MARCAP_DIR 이 없을 때 AI 합의 직접매매(decide_and_trade)가 코어 장부에 끼어들던 문제
+    assert "decide_and_trade" not in names and "core_satellite" in names
     job = next(j for j in sch.jobs if j.name == "core_satellite")
     kst = lambda h, m: datetime(2026, 9, 24, h - 9, m, tzinfo=UTC) if h >= 9 else datetime(2026, 9, 23, h + 15, m, tzinfo=UTC)  # noqa: E731
     for h, m, expect in [(9, 5, False), (9, 30, True), (15, 5, True), (15, 25, False), (23, 30, False)]:

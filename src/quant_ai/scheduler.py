@@ -137,8 +137,19 @@ def build_default_scheduler(app, mode) -> Scheduler:
             app.run_core_satellite(mode, ts=now)
         sch.add("core_satellite", core_satellite, 3600, "open")
 
-    marcap_dir = os.environ.get("QUANT_MARCAP_DIR")
-    if marcap_dir:
+    elif mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
+        # 합의 전략(QUANT_STRATEGY=consensus)일 때만: AI 합의 신호로 직접 매매
+        def cycle(now):
+            decisions = app.decide()
+            app.trade(decisions, mode, ts=now)
+        sch.add("decide_and_trade", cycle, 15 * 60, "open")
+    elif mode in (Mode.RESEARCH, Mode.PREDICT):
+        sch.add("decide", lambda now: app.decide(), 30 * 60, "always")
+
+    # 주가 자동 갱신: 설정이 없어도 ./run.sh data 가 받아 둔 기본 위치가 있으면 쓴다 (없으면 데이터가 낡아 매매 중단)
+    marcap_dir = os.environ.get("QUANT_MARCAP_DIR") or (
+        "data/marcap/data" if Path("data/marcap/.git").exists() else None)
+    if marcap_dir and mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE, Mode.RESEARCH, Mode.PREDICT):
         from .data.collectors.marcap import sync_marcap
 
         def krx_data(now):
@@ -161,13 +172,6 @@ def build_default_scheduler(app, mode) -> Scheduler:
                 krx_data(now)
         sch.add("krx_bootstrap", krx_bootstrap, 24 * 3600, "always")
         sch.jobs.insert(0, sch.jobs.pop())  # 매매 작업보다 먼저 실행
-    elif mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
-        def cycle(now):
-            decisions = app.decide()
-            app.trade(decisions, mode, ts=now)
-        sch.add("decide_and_trade", cycle, 15 * 60, "open")
-    elif mode in (Mode.RESEARCH, Mode.PREDICT):
-        sch.add("decide", lambda now: app.decide(), 30 * 60, "always")
 
     def review(now):
         r = app.review(now.date())
