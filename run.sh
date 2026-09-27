@@ -82,6 +82,13 @@ ensure_env() {
   fi
 }
 
+venv_ok() {  # 이 폴더에서 만든 가상환경이고 파이썬이 동작하는가
+  "$VENV/bin/python" -c 'import sys' >/dev/null 2>&1 || return 1
+  # 다른 폴더에서 복사해 온 가상환경은 실행 스크립트가 옛 경로의 파이썬을 가리킨다 → 옛 폴더를 지우면 전부 깨진다
+  if [[ -f "$VENV/bin/quant-ai" ]] && [[ "$(head -3 "$VENV/bin/quant-ai")" != *"$VENV/bin/python"* ]]; then return 1; fi
+  return 0
+}
+
 clean_broken_pip() {  # 중단된 pip 업그레이드가 남긴 깨진 폴더(~ip…) → "Ignoring invalid distribution" 경고의 원인
   [[ -d "$VENV" ]] && find "$VENV"/lib/python*/site-packages -maxdepth 1 -name '~*' -exec rm -rf {} + 2>/dev/null || true
 }
@@ -90,7 +97,19 @@ ensure_installed() {
   local py; py="$(find_python)" || die "Python 3.11 이상이 필요합니다.
   macOS: brew install python@3.12   (Homebrew: https://brew.sh)  또는 https://www.python.org/downloads/
   설치 후 새 터미널에서 다시 ./run.sh"
-  [[ -x "$VENV/bin/python" ]] || { say "가상환경 만들기 ($($py --version))"; "$py" -m venv "$VENV"; }
+  if [[ -d "$VENV" ]] && ! venv_ok; then
+    warn "가상환경(.venv)이 깨졌거나 다른 폴더에서 복사된 것이라 새로 만듭니다 (패키지 다시 설치 1~2분)"
+    rm -rf "$VENV"
+  fi
+  [[ -x "$VENV/bin/python" ]] || { say "가상환경 만들기 ($($py --version))"; "$py" -m venv "$VENV"; rm -f "$VENV/.installed"; }
+  if ! "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then  # 중단된 pip 업그레이드로 pip 가 사라진 경우
+    say "pip 복구"
+    if ! "$VENV/bin/python" -m ensurepip --upgrade >/dev/null 2>&1; then
+      warn "pip 복구 실패 → 가상환경을 새로 만듭니다"
+      rm -rf "$VENV"; "$py" -m venv "$VENV"
+    fi
+    rm -f "$VENV/.installed"
+  fi
   clean_broken_pip
   local extras="ai,dev,yahoo"  # yahoo: 해외 일봉 (브라우저 흉내로 429 차단을 피하는 yfinance)
   [[ "$(env_get DATABASE_URL)" == postgres* ]] && extras="$extras,postgres"
@@ -105,8 +124,9 @@ ensure_installed() {
   local want="$hash:$extras"
   if [[ $need -eq 1 ]]; then
     say "패키지 설치 (.[${extras}]) — 처음 한 번 1~2분"
-    "$VENV/bin/python" -m pip install -q --upgrade pip
-    "$VENV/bin/python" -m pip install -q -e ".[${extras}]"
+    "$VENV/bin/python" -m pip install -q --upgrade pip || warn "pip 업그레이드 실패 — 기존 pip 로 계속"
+    "$VENV/bin/python" -m pip install -q -e ".[${extras}]" || die "패키지 설치 실패 — 인터넷 연결 확인 후 다시 ./run.sh
+  (계속 실패하면: rm -rf .venv 후 ./run.sh)"
     printf '%s' "$want" > "$VENV/.installed"
     ok "설치 완료"
   fi
@@ -114,7 +134,9 @@ ensure_installed() {
 
 qa() {
   clean_broken_pip
-  [[ -x "$VENV/bin/quant-ai" ]] || { ensure_env; ensure_installed; }
+  if [[ ! -x "$VENV/bin/quant-ai" ]] || ! venv_ok || ! "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then
+    ensure_env; ensure_installed
+  fi
   "$VENV/bin/quant-ai" "$@"
 }
 
