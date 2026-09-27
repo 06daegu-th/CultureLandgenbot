@@ -6,7 +6,10 @@ AI 에게 주문 권한은 없다. 신호는 반드시 **리스크 게이트**�
 
 ![dashboard](docs/dashboard.png)
 
-> 스크린샷은 `quant-ai demo` 의 **가상 데이터**입니다 (실제 시세·뉴스 아님).
+> 실제 KRX 데이터(2026-09-23 기준)로 가상매매 장부를 돌린 화면입니다. LLM 키 없이 휴리스틱 AI 로 실행했고,
+> 뉴스·해외지표 칸은 키(RSS·FRED)를 넣으면 채워집니다.
+
+**요청 20개 항목 · 핵심 10 구현 현황과 한계: [docs/PLATFORM_STATUS.md](docs/PLATFORM_STATUS.md)**
 
 ```text
 Market Data ─┬─▶ Primary AI (Gemini 무료 / Claude · 종합)  ─┐
@@ -48,6 +51,7 @@ Market Data ─┬─▶ Primary AI (Gemini 무료 / Claude · 종합)  ─┐
 
 ### 운영 기능
 - **무료 멀티 AI**: Gemini · NVIDIA · Groq · Cloudflare Gemma 를 역할별 자동 배정, 한도 초과 시 다음 모델로 전환 (`analysts/llm_clients.py`)
+- **신뢰 계층**: 주문 멱등성·재시작 복구 · AI 별 확률 보정 · 포트폴리오 VaR/ES·상관 군집·유동성 · Evidence Chain · AI Journal · NO TRADE 사유별 가치 · 슬리피지 실측
 - **LLM 가드**: 응답 캐시 · 일 비용 예산 · 공급자별 무료 일 한도 · 모든 호출 감사 로그 (`analysts/guard.py`)
 - **검증 통계**: PSR · DSR(다중검정 보정) · Sharpe 부트스트랩 CI · 비용 2배 스트레스 · 확률 보정표
 - **안전장치**: DB 공유 킬스위치 · 자동 정지(급락) · 치명 위험 시 강제 청산 · 매매 사이클 잠금 · 영속 주문 한도 · 낡은 데이터로 매매 금지

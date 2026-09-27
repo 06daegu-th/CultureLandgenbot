@@ -93,6 +93,18 @@
   (넘으면 그 AI 만 기권, 시스템은 계속) · 감사 로그.
 - AI 에는 종목 가격·국면·뉴스·공시·거시 요약만 보낸다. 계좌·보유 정보는 보내지 않는다.
 
+## 1-3. 신뢰 계층 (실제 돈을 굴리기 위한 것)
+
+| 모듈 | 역할 |
+|---|---|
+| `trading/journal.py` · `ExecutionEngine` · `KISBroker.recover` · `QuantAI.recover_orders` | 멱등 키(`client_order_id`) → 제출 전 기록(pending) → 주문번호 즉시 기록(submitted) → 확정. 재시작 시 미완료 주문 조회·취소, 번호 없는 주문은 unknown + 킬스위치 |
+| `ensemble/calibration.py` | 신뢰도 곡선 · Brier · LogLoss · ECE, AI 별 Platt 보정 (review 때 적합, decide 때 적용) |
+| `trading/portfolio_risk.py` · `RiskEngine.adv` · `_apply_var_budget` | VaR/ES · 베타 · 스트레스 · 상관 군집 · 유동성 · 통화 / 주문 ≤ ADV 5% / 계획 VaR 한도 |
+| `engines/market_intel.py` | 뉴스 이벤트 클러스터링 · RISK ON/OFF 점수 · 크로스에셋 상관·베타 |
+| `ensemble/tracker.evidence_snapshot` · `review/evidence.py` | 판단 시점 재료 저장 · Evidence Chain · AI Journal · NO TRADE 가치 |
+| `data/quality.py` · `QuantAI._stale_guard` | 미래 시각 · 거래정지 · 급변 · 공백 / 낡은 데이터로 매매 금지 |
+| `data/db.ensure_columns` · `migrations/versions/0002` | 예전 DB 자동 업그레이드 (SQLite) · Alembic (PostgreSQL) |
+
 ## 2. 왜 이렇게 설계했나 (제안 반영 + 개선점)
 
 | 제안 | 구현 | 추가 개선 |
