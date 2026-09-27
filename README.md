@@ -54,19 +54,19 @@ Market Data ─┬─▶ Primary AI (Gemini 무료 / Claude · 종합)  ─┐
 - **관측**: 작업 실행 기록, `/api/health`, 운영 화면, Discord/Slack/Telegram 알림, JSON 로그
 - **배포**: Dockerfile, docker-compose(PostgreSQL+마이그레이션+스케줄러+웹), Alembic, GitHub Actions CI
 
-## 빠른 시작 (`run.sh`)
+## 빠른 시작 — `./run.sh` 하나로
 
 ```bash
-./run.sh setup        # 가상환경 · 설치 · .env 생성 (Python 3.11+)
-# .env 에 키 입력 → docs/ENV_KEYS.md (최소: KIS 모의투자 키 3개. AI 는 무료 키만으로도 가능)
-./run.sh data         # KRX 데이터 받기 + DB 적재 (최근 5년, 몇 분)
-./run.sh doctor       # 점검 (--ai: AI 응답 확인 · --kis: 잔고 조회 · --notify: 알림 테스트)
-./run.sh kis-check    # 장중: KIS 연결 + 모의 1주 주문→취소
-./run.sh cycle        # 코어 1회 (QUANT_BROKER=kis 면 KIS 모의계좌로 주문)
-./run.sh start        # 24시간 스케줄러   /  ./run.sh up  (Docker: PostgreSQL + 스케줄러 + 대시보드)
-./run.sh serve        # 대시보드 http://127.0.0.1:8050
-./run.sh help         # 전체 명령
+./run.sh
 ```
+
+설치(Python 3.11+ 가상환경) → DB 확인 (PostgreSQL 이 없으면 설치가 필요 없는 SQLite 로 자동 전환) →
+KRX 데이터 받기·갱신 → 점검 → 대시보드(http://127.0.0.1:8050, 브라우저 자동 열림) + 24시간 운영까지 자동.
+두 번째 실행부터는 설치·데이터를 건너뛰고 바로 시작한다. 종료는 Ctrl+C.
+
+- `.env` 에 **KIS 모의투자 키 3개**를 넣으면 다음 실행부터 모의계좌로 자동매매 (없으면 가상매매) — 발급처: [docs/ENV_KEYS.md](docs/ENV_KEYS.md)
+- 무료 AI 키(Gemini·Groq·NVIDIA·Cloudflare)는 선택. 기본은 코어 전용(`QUANT_CORE_ONLY=true`)
+- 개별 명령: `./run.sh doctor --ai --kis --notify` · `./run.sh kis-check` · `./run.sh orders …` · `./run.sh up` (Docker) · `./run.sh help`
 
 가상 데이터 데모: `./run.sh demo && ./run.sh serve` · 테스트: `./run.sh test`
 

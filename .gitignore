@@ -131,3 +131,8 @@ dmypy.json
 # Quant AI
 artifacts/
 *.db
+
+# run.sh 가 만드는 파일 (주가 데이터 · 로그 · .env 백업 — 키가 들어 있을 수 있음)
+/data/
+/logs/
+.env.bak.*

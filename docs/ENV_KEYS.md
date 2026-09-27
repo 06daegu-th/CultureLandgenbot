@@ -1,6 +1,7 @@
 # `.env` 값 — 어디서 발급하나
 
-`./run.sh setup` 이 `.env.example` 을 복사해 `.env` 를 만든다 (권한 600, git 에 올라가지 않음).
+`./run.sh` 가 처음 실행될 때 `.env.example` 을 복사해 `.env` 를 만든다 (권한 600, git 에 올라가지 않음).
+값을 넣은 뒤 다시 `./run.sh` 를 실행하면 반영된다.
 **키는 `.env` 에만 넣고 채팅·이슈·스크린샷에 붙여 넣지 않는다.** 넣은 뒤 `./run.sh doctor` 로 확인
 (`--ai` 는 각 AI 에 짧은 테스트 요청, `--kis` 는 잔고 조회, `--notify` 는 알림 테스트).
 
@@ -75,8 +76,8 @@
 
 | 변수 | 값 |
 |---|---|
-| `DATABASE_URL` | 처음엔 `sqlite:///quant_ai.db` (setup 이 설정). Docker 는 자동으로 PostgreSQL |
-| `POSTGRES_PASSWORD` | Docker 사용 시 강한 비밀번호 (`change-me` 면 `./run.sh up` 이 거부) |
+| `DATABASE_URL` | 기본 `sqlite:///quant_ai.db` (설치 불필요). PostgreSQL 주소가 있는데 서버가 꺼져 있으면 `./run.sh` 가 SQLite 로 전환하고 `.env` 백업을 남긴다. Docker 는 자동으로 PostgreSQL |
+| `POSTGRES_PASSWORD` | Docker 사용 시 비밀번호 (`change-me` 그대로면 `./run.sh up` 이 무작위로 만들어 저장) |
 | `QUANT_WEB_TOKEN` | 대시보드 비밀번호: `python3 -c "import secrets;print(secrets.token_urlsafe(32))"` |
 | `QUANT_CORE_ONLY` | `true` 권장 (AI 기여도가 검증되기 전) |
 | `QUANT_MAX_DATA_AGE_DAYS` | 데이터가 이 영업일 수보다 오래되면 자동매매 중단 (기본 5) |

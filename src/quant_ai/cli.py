@@ -383,7 +383,7 @@ def cmd_doctor(args):
             except Exception as e:  # noqa: BLE001
                 add("fail", "KIS 연결", str(e)[:200])
     else:
-        add("warn", "증권사", "QUANT_BROKER=none → 가상매매(PAPER)만. 모의투자: QUANT_BROKER=kis, KIS_ENV=demo")
+        add("warn", "증권사", "KIS 미연결 → 가상매매(PAPER). .env 에 KIS 모의투자 키 3개를 넣으면 ./run.sh 가 모의계좌로 자동매매")
     add("ok" if app.notifier.enabled else "warn", "알림", "설정됨" if app.notifier.enabled
         else "미설정 → 체결·장애 알림을 못 받음 (Discord/Slack/Telegram 권장)")
     if args.notify and app.notifier.enabled:
@@ -400,6 +400,27 @@ def _print_doctor(rows):
     n_fail = sum(r[0] == "fail" for r in rows)
     print(f"\n{'문제 ' + str(n_fail) + '건 — 위 ❌ 부터 해결하세요' if n_fail else '실행 준비 완료'}")
     sys.exit(1 if n_fail else 0)
+
+
+def cmd_db_ping(args):
+    """run.sh 용: 0 = 연결 + 주가 데이터 있음, 3 = 연결되지만 비어 있음, 1 = 연결 실패. 스키마를 만들지 않는다."""
+    import os
+
+    from sqlalchemy import inspect, text
+
+    from .data.db import make_engine
+    url = args.db or os.environ.get("DATABASE_URL") or Settings.from_env().database_url
+    try:
+        eng = make_engine(url, connect_timeout=3)
+        with eng.connect() as c:
+            c.execute(text("SELECT 1"))
+            has = "price_bars" in inspect(c).get_table_names() and \
+                c.execute(text("SELECT 1 FROM price_bars LIMIT 1")).first() is not None
+    except Exception as e:  # noqa: BLE001
+        print(f"DB 연결 실패: {str(e).splitlines()[0][:200]}")
+        sys.exit(1)
+    print("ok" if has else "empty")
+    sys.exit(0 if has else 3)
 
 
 def cmd_kill(args):
@@ -478,6 +499,7 @@ def main(argv: list[str] | None = None) -> None:
     kc.add_argument("--test-order", action="store_true", help="모의투자 전용: 1주 비체결 주문 후 즉시 취소")
     kc.set_defaults(fn=cmd_kis_check)
     sub.add_parser("health").set_defaults(fn=cmd_health)
+    sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
     od = sub.add_parser("orders", help="리밸런싱 주문표 (다른 증권사·ISA·수동 매매용, 주문은 내지 않음)")
     od.add_argument("--cash", type=float, required=True, help="주문 가능 현금 (원)")
     od.add_argument("--holdings", help="보유 종목 CSV (종목코드,수량). '-' 는 표준입력. 없으면 전액 현금에서 시작")
@@ -528,7 +550,19 @@ def main(argv: list[str] | None = None) -> None:
     lb.set_defaults(fn=cmd_lab)
 
     args = p.parse_args(argv)
-    args.fn(args)
+    try:
+        args.fn(args)
+    except Exception as e:
+        from sqlalchemy.exc import OperationalError
+        if not isinstance(e, OperationalError):
+            raise
+        # 긴 트레이스백 대신 무엇을 하면 되는지 알려준다
+        url = os.environ.get("DATABASE_URL", "")
+        where = url.split("@")[-1] if "@" in url else url  # 비밀번호는 출력하지 않음
+        print(f"\n✖ DB 에 연결할 수 없습니다 ({where})\n  {str(e.orig if hasattr(e, 'orig') else e).splitlines()[0][:200]}\n"
+              "  → PostgreSQL 이 꺼져 있거나 설치되지 않았습니다. 설치 없이 쓰려면 .env 에서\n"
+              "     DATABASE_URL=sqlite:///quant_ai.db   (./run.sh 은 자동으로 전환합니다)", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

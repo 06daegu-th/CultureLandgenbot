@@ -38,8 +38,9 @@ QUANT_DISCORD_WEBHOOK=https://...   # 체결·긴급청산·장부불일치·작
 
 ## 3. 최초 점검 (장중에 실행)
 
-`run.sh` 로 한 번에: `./run.sh setup` → `.env` 입력 → `./run.sh data` → `./run.sh doctor --kis --notify` →
-`./run.sh kis-check` → `./run.sh cycle` → `./run.sh start` (또는 Docker `./run.sh up`). 아래는 같은 일을 직접 할 때.
+가장 쉬운 방법: `.env` 에 KIS 모의투자 키 3개를 넣고 `./run.sh` — 설치·데이터·점검(잔고 조회 포함)을 거쳐
+모의계좌로 24시간 자동 운영한다. 장중에 `./run.sh kis-check` 로 주문·취소 경로를 한 번 확인해 두면 좋다.
+아래는 같은 일을 직접 할 때.
 
 ```bash
 quant-ai collect krx --marcap-dir /data/marcap/data --years 3 --top 100   # 실제 KRX 데이터 적재

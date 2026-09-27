@@ -247,3 +247,25 @@ def test_run_sh_is_valid_bash():
     assert "./run.sh setup" in out and "./run.sh doctor" in out
     assert "set -euo" not in out and "cd \"$(dirname" not in out  # 도움말에 코드 줄이 섞이지 않음
     assert not (root / "main.py").exists()
+
+
+def test_db_ping_exit_codes(app, tmp_path, capsys):
+    from quant_ai.cli import main
+    with pytest.raises(SystemExit) as e:
+        main(["--db", app.settings.database_url, "db-ping"])
+    assert e.value.code == 0 and "ok" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as e:
+        main(["--db", f"sqlite:///{tmp_path}/empty.db", "db-ping"])
+    assert e.value.code == 3
+    with pytest.raises(SystemExit) as e:
+        main(["--db", "postgresql://quant:pw@127.0.0.1:1/quant", "db-ping"])
+    assert e.value.code == 1 and "pw" not in capsys.readouterr().out
+
+
+def test_db_down_gives_short_message_not_traceback(capsys, monkeypatch):
+    from quant_ai.cli import main
+    monkeypatch.setenv("DATABASE_URL", "postgresql://quant:secretpw@127.0.0.1:1/quant")
+    with pytest.raises(SystemExit) as e:
+        main(["--db", "postgresql://quant:secretpw@127.0.0.1:1/quant", "checkup", "--no-ic"])
+    err = capsys.readouterr().err
+    assert e.value.code == 2 and "DB 에 연결할 수 없습니다" in err and "secretpw" not in err

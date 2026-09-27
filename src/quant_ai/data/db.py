@@ -14,11 +14,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from .models import Base, PriceBar
 
 
-def make_engine(url: str) -> Engine:
+def make_engine(url: str, connect_timeout: int | None = None) -> Engine:
     # psycopg3 드라이버를 기본으로 사용
     if url.startswith("postgresql://"):
         url = "postgresql+psycopg://" + url[len("postgresql://"):]
-    return create_engine(url, future=True, pool_pre_ping=True)
+    args = {"connect_timeout": connect_timeout} if connect_timeout and url.startswith("postgresql") else {}
+    return create_engine(url, future=True, pool_pre_ping=True, connect_args=args)
 
 
 def init_db(engine: Engine) -> None:
