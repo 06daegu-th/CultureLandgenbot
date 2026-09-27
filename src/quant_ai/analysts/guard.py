@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -37,6 +39,28 @@ def estimate_cost(provider: str, model: str, usage: tuple[int, int] | None) -> f
         return 0.0
     pin, pout = PRICES.get(model, UNKNOWN_PRICE)
     return (usage[0] * pin + usage[1] * pout) / 1e6
+
+
+_BREAKER: dict[str, list[float]] = {}  # 공급자 → 최근 연속 실패 시각들
+_BREAKER_LOCK = threading.Lock()
+BREAKER_FAILS = 3
+BREAKER_COOLDOWN_S = 600
+
+
+def breaker_open(provider: str) -> bool:
+    """최근 10분 안에 연속 3번 실패한 공급자는 잠시 부르지 않는다 (응답 없는 공급자가 AI 판단 전체를 붙잡지 않도록)."""
+    with _BREAKER_LOCK:
+        fails = _BREAKER.get(provider, [])
+        return len(fails) >= BREAKER_FAILS and time.time() - fails[-1] < BREAKER_COOLDOWN_S
+
+
+def _breaker_record(provider: str, ok: bool) -> None:
+    with _BREAKER_LOCK:
+        if ok:
+            _BREAKER.pop(provider, None)
+        else:
+            _BREAKER.setdefault(provider, []).append(time.time())
+            _BREAKER[provider] = _BREAKER[provider][-BREAKER_FAILS:]
 
 
 class GuardedLLM(LLMClient):
@@ -95,16 +119,23 @@ class GuardedLLM(LLMClient):
         if self.daily_requests and self.requests_today() >= self.daily_requests:
             self._log(h, "budget", error=f"{self.provider} 무료 일 한도 {self.daily_requests}회 도달")
             raise LLMError(f"{self.provider} 무료 일 한도 {self.daily_requests}회 도달 (UTC 자정에 초기화)")
+        if breaker_open(self.provider):
+            self._log(h, "error", error=f"{self.provider} 연속 실패로 10분간 건너뜀")
+            raise LLMError(f"{self.provider} 연속 실패 → 10분간 건너뜀 (다른 AI 로 계속)")
         t0 = time.monotonic()
+        lock = getattr(self.inner, "call_lock", None) or contextlib.nullcontext()
         try:
-            out = self.inner.complete_json(system, user, schema)
+            with lock:
+                out = self.inner.complete_json(system, user, schema)
+                usage = self.inner.last_usage
         except Exception as exc:
+            _breaker_record(self.provider, False)
             usage = self.inner.last_usage
             self._log(h, "error", latency_ms=int((time.monotonic() - t0) * 1000), error=str(exc)[:2000],
                       input_tokens=usage[0] if usage else None, output_tokens=usage[1] if usage else None,
                       cost_usd=estimate_cost(self.provider, self.model, usage))
             raise
-        usage = self.inner.last_usage
+        _breaker_record(self.provider, True)
         self._log(h, "ok", latency_ms=int((time.monotonic() - t0) * 1000), response=out,
                   input_tokens=usage[0] if usage else None, output_tokens=usage[1] if usage else None,
                   cost_usd=estimate_cost(self.provider, self.model, usage))

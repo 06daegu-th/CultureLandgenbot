@@ -534,3 +534,8 @@ body.on-chat .chat-dock { display: none; }
 table.tight td:first-child { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 900px) { .cond-table .sub { display: none; } .cond-table td { padding-left: 4px; padding-right: 4px; } }
 @media (max-width: 900px) { table.tight td:first-child { max-width: 120px; } }
+.analyze-card { display: flex; gap: 12px; align-items: center; margin-top: 12px; padding: 12px 14px; border-radius: 12px;
+  border: 1px solid rgba(99,102,241,.45); background: linear-gradient(90deg, rgba(99,102,241,.14), rgba(34,211,238,.06)); }
+.analyze-card .an-ic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: #fff; flex: none;
+  background: linear-gradient(135deg, #6366f1, #22d3ee); }
+@media (max-width: 900px) { .analyze-card { flex-wrap: wrap; } }

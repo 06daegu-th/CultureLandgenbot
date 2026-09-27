@@ -110,15 +110,72 @@ def find_in_text(session, text: str) -> list[dict]:
 
 
 # ------------------------------------------------------------------ 해외 일봉 (무료, 키 없음)
-def _http(url: str, timeout: float = 15.0) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})  # noqa: S310 - https 고정
-    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+# 소스 순서: yfinance(브라우저 흉내 → Yahoo 429 차단 회피) → Yahoo chart(query1/2) → Nasdaq → Stooq.
+# 실패하면 30분 동안 같은 종목을 다시 두드리지 않는다 (차단을 더 오래 만들지 않도록).
+FAIL_COOLDOWN = timedelta(minutes=30)
+ETF_SYMBOLS = {"SPY", "QQQ", "SOXX", "TQQQ", "SCHD"}
+
+
+def _http(url: str, timeout: float = 15.0, headers: dict | None = None) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*", **(headers or {})})  # noqa: S310
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 - https 고정
         return r.read(8 * 1024 * 1024)
 
 
+def _clean(df: pd.DataFrame) -> pd.DataFrame:
+    df = df[[c for c in ("open", "high", "low", "close", "volume") if c in df]].apply(pd.to_numeric, errors="coerce")
+    idx = pd.DatetimeIndex(df.index)
+    df.index = (idx.tz_localize("UTC") if idx.tz is None else idx.tz_convert("UTC")).normalize()
+    df = df[~df.index.duplicated(keep="last")].sort_index()
+    return df.dropna(subset=["close"])
+
+
+def _yf_frame(raw: pd.DataFrame, symbol: str | None = None) -> pd.DataFrame:
+    if isinstance(raw.columns, pd.MultiIndex):
+        lv0 = raw.columns.get_level_values(0)
+        raw = raw[symbol] if symbol in set(lv0) else raw.xs(symbol, axis=1, level=1)
+    raw = raw.rename(columns=str.lower)
+    return _clean(raw)
+
+
+def fetch_yfinance(symbol: str) -> pd.DataFrame:
+    try:
+        import yfinance as yf
+    except ImportError as e:
+        raise RuntimeError("yfinance 미설치 (./run.sh 가 자동 설치)") from e
+    raw = yf.download(symbol, period="2y", interval="1d", auto_adjust=True, progress=False, threads=False)
+    if raw is None or raw.empty:
+        raise RuntimeError(f"yfinance: {symbol} 결과 없음")
+    return _yf_frame(raw, symbol)
+
+
+def fetch_yfinance_many(symbols: list[str]) -> dict[str, pd.DataFrame]:
+    """여러 종목을 한 번에 (요청 수를 줄여 429 차단을 피한다)."""
+    import yfinance as yf
+    raw = yf.download(symbols, period="2y", interval="1d", auto_adjust=True, progress=False, threads=True,
+                      group_by="ticker")
+    out = {}
+    for sym in symbols:
+        try:
+            df = _yf_frame(raw, sym)
+            if len(df) >= 5:
+                out[sym] = df
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
 def fetch_yahoo(symbol: str, rng: str = "2y") -> pd.DataFrame:
-    raw = json.loads(_http(f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={rng}&interval=1d"
-                           "&events=div%2Csplits"))
+    errors = []
+    for host in ("query1", "query2"):
+        try:
+            raw = json.loads(_http(f"https://{host}.finance.yahoo.com/v8/finance/chart/{symbol}?range={rng}"
+                                   "&interval=1d&events=div%2Csplits"))
+            break
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{host}: {e}")
+    else:
+        raise RuntimeError("; ".join(errors))
     res = (raw.get("chart") or {}).get("result") or []
     if not res:
         raise RuntimeError(f"Yahoo: {symbol} 결과 없음")
@@ -126,49 +183,119 @@ def fetch_yahoo(symbol: str, rng: str = "2y") -> pd.DataFrame:
     q = r["indicators"]["quote"][0]
     adj = (r["indicators"].get("adjclose") or [{}])[0].get("adjclose")
     df = pd.DataFrame({"open": q["open"], "high": q["high"], "low": q["low"], "close": q["close"],
-                       "volume": q["volume"]}, index=pd.to_datetime(r["timestamp"], unit="s", utc=True).normalize())
+                       "volume": q["volume"]}, index=pd.to_datetime(r["timestamp"], unit="s", utc=True))
     if adj:  # 분할·배당 반영 수정주가로 통일
         f = pd.Series(adj, index=df.index) / df["close"]
         for c in ("open", "high", "low", "close"):
             df[c] = df[c] * f
-    return df.dropna(subset=["close"])
+    return _clean(df)
+
+
+def _num(x) -> float | None:
+    try:
+        return float(str(x).replace("$", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_nasdaq(symbol: str) -> pd.DataFrame:
+    """Nasdaq 공개 API (키 없음). 분할 반영 가격."""
+    end = datetime.now(UTC).date()
+    cls = "etf" if symbol in ETF_SYMBOLS else "stocks"
+    url = (f"https://api.nasdaq.com/api/quote/{symbol.replace('-', '.')}/historical?assetclass={cls}"
+           f"&fromdate={end - timedelta(days=740)}&limit=9999&todate={end}")
+    raw = json.loads(_http(url, headers={"Accept": "application/json, text/plain, */*", "Origin": "https://www.nasdaq.com",
+                                         "Referer": "https://www.nasdaq.com/"}))
+    rows = ((((raw or {}).get("data") or {}).get("tradesTable") or {}).get("rows")) or []
+    if not rows:
+        raise RuntimeError(f"Nasdaq: {symbol} 결과 없음")
+    df = pd.DataFrame([{"date": r.get("date"), "open": _num(r.get("open")), "high": _num(r.get("high")),
+                        "low": _num(r.get("low")), "close": _num(r.get("close")), "volume": _num(r.get("volume"))}
+                       for r in rows])
+    df.index = pd.to_datetime(df.pop("date"), format="%m/%d/%Y", utc=True)
+    return _clean(df)
 
 
 def fetch_stooq(symbol: str) -> pd.DataFrame:
-    raw = _http(f"https://stooq.com/q/d/l/?s={symbol.lower().replace('-', '.')}.us&i=d").decode()
-    df = pd.read_csv(io.StringIO(raw))
-    if df.empty or "Close" not in df:
+    raw = _http(f"https://stooq.com/q/d/l/?s={symbol.lower().replace('-', '.')}.us&i=d").decode(errors="replace")
+    if not raw.lower().startswith("date"):
         raise RuntimeError(f"Stooq: {symbol} 결과 없음")
+    df = pd.read_csv(io.StringIO(raw))
     df.columns = [c.lower() for c in df.columns]
     df.index = pd.to_datetime(df.pop("date"), utc=True)
-    return df[["open", "high", "low", "close", "volume"]].tail(520)
+    return _clean(df).tail(520)
 
 
-def ensure_global(engine, symbol: str, name: str | None = None, max_age_hours: float = 12, fetchers=None) -> dict:
+DEFAULT_FETCHERS = (("yfinance", fetch_yfinance), ("yahoo", fetch_yahoo), ("nasdaq", fetch_nasdaq), ("stooq", fetch_stooq))
+
+
+def _save(engine, symbol: str, df: pd.DataFrame, src: str, name: str | None) -> int:
+    from .. import ops
+    with session_scope(engine) as s:
+        n = upsert_bars(s, symbol, df, "1d", src)
+        if s.scalar(select(Instrument.id).where(Instrument.symbol == symbol)) is None:
+            s.add(Instrument(symbol=symbol, market=GLOBAL_MARKET, name=name or global_name(symbol) or symbol, currency="USD"))
+    ops.set_state(engine, f"global_fetch:{symbol}", {"at": datetime.now(UTC).isoformat(), "source": src})
+    return n
+
+
+def ensure_global(engine, symbol: str, name: str | None = None, max_age_hours: float = 12, fetchers=None,
+                  force: bool = False) -> dict:
     """해외 종목 일봉을 DB 에 캐시 (없거나 오래됐으면 받기). 반환: {ok, rows, source, error}."""
     from .. import ops
     with session_scope(engine) as s:
         last = s.scalar(select(func.max(PriceBar.ts)).where(PriceBar.symbol == symbol, PriceBar.interval == "1d"))
-    fetched = ops.get_state(engine, f"global_fetch:{symbol}").get("at")
-    if last is not None and fetched and datetime.fromisoformat(fetched) > datetime.now(UTC) - timedelta(hours=max_age_hours):
+    st = ops.get_state(engine, f"global_fetch:{symbol}")
+    now = datetime.now(UTC)
+    if not force and last is not None and st.get("at") and datetime.fromisoformat(st["at"]) > now - timedelta(hours=max_age_hours):
         return {"ok": True, "rows": 0, "source": "cache"}
+    if not force and fetchers is None and st.get("fail_at") and datetime.fromisoformat(st["fail_at"]) > now - FAIL_COOLDOWN:
+        return {"ok": last is not None, "rows": 0, "source": "stale-cache" if last is not None else None,
+                "error": f"최근 실패로 잠시 대기 (30분): {st.get('error', '')}"[:300]}
     errors = []
-    for src, fn in (fetchers or (("yahoo", fetch_yahoo), ("stooq", fetch_stooq))):
+    for src, fn in (fetchers or DEFAULT_FETCHERS):
         try:
             df = fn(symbol)
             if len(df) < 5:
                 raise RuntimeError("일봉이 너무 적음")
-            with session_scope(engine) as s:
-                n = upsert_bars(s, symbol, df, "1d", src)
-                if s.scalar(select(Instrument.id).where(Instrument.symbol == symbol)) is None:
-                    s.add(Instrument(symbol=symbol, market=GLOBAL_MARKET, name=name or global_name(symbol) or symbol,
-                                     currency="USD"))
-            ops.set_state(engine, f"global_fetch:{symbol}", {"at": datetime.now(UTC).isoformat(), "source": src})
-            return {"ok": True, "rows": n, "source": src}
+            return {"ok": True, "rows": _save(engine, symbol, df, src, name), "source": src}
         except Exception as e:  # noqa: BLE001 - 다음 소스로
             errors.append(f"{src}: {e}"[:160])
-    return {"ok": last is not None, "rows": 0, "source": "stale-cache" if last is not None else None,
-            "error": "; ".join(errors)}
+    err = "; ".join(errors)
+    ops.set_state(engine, f"global_fetch:{symbol}", {**st, "fail_at": now.isoformat(), "error": err[:500]})
+    return {"ok": last is not None, "rows": 0, "source": "stale-cache" if last is not None else None, "error": err}
+
+
+def ensure_many(engine, symbols: list[str], max_age_hours: float = 12) -> dict:
+    """여러 종목: 먼저 yfinance 한 번에 받고, 빠진 것만 종목별 폴백 (요청 수 최소화)."""
+    import time as _time
+
+    from .. import ops
+    now = datetime.now(UTC)
+    stale = []
+    for sym in symbols:
+        st = ops.get_state(engine, f"global_fetch:{sym}")
+        if not (st.get("at") and datetime.fromisoformat(st["at"]) > now - timedelta(hours=max_age_hours)):
+            stale.append(sym)
+    got: dict[str, str] = {}
+    if stale:
+        try:
+            for sym, df in fetch_yfinance_many(stale).items():
+                _save(engine, sym, df, "yfinance", None)
+                got[sym] = "yfinance"
+        except Exception as e:  # noqa: BLE001 - 미설치·차단 → 종목별 폴백
+            log.info("yfinance 일괄 받기 실패: %s", e)
+    failed = []
+    for sym in stale:
+        if sym in got:
+            continue
+        r = ensure_global(engine, sym, fetchers=DEFAULT_FETCHERS[1:])  # yfinance 는 위에서 이미 시도
+        if r.get("ok"):
+            got[sym] = r.get("source") or "cache"
+        else:
+            failed.append(sym)
+        _time.sleep(0.4)  # 소스별 분당 한도 보호
+    return {"fresh": len(symbols) - len(stale), "fetched": len(got), "failed": failed}
 
 
 def global_name(symbol: str) -> str | None:

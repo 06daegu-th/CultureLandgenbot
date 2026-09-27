@@ -268,11 +268,12 @@ async function viewServer(el) {
   };
 }
 
-async function runAction(name, onProgress) {
-  let st = await post("/api/action", { name });
-  for (let i = 0; i < 600 && st.running; i++) {
+async function runAction(name, onProgress, params = {}) {
+  let st = await post("/api/action", { name, ...params });
+  const key = st.name || name;  // 종목 분석은 'analyze:000660' 처럼 종목별로 따로 돈다
+  for (let i = 0; i < 900 && st.running; i++) {
     await new Promise((r) => setTimeout(r, 1000));
-    st = await api(`/api/action?name=${name}`);
+    st = await api(`/api/action?name=${encodeURIComponent(key)}`);
     if (onProgress) onProgress(st.progress || "");
   }
   return st;
@@ -342,7 +343,7 @@ function chatMsgHtml(m) {
   if (m.role === "user") return `<div class="msg user"><div class="bubble">${esc(m.content)}</div></div>`;
   const tools = (m.tools || []).map((t) => `<span class="tchip ${t.ok === false ? "bad" : ""}">${TOOL_LABEL[t.tool] || esc(t.tool)}${t.args?.symbol ? " · " + esc(t.args.symbol) : ""}</span>`).join("");
   const cards = (m.cards || []).map((c) => `<a class="stock-card" href="#analysis/${esc(c.symbol)}"><div><b>${esc(c.name)}</b> <span class="xs dim">${esc(c.symbol)}</span><div class="num">${c.currency === "USD" ? "$" + num(c.last, 2) : num(c.last) + "원"} <span class="${sgn(c.ret_1d)}">${pp(c.ret_1d)}</span></div><div class="xs dim">${esc(c.date || "")} 종가</div></div><div class="sc-spark">${spark(c.spark, 120, 36)}</div></a>`).join("");
-  const acts = (m.actions || []).map((a) => `<button class="act-btn ${a.danger ? "danger" : ""}" data-act="${esc(a.action)}" title="${esc(a.reason || "")}">▶ ${esc(a.label)}</button>`).join("");
+  const acts = (m.actions || []).map((a) => `<button class="act-btn ${a.danger ? "danger" : ""}" data-act="${esc(a.action)}" data-sym="${esc(a.symbol || "")}" title="${esc(a.reason || "")}">▶ ${esc(a.label)}</button>`).join("");
   return `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble">${tools ? `<div class="tchips">${tools}</div>` : ""}${md(m.content)}${cards ? `<div class="cards">${cards}</div>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}${m.model ? `<div class="xs dim" style="margin-top:6px">${esc(m.model)}</div>` : ""}</div></div>`;
 }
 
@@ -373,8 +374,9 @@ function bindChatActs(root) {
     const a = b.dataset.act;
     if (b.classList.contains("danger") && !confirm("실행할까요? (DB 정리는 오래된 로그만 지우며 주문·판단 기록은 보존합니다)")) return;
     b.disabled = true; b.textContent = "실행 중…";
-    const r = await runAction(a, (p) => { b.textContent = p || "실행 중…"; });
-    b.textContent = r.error ? `실패: ${r.error}` : "✓ 완료";
+    const r = await runAction(a, (p) => { b.textContent = p || "실행 중…"; }, b.dataset.sym ? { symbol: b.dataset.sym } : {});
+    b.textContent = r.error ? `실패: ${r.error}` : a === "analyze" && r.result ? `✓ ${r.result.action} · 상승확률 ${pctRaw(r.result.prob_up, 0)} — 종목 화면에서 근거 보기` : "✓ 완료";
+    if (a === "analyze" && !r.error) { b.onclick = () => { location.hash = `#analysis/${b.dataset.sym}`; }; b.disabled = false; }
     S._cacheBust = Date.now();
   });
 }
@@ -458,4 +460,28 @@ function initSearch() {
     }, 180);
   }, true);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") box.querySelector("a")?.click(); });
+}
+
+
+// ================================================================= 종목 AI 분석 (판단 기록이 없을 때 바로 실행)
+function analyzeCard(sym, name, auto) {
+  return `<div class="analyze-card" id="analyze-card"><div class="an-ic">${ICONS.chat}</div><div style="flex:1;min-width:0"><b>${esc(name)} — 아직 AI 판단 기록이 없습니다</b>
+    <div class="small muted" id="analyze-msg">${auto ? "AI 들이 지금 독립적으로 판단하는 중… (공급자마다 동시에 · 보통 10~60초)" : "매일 판단하는 종목은 코어 후보·보유·관심 종목입니다. 이 종목은 지금 바로 판단할 수 있습니다 (주문 없음)."}</div></div>
+    <button class="btn-sm primary" id="analyze-btn" ${auto ? "disabled" : ""}>${auto ? "분석 중…" : "지금 AI 분석"}</button></div>`;
+}
+
+async function startAnalyze(sym, rerender) {
+  const b = $("#analyze-btn"), m = $("#analyze-msg");
+  if (b) { b.disabled = true; b.textContent = "분석 중…"; }
+  const r = await runAction("analyze", (p) => { if (m) m.textContent = p || "AI 판단 중…"; }, { symbol: sym });
+  if (r.error) { if (m) m.innerHTML = `<span class="bad-t">실패: ${esc(r.error)}</span>`; if (b) { b.disabled = false; b.textContent = "다시 시도"; } return; }
+  S._analyzed = { ...(S._analyzed || {}), [sym]: Date.now() };
+  rerender();
+}
+
+function bindAnalyze(sym, auto, rerender) {
+  const b = $("#analyze-btn");
+  if (b) b.onclick = () => startAnalyze(sym, rerender);
+  // AI 키가 있으면 화면을 여는 순간 자동으로 한 번 (같은 종목은 10분 안에 다시 자동 실행하지 않음)
+  if (auto) startAnalyze(sym, rerender);
 }

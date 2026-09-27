@@ -320,7 +320,12 @@ async function fillAI(d, sym) {
   if (!box) return;
   const c = a.consensus;
   const w = d.watchlist.find((x) => x.symbol === sym) || {};
-  if (!c) { box.innerHTML = empty("이 종목의 AI 분석이 아직 없습니다"); return; }
+  if (!c) {
+    const kr = /^\d{6}$/.test(sym);
+    box.innerHTML = kr ? analyzeCard(sym, a.name || sym, false) : empty("해외 종목은 AI 합의 대상이 아닙니다");
+    if (kr) bindAnalyze(sym, false, () => fillAI(d, sym));
+    return;
+  }
   const roles = (c.contributions || []).filter((v) => ["primary", "nvidia", "panel", "risk", "quant"].includes(v.analyst));
   const checks = (a.checklist || []).map((x) => `<div class="check-it ${x.ok ? "ok" : "no"}">${x.ok ? ICONS.check : ICONS.x}<b>${esc(x.key)}</b><span class="muted">${esc(x.text)}</span></div>`).join("");
   const rg = a.range;
@@ -593,8 +598,11 @@ async function viewAnalysis(el) {
   const globalNote = isGlobal ? `<div class="lesson" style="margin-top:10px">🌐 <b>해외 종목</b> — 국내 코어 전략·AI 합의 대상이 아니어서 무료 일봉(Yahoo/Stooq)만 보여줍니다.
     ${fetchErr ? `<div class="veto" style="margin-top:6px">시세를 받지 못했습니다 (네트워크): ${esc(a.fetch.error)}</div>` : ""}
     <button class="btn-sm primary" style="margin-top:8px" onclick="askAI('${esc(a.name || sym)} 어때?')">${ICONS.chat} AI 에게 ${esc(a.name || sym)} 분석 요청</button></div>` : "";
+  const isKR = /^\d{6}$/.test(sym);
+  const autoAn = isKR && !c && a.has_llm && !(S._analyzed?.[sym] && Date.now() - S._analyzed[sym] < 600e3);
+  const anCard = isKR && !c ? analyzeCard(sym, a.name || sym, autoAn) : "";
   el.innerHTML = `
-  <div class="card"><div class="card-h"><h3>AI 종목 분석</h3><div class="right">${sel}</div></div>${globalNote}
+  <div class="card"><div class="card-h"><h3>AI 종목 분석</h3><div class="right">${sel}</div></div>${globalNote}${anCard}
     <div class="small muted">모든 AI 는 같은 데이터를 보고 <b>서로의 의견을 모른 채</b> 독립적으로 판단합니다. 앙상블이 과거 성적으로 가중해 합의 신호를 만들고, Risk AI 의 거부권은 가중치로 희석되지 않습니다.</div></div>
   <div class="grid g-21">
     ${card(esc(a.name) + ` <span class="dim small">${esc(a.symbol)}</span>`, `<div id="an-chart" class="chart"></div>`)}
@@ -610,6 +618,7 @@ async function viewAnalysis(el) {
     ${card("과거 유사 사례 (RAG 메모리)", sim ? `<div class="scroll"><table><tbody>${sim}</tbody></table></div>` : empty("메모리가 아직 비어 있습니다"))}
   </div>`;
   $("#sym-select").onchange = (e) => { location.hash = `#analysis/${e.target.value}`; };
+  if (anCard) bindAnalyze(sym, autoAn, () => render());
   candleChart($("#an-chart"), sym);
 }
 
@@ -1074,6 +1083,13 @@ function renderChrome(d) {
     const sp = $("#sys-status");
     sp.classList.toggle("bad", bad);
     sp.innerHTML = `<span class="dot ${bad ? "bad" : "ok"}"></span>${!h.ok ? "DB 오류" : h.recent_job_failures ? `작업 실패 ${h.recent_job_failures}건` : h.kill_switch ? "정상 · 매수 정지" : "시스템 정상"}`;
+    sp.title = "서버 · DB 화면에서 자세히";
+    if (h.recent_job_failures) api("/api/ops").then((o) => {  // 인증된 API 로만 실패 내용을 본다 (/api/health 는 공개용)
+      const f = (o.jobs || []).filter((j) => j.ok === false);
+      if (f.length) sp.title = f.map((j) => `${j.job}: ${j.error || ""}`).join("\n");
+    }).catch(() => {});
+    sp.style.cursor = "pointer";
+    sp.onclick = () => { location.hash = "#server"; };
   }).catch(() => { $("#sys-status").innerHTML = `<span class="dot bad"></span>연결 실패`; });
 }
 

@@ -172,7 +172,9 @@ class Tools:
                     "past_accuracy_this_stock": self._stock_accuracy(s, symbol)}
             elif not is_global:
                 out["ai_consensus"] = None
-                out["ai_note"] = "이 종목은 아직 AI 판단 기록이 없음 (코어 후보·보유 종목 위주로 판단)"
+                out["ai_note"] = "이 종목은 아직 AI 판단 기록이 없음 — '지금 AI 분석' 버튼으로 바로 판단 가능"
+                self.actions.append({"action": "analyze", "symbol": symbol, "label": f"{name} AI 분석 지금 실행",
+                                     "reason": "AI 판단 기록 없음", "danger": False})
             else:
                 out["ai_note"] = "해외 종목은 플랫폼 전략·AI 합의 대상이 아님 (가격 데이터 기반 설명)"
             if not is_global:

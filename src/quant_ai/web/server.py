@@ -168,7 +168,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     from ..global_market import run_cycle, sync
                     return self._json({"sync": sync(api.app), "cycle": run_cycle(api.app)})
                 if url.path == "/api/action":
-                    return self._json(api.action(str(body.get("name", "")), start=True))
+                    return self._json(api.action(str(body.get("name", "")), start=True,
+                                                 params={k: v for k, v in body.items() if k in ("symbol",)}))
                 if url.path == "/api/chat":
                     return self._json(api.chat(body))
                 if url.path == "/api/chat/clear":

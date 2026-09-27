@@ -390,13 +390,31 @@ def _doctor_ai(app) -> list[tuple[str, str, str]]:
     from .analysts.analysts import assign_roles, make_llm_client
     out = []
     schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    import time as _t
+    checked: dict[str, tuple] = {}
     for role, prov in assign_roles(app.settings).items():
+        if prov in checked:  # 같은 공급자를 두 역할이 쓰면 한 번만 확인 (무료 한도·시간 절약)
+            st_, msg = checked[prov]
+            out.append((st_, f"AI {role}", msg + " (위와 같은 공급자)"))
+            continue
+        print(f"  · AI {role} ({prov}) 확인 중… (최대 40초)", flush=True)
+        t0 = _t.monotonic()
         try:
             c = make_llm_client(app.settings, prov)
+            # 점검은 짧게: 타임아웃 40초 · 재시도 없음 · 분당 한도 대기 없음 · 짧은 답
+            for k, v in (("timeout", 40.0), ("retries", 1), ("min_interval", 0.0), ("max_tokens", 1024)):
+                if hasattr(c, k):
+                    setattr(c, k, v)
             r = c.complete_json("연결 점검이다.", '{"ok": true} 를 그대로 출력하라.', schema)
-            out.append(("ok" if r.get("ok") is True else "warn", f"AI {role}", f"{prov} · {c.model} 응답 정상"))
+            res = ("ok" if r.get("ok") is True else "warn", f"{prov} · {c.model} 응답 정상 ({_t.monotonic() - t0:.1f}초)")
         except Exception as e:  # noqa: BLE001
-            out.append(("fail", f"AI {role}", f"{prov}: {str(e)[:160]}"))
+            msg = str(e)
+            hint = (" → 키 확인 (.env)" if any(x in msg for x in ("401", "403", "API key", "api key", "Unauthorized"))
+                    else " → 무료 한도 초과, 잠시 후 다시" if "429" in msg
+                    else " → 네트워크·방화벽 또는 공급자 지연" if "timed out" in msg or "호출 실패" in msg else "")
+            res = ("fail", f"{prov}: {msg[:140]}{hint}")
+        checked[prov] = res
+        out.append((res[0], f"AI {role}", res[1]))
     return out
 
 
@@ -655,6 +673,9 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
     try:
         args.fn(args)
+    except KeyboardInterrupt:  # Ctrl+C: 트레이스백 대신 한 줄
+        print("\n중단했습니다 (Ctrl+C). 이미 끝난 작업은 저장되어 있습니다.", file=sys.stderr)
+        sys.exit(130)
     except Exception as e:
         from sqlalchemy.exc import OperationalError
         if not isinstance(e, OperationalError):

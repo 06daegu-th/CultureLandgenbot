@@ -382,6 +382,9 @@ class DashboardAPI:
     # ------------------------------------------------------------------ 종목 분석
     def analysis(self, symbol: str) -> dict:
         fetched = self.ensure_symbol(symbol)
+        if symbol.isdigit():
+            from ..actions import add_watch
+            add_watch(self.app, symbol)  # 본 종목은 매일 AI 판단 대상에 포함
         with session_scope(self.engine) as s:
             inst = self._instruments(s)
             c = s.scalar(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol)
@@ -410,6 +413,7 @@ class DashboardAPI:
             "market": inst[symbol].market if symbol in inst else "",
             "currency": inst[symbol].currency if symbol in inst else "",
             "fetch": fetched if fetched.get("error") or fetched.get("source") else None,
+            "has_llm": self.app.settings.has_llm,
             "consensus": ({**(c.payload or {}), "as_of": _ts(c.as_of), "id": c.id} if c else None),
             "details": details, "scenario": scen.payload if scen else None, "news": news, "similar": similar,
             "history": [{"ts": _ts(h.as_of), "action": h.action, "prob_up": _f(h.prob_up), "confidence": h.confidence,
@@ -630,12 +634,12 @@ class DashboardAPI:
         from ..actions import db_maintenance
         return db_maintenance(self.app, dry_run=True)
 
-    def action(self, name: str, start: bool = False) -> dict:
+    def action(self, name: str, start: bool = False, params: dict | None = None) -> dict:
         from ..actions import get_action, start_action
         if start:
             self._cache = None
             self._risk_cache.clear()
-            return start_action(self.app, name)
+            return start_action(self.app, name, params)
         return get_action(name)
 
     def chat(self, body: dict) -> dict:

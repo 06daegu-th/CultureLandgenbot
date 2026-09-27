@@ -87,7 +87,9 @@ ensure_installed() {
   macOS: brew install python@3.12   (Homebrew: https://brew.sh)  또는 https://www.python.org/downloads/
   설치 후 새 터미널에서 다시 ./run.sh"
   [[ -x "$VENV/bin/python" ]] || { say "가상환경 만들기 ($($py --version))"; "$py" -m venv "$VENV"; }
-  local extras="ai,dev"
+  # 이전에 중단된 pip 업그레이드가 남긴 깨진 폴더(~ip…) 정리 → "Ignoring invalid distribution" 경고 제거
+  find "$VENV"/lib/python*/site-packages -maxdepth 1 -name '~*' -exec rm -rf {} + 2>/dev/null || true
+  local extras="ai,dev,yahoo"  # yahoo: 해외 일봉 (브라우저 흉내로 429 차단을 피하는 yfinance)
   [[ "$(env_get DATABASE_URL)" == postgres* ]] && extras="$extras,postgres"
   local hash stamp need=0 e
   hash="$("$VENV/bin/python" -c 'import hashlib; print(hashlib.sha1(open("pyproject.toml","rb").read()).hexdigest())')"

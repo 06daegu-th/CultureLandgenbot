@@ -52,6 +52,7 @@ def setup_status(app) -> dict:
         last_job = s.scalar(select(func.max(JobRun.started_at)))
     from .analysts.analysts import assign_roles
     roles = assign_roles(st)
+    prog = ops.get_state(app.engine, "ai_progress:KR")
     steps = [
         {"key": "prices", "label": "국내 주가 데이터", "done": n_bars > 0,
          "detail": f"일봉 {n_bars:,}개 · 마지막 {items['prices']['last'] or '-'}" if n_bars else "없음",
@@ -63,7 +64,8 @@ def setup_status(app) -> dict:
          "detail": f"{conf['news_count']}건 · 마지막 {items['news']['last'] or '-'}", "fix": "아래 '지금 채우기' 또는 장중 5분마다 자동",
          "action": "warmup"},
         {"key": "decisions", "label": "AI 판단 기록", "done": n_cons > 0,
-         "detail": f"{n_cons}건 (채점 {n_scored}건)", "fix": "'지금 채우기' 를 누르면 코어 후보를 AI 가 한 번 판단 (무료 한도 내)",
+         "detail": f"{n_cons}건 (채점 {n_scored}건)" + (
+             f" · 지금 판단 중 {prog.get('done', 0)}/{prog.get('total', 0)}" if prog.get("running") else ""), "fix": "'지금 채우기' 를 누르면 코어 후보를 AI 가 한 번 판단 (무료 한도 내)",
          "action": "warmup"},
         {"key": "book", "label": "운용 장부 (가상/모의)", "done": n_snap > 0, "detail": f"스냅샷 {n_snap}개",
          "fix": "./run.sh 로 사이클 1회 (리밸런싱 날이 아니면 주문 없음)"},
@@ -151,7 +153,8 @@ def ai_snapshot(app, k: int | None = None) -> dict:
     scores = core_scores(bars, app.universe_at(last_ts), cfg.factor_weights)
     held = set(app.load_portfolio(app.settings.mode.value if app.settings.mode.value in ("paper", "shadow", "live")
                                   else "paper").positions)
-    syms = list(dict.fromkeys([*scores.index[:k or cfg.shortlist_k], *[s for s in held if s in bars]]))
+    watched = [s for s in watch_symbols(app) if s in bars]  # 사용자가 본·물어본 종목도 매일 판단
+    syms = list(dict.fromkeys([*scores.index[:k or cfg.shortlist_k], *[s for s in held if s in bars], *watched]))
     decisions = app.decide(symbols=syms, scenarios=False)
     ops.set_state(app.engine, key, {"bar": str(last_ts), "at": datetime.now(UTC).isoformat(), "n": len(decisions)})
     acts: dict[str, int] = {}
@@ -312,11 +315,46 @@ ACTION_LABELS = {"us_cycle": "미국 장부 갱신", "warmup": "데이터·AI �
 
 def get_action(name: str) -> dict:
     a = _ACTIONS.get(name)
-    return {"name": name, "label": ACTION_LABELS.get(name, name), **({k: v for k, v in a.items() if k != "thread"} if a else {})}
+    label = ACTION_LABELS.get(name) or (f"{name.split(':', 1)[1]} AI 분석" if name.startswith("analyze:") else name)
+    return {"name": name, "label": label, **({k: v for k, v in a.items() if k != "thread"} if a else {})}
 
 
-def start_action(app, name: str) -> dict:
+WATCH_MAX = 20
+
+
+def watch_symbols(app) -> list[str]:
+    return ops.get_state(app.engine, "watch_symbols").get("symbols", [])
+
+
+def add_watch(app, symbol: str) -> None:
+    """사용자가 보거나 분석을 요청한 국내 종목 → 매일 AI 판단 대상에 포함 (최근 20개)."""
+    syms = [x for x in watch_symbols(app) if x != symbol] + [symbol]
+    ops.set_state(app.engine, "watch_symbols", {"symbols": syms[-WATCH_MAX:]})
+
+
+def analyze_symbol(app, symbol: str, say=None) -> dict:
+    """한 종목을 지금 AI 들이 판단 (주문 없음). 국내 종목만 — 해외는 전략·합의 대상이 아니다."""
+    import re as _re
+    if not _re.fullmatch(r"\d{6}", symbol or ""):
+        raise ValueError("국내 종목코드(6자리)만 AI 합의 분석을 합니다")
+    add_watch(app, symbol)
+    if say:
+        say(f"{symbol} AI 판단 중…")
+    ds = app.decide(symbols=[symbol], scenarios=True)
+    if not ds:
+        return {"symbol": symbol, "skipped": "주가 데이터가 없는 종목"}
+    d = ds[0]
+    return {"symbol": symbol, "action": d.signal.action, "prob_up": round(d.signal.prob_up, 4),
+            "confidence": d.signal.confidence, "consensus_id": d.consensus_id}
+
+
+def start_action(app, name: str, params: dict | None = None) -> dict:
     """버튼 → 백그라운드 스레드 (같은 동작은 동시에 하나만)."""
+    params = params or {}
+    if name == "analyze":
+        sym = str(params.get("symbol", ""))[:12]
+        key = f"analyze:{sym}"
+        return _run(key, lambda say: analyze_symbol(app, sym, say))
     from .analytics import event_reactions
     from .global_market import run_cycle as us_cycle
     from .global_market import sync as us_sync
@@ -325,6 +363,10 @@ def start_action(app, name: str) -> dict:
            "event_reactions": lambda say: {"types": len(event_reactions(app, refresh=True)["types"])}}
     if name not in fns:
         raise ValueError(f"알 수 없는 동작: {name}")
+    return _run(name, fns[name])
+
+
+def _run(name: str, fn) -> dict:
     with _LOCK:
         cur = _ACTIONS.get(name)
         if cur and cur.get("running"):
@@ -337,7 +379,7 @@ def start_action(app, name: str) -> dict:
 
     def run() -> None:
         try:
-            st["result"] = fns[name](say)
+            st["result"] = fn(say)
             st["progress"] = "완료"
         except Exception as e:  # noqa: BLE001
             st["error"] = f"{type(e).__name__}: {e}"[:400]

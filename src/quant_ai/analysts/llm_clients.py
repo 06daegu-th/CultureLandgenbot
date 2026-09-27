@@ -143,7 +143,7 @@ class OpenAICompatClient(LLMClient):
     provider = "nvidia"
 
     def __init__(self, api_key: str, model: str = "nvidia/nemotron-3-super-120b-a12b",
-                 base_url: str = "https://integrate.api.nvidia.com/v1", timeout: float = 120.0,
+                 base_url: str = "https://integrate.api.nvidia.com/v1", timeout: float = 60.0,
                  max_tokens: int = 8192, provider: str | None = None, fallback_models: tuple[str, ...] = (),
                  rpm: int | None = None):
         self.api_key = api_key
@@ -152,6 +152,8 @@ class OpenAICompatClient(LLMClient):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_tokens = max_tokens
+        self.retries = 2  # 네트워크 오류·5xx 재시도 (응답 없는 공급자가 사이클 전체를 붙잡지 않도록 짧게)
+        self.call_lock = threading.Lock()  # 같은 클라이언트의 동시 호출 직렬화 (사용량 기록이 섞이지 않게)
         self.provider = provider or self.provider
         self.min_interval = 60.0 / rpm if rpm else 0.0
         self.exhausted: dict[str, str] = {}  # 모델 → 한도 초과한 날짜 (UTC)
@@ -188,11 +190,11 @@ class OpenAICompatClient(LLMClient):
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - https 확인됨
             return json.loads(resp.read())
 
-    def _post(self, path: str, body: dict, retries: int = 3) -> dict:
+    def _post(self, path: str, body: dict, retries: int | None = None) -> dict:
         if not self.base_url.startswith("https://"):
             raise LLMError("https 엔드포인트만 허용")
         last: Exception | None = None
-        for attempt in range(retries):
+        for attempt in range(retries or self.retries):
             self._throttle()
             try:
                 return self._send(f"{self.base_url}{path}", body)

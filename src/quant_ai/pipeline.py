@@ -307,6 +307,7 @@ class QuantAI:
         events = self.load_events()
 
         decisions: list[Decision] = []
+        # 1) 재료 준비 (DB 읽기) — 종목별 맥락을 먼저 모두 만든다
         with session_scope(self.engine) as s:
             macro = macro_snapshot(s, as_of or datetime.now(UTC))
             # 백엔드가 바뀌면(예: 휴리스틱 → Claude) 이전 성적을 물려받지 않는다
@@ -319,6 +320,7 @@ class QuantAI:
             macro_series = load_macro(s, [k for k in FACTORS if k != "KOSPI"], as_of=as_of or datetime.now(UTC))
             factors = {**macro_series, **({("KOSPI" if market == "KR" else "SPY"): bench["close"]} if bench is not None else {})}
             mstate = market_state(bench, bars, vix=macro_series.get("VIXCLS"))
+            jobs = []
             for sym in symbols or list(bars):
                 if sym not in bars or bars[sym].empty:
                     continue
@@ -330,38 +332,68 @@ class QuantAI:
                                     memory=self.memory, events=events, macro=macro, market=mstate,
                                     cross=cross_asset(bars[sym]["close"], {k: v for k, v in factors.items()
                                                                            if k != sym}, lag_us=market == "KR"))
-                opinions = [a.analyze(ctx) for a in analysts]
+                jobs.append((sym, t, frow, rrow, ctx))
+
+        # 2) AI 의견 — 공급자마다 동시에 (공급자별 분당 한도는 클라이언트가 지킨다). 서로의 의견은 모른다.
+        progress_key = f"ai_progress:{market}"
+        live_llm = any(getattr(a, "client", None) is not None for a in analysts)
+        workers = min(8, max(1, len(analysts))) if live_llm and len(jobs) > 0 else 1
+        started = datetime.now(UTC).isoformat()
+        if persist:
+            ops.set_state(self.engine, progress_key, {"done": 0, "total": len(jobs), "started_at": started, "running": True})
+
+        def opinion(analyst, ctx):
+            try:
+                return analyst.analyze(ctx)
+            except Exception as e:  # noqa: BLE001 - 한 AI 의 예외가 판단 전체를 멈추지 않게 → 기권
+                client = getattr(analyst, "client", None)
+                return Opinion.abstain(analyst.name, ctx.symbol, f"{type(e).__name__}: {e}"[:300],
+                                       (backend_id(client) if client is not None else "") or "")
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai") as pool:
+            futures = [[pool.submit(opinion, a, ctx) for a in analysts] for *_, ctx in jobs]
+            # 3) 종목마다 합의 → 바로 저장 (중간에 끊겨도 끝난 종목은 남고, 화면에 진행 상황이 보인다)
+            for i, ((sym, t, frow, rrow, ctx), futs) in enumerate(zip(jobs, futures, strict=True)):
+                opinions = [f.result() for f in futs]
                 sig = self.ensemble.combine(sym, opinions, board, calibrators)
                 cid = None
                 if persist:
-                    rec = save_consensus(s, sig, opinions, ctx.as_of, self.horizon, ctx.regime.get("regime"),
-                                         evidence=evidence_snapshot(ctx))
-                    cid = rec.id
-                    if challenger is not None:  # 앙상블 미참여, 채점만
-                        ch = QuantAnalyst(challenger, challenger_rec.version, name="challenger").analyze(ctx)
-                        if not ch.abstained:
-                            s.add(AnalystOpinionRecord(
-                                consensus_id=None, analyst="challenger", symbol=sym, as_of=ctx.as_of,
-                                horizon_bars=self.horizon, category="direction", prob_up=ch.prob_up,
-                                confidence=ch.confidence, veto=False,
-                                payload={"model_version": challenger_rec.version, "regime": ctx.regime.get("regime")}))
-                    if scenarios:
-                        pred = Prediction(sym, t, self.horizon, sig.prob_up, direction_of(sig.prob_up),
-                                          sig.confidence / 100, {"action": sig.action})
-                        rstate = (RegimeState(Regime(rrow["regime"]), float(rrow["trend"]), float(rrow["vol_pct"]),
-                                              float(rrow["drawdown"])) if rrow is not None and rrow["regime"] else None)
-                        vol = float(frow.get("vol_20") or 0.02)
-                        payload = build_scenarios(pred, float(bars[sym]["close"].loc[t]), vol, rstate,
-                                                  horizon_days=1)
-                        s.add(Scenario(created_at=datetime.now(UTC), target_date=t.date(), symbol=sym,
-                                       payload=payload))
-                    news_titles = " / ".join(n["title"] for n in ctx.news[:3])
-                    self.memory.add(s, "opinion",
-                                    f"{sym} {ctx.regime.get('regime')} 국면, {sig.action} P(up)={sig.prob_up:.2f}, "
-                                    f"충돌 {sig.conflict}. 뉴스: {news_titles}", ts=ctx.as_of, symbol=sym,
-                                    meta={"consensus_id": cid, "action": sig.action})
+                    with session_scope(self.engine) as s:
+                        cid = self._persist_decision(s, sym, t, frow, rrow, ctx, sig, opinions, bars,
+                                                     challenger, challenger_rec, scenarios)
+                    ops.set_state(self.engine, progress_key, {"done": i + 1, "total": len(jobs), "symbol": sym,
+                                                              "started_at": started, "running": i + 1 < len(jobs)})
                 decisions.append(Decision(sym, ctx.as_of, sig, opinions, ctx, cid))
         return decisions
+
+    def _persist_decision(self, s, sym, t, frow, rrow, ctx, sig, opinions, bars, challenger, challenger_rec,
+                          scenarios: bool) -> int:
+        rec = save_consensus(s, sig, opinions, ctx.as_of, self.horizon, ctx.regime.get("regime"),
+                             evidence=evidence_snapshot(ctx))
+        cid = rec.id
+        if challenger is not None:  # 앙상블 미참여, 채점만
+            ch = QuantAnalyst(challenger, challenger_rec.version, name="challenger").analyze(ctx)
+            if not ch.abstained:
+                s.add(AnalystOpinionRecord(
+                    consensus_id=None, analyst="challenger", symbol=sym, as_of=ctx.as_of,
+                    horizon_bars=self.horizon, category="direction", prob_up=ch.prob_up,
+                    confidence=ch.confidence, veto=False,
+                    payload={"model_version": challenger_rec.version, "regime": ctx.regime.get("regime")}))
+        if scenarios:
+            pred = Prediction(sym, t, self.horizon, sig.prob_up, direction_of(sig.prob_up),
+                              sig.confidence / 100, {"action": sig.action})
+            rstate = (RegimeState(Regime(rrow["regime"]), float(rrow["trend"]), float(rrow["vol_pct"]),
+                                  float(rrow["drawdown"])) if rrow is not None and rrow["regime"] else None)
+            vol = float(frow.get("vol_20") or 0.02)
+            payload = build_scenarios(pred, float(bars[sym]["close"].loc[t]), vol, rstate, horizon_days=1)
+            s.add(Scenario(created_at=datetime.now(UTC), target_date=t.date(), symbol=sym, payload=payload))
+        news_titles = " / ".join(n["title"] for n in ctx.news[:3])
+        self.memory.add(s, "opinion",
+                        f"{sym} {ctx.regime.get('regime')} 국면, {sig.action} P(up)={sig.prob_up:.2f}, "
+                        f"충돌 {sig.conflict}. 뉴스: {news_titles}", ts=ctx.as_of, symbol=sym,
+                        meta={"consensus_id": cid, "action": sig.action})
+        return cid
 
     # ================================================================ 매매
     def kill_switch_on(self) -> bool:

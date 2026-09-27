@@ -43,12 +43,18 @@ def is_us_book(name: str | None) -> bool:
 def sync(app, fetchers=None) -> dict:
     """유니버스 + SPY 일봉 받기 (12시간 캐시). 네트워크가 막혀 있으면 가진 데이터로 계속."""
     ok, fail = 0, []
-    for sym in [BENCH, *universe()]:
-        r = ensure_global(app.engine, sym, fetchers=fetchers)
-        if r.get("ok"):
-            ok += 1
-        else:
-            fail.append(sym)
+    if fetchers is None:  # 실제 환경: 한 번에 받기 → 빠진 것만 종목별 폴백
+        from .data.global_stocks import ensure_many
+        r = ensure_many(app.engine, [BENCH, *universe()])
+        fail = r["failed"]
+        ok = len(universe()) + 1 - len(fail)
+    else:
+        for sym in [BENCH, *universe()]:
+            r = ensure_global(app.engine, sym, fetchers=fetchers)
+            if r.get("ok"):
+                ok += 1
+            else:
+                fail.append(sym)
     ops.set_state(app.engine, "us_sync", {"at": datetime.now(UTC).isoformat(), "ok": ok, "failed": fail[:20]})
     return {"ok": ok, "failed": fail}
 
