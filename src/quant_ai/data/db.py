@@ -19,7 +19,19 @@ def make_engine(url: str, connect_timeout: int | None = None) -> Engine:
     if url.startswith("postgresql://"):
         url = "postgresql+psycopg://" + url[len("postgresql://"):]
     args = {"connect_timeout": connect_timeout} if connect_timeout and url.startswith("postgresql") else {}
-    return create_engine(url, future=True, pool_pre_ping=True, connect_args=args)
+    if url.startswith("sqlite"):
+        args = {"timeout": 30}  # 대시보드·스케줄러·백그라운드 작업이 같은 파일을 쓸 때 잠깐 기다린다
+    engine = create_engine(url, future=True, pool_pre_ping=True, connect_args=args)
+    if url.startswith("sqlite") and ":memory:" not in url and url.rstrip("/") != "sqlite:":
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragmas(dbapi_conn, _):  # WAL: 읽기와 쓰기가 서로 막지 않는다 (여러 프로세스 동시 사용)
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.close()
+    return engine
 
 
 def init_db(engine: Engine) -> None:

@@ -199,9 +199,13 @@ class OpenAICompatClient(LLMClient):
             try:
                 return self._send(f"{self.base_url}{path}", body)
             except urllib.error.HTTPError as exc:
-                last = exc
                 if exc.code in (404, 429) and len(self.models) > 1:
                     raise  # 모델 폴백은 호출자가 처리
+                try:  # 공급자가 준 이유(예: "API key not valid")를 오류에 담는다
+                    detail = exc.read()[:300].decode("utf-8", "replace").replace("\n", " ")
+                except Exception:  # noqa: BLE001
+                    detail = ""
+                last = RuntimeError(f"HTTP {exc.code} {detail}".strip())
                 if exc.code not in (429, 500, 502, 503, 504):  # 4xx 는 재시도해도 소용없음
                     break
             except Exception as exc:  # noqa: BLE001 - 네트워크 오류 재시도

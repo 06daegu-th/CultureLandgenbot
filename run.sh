@@ -82,13 +82,16 @@ ensure_env() {
   fi
 }
 
+clean_broken_pip() {  # 중단된 pip 업그레이드가 남긴 깨진 폴더(~ip…) → "Ignoring invalid distribution" 경고의 원인
+  [[ -d "$VENV" ]] && find "$VENV"/lib/python*/site-packages -maxdepth 1 -name '~*' -exec rm -rf {} + 2>/dev/null || true
+}
+
 ensure_installed() {
   local py; py="$(find_python)" || die "Python 3.11 이상이 필요합니다.
   macOS: brew install python@3.12   (Homebrew: https://brew.sh)  또는 https://www.python.org/downloads/
   설치 후 새 터미널에서 다시 ./run.sh"
   [[ -x "$VENV/bin/python" ]] || { say "가상환경 만들기 ($($py --version))"; "$py" -m venv "$VENV"; }
-  # 이전에 중단된 pip 업그레이드가 남긴 깨진 폴더(~ip…) 정리 → "Ignoring invalid distribution" 경고 제거
-  find "$VENV"/lib/python*/site-packages -maxdepth 1 -name '~*' -exec rm -rf {} + 2>/dev/null || true
+  clean_broken_pip
   local extras="ai,dev,yahoo"  # yahoo: 해외 일봉 (브라우저 흉내로 429 차단을 피하는 yfinance)
   [[ "$(env_get DATABASE_URL)" == postgres* ]] && extras="$extras,postgres"
   local hash stamp need=0 e
@@ -110,6 +113,7 @@ ensure_installed() {
 }
 
 qa() {
+  clean_broken_pip
   [[ -x "$VENV/bin/quant-ai" ]] || { ensure_env; ensure_installed; }
   "$VENV/bin/quant-ai" "$@"
 }

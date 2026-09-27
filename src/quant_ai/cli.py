@@ -385,6 +385,23 @@ def cmd_cashflow(args):
         print(f"  {f['date']}  {f['amount']:+15,.0f}원  {f.get('memo', '')}")
 
 
+def _ai_hint(msg: str) -> str:
+    """오류 문구 → 사용자가 할 일 한 줄."""
+    m = msg.lower()
+    if any(x in m for x in ("tunnel connection", "timed out", "name or service", "nodename", "connection refused",
+                            "network is unreachable", "urlopen error", "ssl")):
+        return " → 네트워크·방화벽·VPN 확인 (회사망이면 차단됐을 수 있음)"
+    if any(x in m for x in ("api key", "api_key", "unauthorized", "invalid_api_key", "permission", "http 401", "http 403")):
+        return " → .env 의 키 값 확인 (앞뒤 공백·따옴표 없이, 발급처: docs/ENV_KEYS.md)"
+    if "http 429" in m or "429" in m or "quota" in m or "rate limit" in m:
+        return " → 무료 한도 초과: 잠시 후 다시 (자동으로 다음 모델로 전환됨)"
+    if "http 404" in m or "model" in m and "not found" in m:
+        return " → 모델 이름 확인 (QUANT_<공급자>_MODELS 비우면 기본값)"
+    if "http 400" in m:
+        return " → 요청 거부: 키가 잘못됐거나 모델이 이 계정에서 안 열려 있음"
+    return ""
+
+
 def _doctor_ai(app) -> list[tuple[str, str, str]]:
     """역할별 AI 에 아주 짧은 요청을 보내 키·모델·네트워크를 확인 (무료 한도 1회씩 사용)."""
     from .analysts.analysts import assign_roles, make_llm_client
@@ -409,10 +426,7 @@ def _doctor_ai(app) -> list[tuple[str, str, str]]:
             res = ("ok" if r.get("ok") is True else "warn", f"{prov} · {c.model} 응답 정상 ({_t.monotonic() - t0:.1f}초)")
         except Exception as e:  # noqa: BLE001
             msg = str(e)
-            hint = (" → 키 확인 (.env)" if any(x in msg for x in ("401", "403", "API key", "api key", "Unauthorized"))
-                    else " → 무료 한도 초과, 잠시 후 다시" if "429" in msg
-                    else " → 네트워크·방화벽 또는 공급자 지연" if "timed out" in msg or "호출 실패" in msg else "")
-            res = ("fail", f"{prov}: {msg[:140]}{hint}")
+            res = ("fail", f"{prov}: {msg[:180]}{_ai_hint(msg)}")
         checked[prov] = res
         out.append((res[0], f"AI {role}", res[1]))
     return out
@@ -458,8 +472,10 @@ def cmd_doctor(args):
     if md:
         ok = Path(md).is_dir() and any(Path(md).glob("*.parquet"))
         add("ok" if ok else "fail", "marcap", md if ok else f"{md} 에 parquet 없음 → git clone FinanceData/marcap")
+    elif Path("data/marcap/.git").exists():
+        add("ok", "marcap", "기본 위치 data/marcap/data 사용 (스케줄러가 매일 자동 갱신)")
     else:
-        add("warn", "marcap", "QUANT_MARCAP_DIR 미설정 → 스케줄러가 데이터를 자동 갱신하지 않음")
+        add("warn", "marcap", "데이터 폴더 없음 → ./run.sh data 한 번 실행하면 이후 자동 갱신")
     roles = assign_roles(st)
     names = {"claude": "Claude", **{k: k for k in st.llm_providers}}
     if roles:

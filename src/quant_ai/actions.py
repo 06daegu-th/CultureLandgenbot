@@ -140,7 +140,7 @@ def warmup(app, progress=None) -> dict:
 
 def ai_snapshot(app, k: int | None = None) -> dict:
     """주문 없이 코어 후보 + 보유 종목을 AI 가 판단 (새 일봉마다 한 번). 판단 저널·근거 추적·성적표가 채워진다."""
-    from .strategy.core_satellite import CoreSatelliteConfig, core_scores
+    from .strategy.core_satellite import CoreSatelliteConfig
     cfg = CoreSatelliteConfig()
     bars, _, _ = app.market_data()
     if not bars:
@@ -150,6 +150,18 @@ def ai_snapshot(app, k: int | None = None) -> dict:
     done = {ops.get_state(app.engine, k).get("bar") for k in (key, "ai-shadow:paper", "ai-shadow:shadow", "ai-shadow:live")}
     if str(last_ts) in done:
         return {"skipped": f"이미 판단함 ({pd_date(last_ts)} 일봉)"}
+    from pathlib import Path as _P
+    try:  # 백그라운드 채우기와 스케줄러가 동시에 같은 판단을 시작하지 않게 (무료 한도 2배 사용·DB 충돌 방지)
+        with ops.trading_lock(app.engine, "ai-snapshot", _P(app.settings.artifacts_dir) / "locks"):
+            return _ai_snapshot(app, bars, last_ts, cfg, k, key)
+    except ops.LockBusy:
+        return {"skipped": "다른 곳에서 이미 AI 판단 중"}
+
+
+def _ai_snapshot(app, bars, last_ts, cfg, k, key) -> dict:
+    from .strategy.core_satellite import core_scores
+    if ops.get_state(app.engine, key).get("bar") == str(last_ts):
+        return {"skipped": "방금 다른 곳에서 판단을 마침"}
     scores = core_scores(bars, app.universe_at(last_ts), cfg.factor_weights)
     held = set(app.load_portfolio(app.settings.mode.value if app.settings.mode.value in ("paper", "shadow", "live")
                                   else "paper").positions)
