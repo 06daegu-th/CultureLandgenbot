@@ -13,14 +13,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import func, select
 
 from . import ops
-from .analysts.analysts import QuantAnalyst, build_analysts
+from .analysts.analysts import QuantAnalyst, backend_id, build_analysts
 from .analysts.base import MarketContext, Opinion
 from .analysts.context import build_context, macro_snapshot
 from .analysts.llm_clients import HashingEmbeddings, NvidiaEmbeddings
@@ -274,7 +274,7 @@ class QuantAI:
         with session_scope(self.engine) as s:
             macro = macro_snapshot(s, as_of or datetime.now(UTC))
             # 백엔드가 바뀌면(예: 휴리스틱 → Claude) 이전 성적을 물려받지 않는다
-            backends = {a.name: getattr(getattr(a, "client", None), "model", None) for a in analysts}
+            backends = {a.name: backend_id(a.client) for a in analysts if getattr(a, "client", None) is not None}
             board = records_for(scoreboard(s, backends={k: v for k, v in backends.items() if v}))
             for sym in symbols or list(bars):
                 if sym not in bars or bars[sym].empty:
@@ -465,6 +465,32 @@ class QuantAI:
             self.notifier.send(f"[{mode.value}] 주문 오류 {len(engine.errors)}건: {'; '.join(engine.errors[:3])}", "critical")
         return fills
 
+    @staticmethod
+    def data_age_days(last_bar: datetime, now: datetime | None = None) -> int:
+        """마지막 봉 이후 빠진 평일 수 (한국 시간 기준). 장 시작 전 전일 봉까지 있으면 0."""
+        import numpy as np
+        kst = timezone(timedelta(hours=9))
+        now = now or datetime.now(UTC)
+        last = pd.Timestamp(last_bar)
+        last_d = (last.tz_convert(kst) if last.tzinfo else last).date()
+        today = (now.astimezone(kst) if now.tzinfo else now).date()
+        return int(np.busday_count(last_d + timedelta(days=1), today)) if today > last_d else 0
+
+    def _stale_guard(self, last_ts, ts: datetime, mode: Mode) -> str | None:
+        """데이터가 너무 오래되면 매매를 건너뛰고 (하루 한 번) 알린다."""
+        limit = self.settings.max_data_age_days
+        age = self.data_age_days(last_ts, ts)
+        if not limit or age <= limit:
+            return None
+        msg = (f"[{mode.value}] 주가 데이터가 {age}영업일 동안 갱신되지 않음 (마지막 {pd.Timestamp(last_ts).date()}) "
+               f"→ 매매 건너뜀. marcap 갱신·quant-ai collect krx 확인")
+        key = f"stale_alert:{mode.value}"
+        if ops.get_state(self.engine, key).get("day") != str(ts.date()):
+            ops.set_state(self.engine, key, {"day": str(ts.date()), "age": age})
+            self.notifier.send(msg, "critical")
+        log.warning(msg)
+        return msg
+
     # ================================================================ 코어-위성
     ATTRIBUTION_BOOKS = {"attr-core": (False, False), "attr-veto": (True, False), "attr-full": (True, True)}
 
@@ -540,6 +566,9 @@ class QuantAI:
             elif sym not in plan.weights and sym not in plan.exits and sym in px:
                 reasons[sym] = "전략 유니버스(시총 상위) 밖 종목 → 코어 제외"
         notes = [n for n in plan.notes if "리밸런싱" not in n]
+        age = self.data_age_days(last_ts)
+        if age >= 1:
+            notes.insert(0, f"⚠ 주가 데이터가 {age}영업일 전 것 ({last_ts.date()}) — 주문 전 quant-ai collect krx 로 갱신 권장")
         notes += [f"신규 편입 거부 (AI 리스크): {sym} {why}" for sym, why in plan.vetoed.items()]
         return make_order_sheet(plan.weights, holdings, cash, px, names=names, roles=roles, reasons=reasons,
                                 costs=self.settings.costs, as_of=str(last_ts.date()), trend=trend, notes=notes)
@@ -558,6 +587,10 @@ class QuantAI:
         attribution = attribution and cfg.use_ai  # 코어 전용이면 세 장부가 같으므로 측정 불필요
         bars, bench, _ = self.market_data(as_of)
         last_ts = max(b.index.max() for b in bars.values())
+        if as_of is None:  # 재생(as_of 지정)이 아닌 실시간 사이클만 검사
+            stale = self._stale_guard(last_ts, ts, mode)
+            if stale:
+                return {"plan": None, "fills": [], "decisions": [], "skipped": stale}
         universe = self.universe_at(last_ts)
         scores = core_scores(bars, universe, cfg.factor_weights)
         trend = self._trend(bench, cfg)  # 추세 필터 (코어 리밸런싱 때만 적용 → 월 1회, 연구와 동일)
@@ -659,6 +692,19 @@ class QuantAI:
                                "warn")
         return {"plan": plan, "fills": fills, "decisions": decisions}
 
+    def add_cashflow(self, mode: str, amount: float, day: date | None = None, memo: str = "") -> list[dict]:
+        """입금(+)·출금(-) 기록. 건강검진 수익률에서 입출금 효과를 뺀다 (시간가중수익률)."""
+        if amount == 0:
+            raise ValueError("금액은 0 이 아니어야 합니다")
+        st = ops.get_state(self.engine, f"cashflows:{mode}")
+        flows = list(st.get("flows", []))
+        flows.append({"date": str(day or datetime.now(UTC).date()), "amount": float(amount), "memo": memo[:100]})
+        ops.set_state(self.engine, f"cashflows:{mode}", {"flows": flows})
+        return flows
+
+    def cashflows(self, mode: str) -> list[dict]:
+        return ops.get_state(self.engine, f"cashflows:{mode}").get("flows", [])
+
     def strategy_health(self, mode: str | None = None, with_ic: bool = True, notify: bool = True) -> dict:
         """실제 운용 자산곡선이 과거 검증 범위 안인지 판정 (strategy/health.py). 상태가 바뀌면 알림."""
         from .strategy.health import evaluate, factor_ic_history, format_value
@@ -667,6 +713,9 @@ class QuantAI:
             snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
                               .order_by(PortfolioSnapshot.ts, PortfolioSnapshot.id)).all()
             eq = pd.Series([x.equity for x in snaps], index=pd.DatetimeIndex([x.ts for x in snaps]), dtype=float)
+        flows = self.cashflows(mode)
+        if flows and len(eq):
+            eq = time_weighted_index(eq, flows)
         bars, bench, _ = self.market_data()
         ic = None
         if with_ic:
@@ -675,7 +724,7 @@ class QuantAI:
             except Exception as e:  # noqa: BLE001 - IC 는 보조 지표
                 log.warning("팩터 IC 계산 실패: %s", e)
         res = evaluate(eq, bench["close"] if bench is not None else None, factor_ic=ic)
-        res |= {"mode": mode, "factor_ic": ic, "checked_at": datetime.now(UTC).isoformat()}
+        res |= {"mode": mode, "factor_ic": ic, "checked_at": datetime.now(UTC).isoformat(), "cashflows": len(flows)}
         prev = ops.get_state(self.engine, f"strategy_health:{mode}")
         ops.set_state(self.engine, f"strategy_health:{mode}", res)
         worse = res["status"] in ("warn", "critical")
@@ -734,6 +783,24 @@ class QuantAI:
             s.flush()
             log.info("채점 %d건, 교훈 %d개", n, len(report.lessons or []))
             return report
+
+
+def time_weighted_index(equity: pd.Series, flows: list[dict]) -> pd.Series:
+    """평가금액 + 입출금 기록 → 입출금 효과를 뺀 지수 (시작값 = 첫 평가금액).
+
+    입출금은 그날 종가 평가에 이미 반영됐다고 본다: r_t = (E_t - F_t) / E_{t-1} - 1."""
+    idx = pd.DatetimeIndex(equity.index)
+    e = pd.Series(equity.to_numpy(float), index=idx.tz_localize(None) if idx.tz is not None else idx)
+    e = e.groupby(e.index.normalize()).last()
+    f = pd.Series(0.0, index=e.index)
+    for x in flows:
+        d = pd.Timestamp(x["date"]).normalize()
+        pos = e.index.searchsorted(d)  # 장부가 없는 날의 입출금은 다음 평가일에 반영
+        if pos < len(e):
+            f.iloc[pos] += float(x["amount"])
+    r = (e - f) / e.shift(1) - 1
+    r.iloc[0] = 0.0
+    return float(e.iloc[0]) * (1 + r.fillna(0)).cumprod()
 
 
 def equity_metrics(mode: str, engine) -> dict:

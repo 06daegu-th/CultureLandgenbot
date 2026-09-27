@@ -1,5 +1,6 @@
 # 로컬/단일 서버 배포: PostgreSQL + 스케줄러(24시간) + 대시보드
-# 사용: cp .env.example .env && docker compose up -d --build
+# 사용: ./run.sh setup → .env 수정 → ./run.sh up   (또는 cp .env.example .env && docker compose up -d --build)
+# KRX 데이터(marcap)는 스케줄러가 /data/marcap 에 스스로 받고 매일 갱신한다 (처음 기동 시 수 분).
 services:
   postgres:
     image: postgres:16
@@ -28,9 +29,10 @@ services:
   scheduler:
     build: .
     env_file: .env
+    command: ["quant-ai", "run", "--mode", "${QUANT_MODE:-shadow}"]
     environment:
       DATABASE_URL: postgresql://quant:${POSTGRES_PASSWORD:-quant}@postgres:5432/quant
-    command: ["quant-ai", "run", "--mode", "${QUANT_MODE:-shadow}"]
+      QUANT_MARCAP_DIR: /data/marcap/data  # 컨테이너 안 경로 (.env 의 호스트 경로 대신)
     volumes: [artifacts:/data]
     restart: unless-stopped
     depends_on:

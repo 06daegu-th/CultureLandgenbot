@@ -289,6 +289,119 @@ def cmd_checkup(args):
     sys.exit(2 if r["status"] == "critical" else 0)
 
 
+def cmd_cashflow(args):
+    """입금(+)·출금(-) 기록 → 건강검진이 입출금을 수익으로 착각하지 않게."""
+    from datetime import date as _date
+    app = _app(args)
+    if args.amount is not None:
+        app.add_cashflow(args.mode, args.amount, _date.fromisoformat(args.date) if args.date else None, args.memo or "")
+    flows = app.cashflows(args.mode)
+    print(f"[{args.mode}] 입출금 기록 {len(flows)}건 · 순입금 {sum(f['amount'] for f in flows):+,.0f}원")
+    for f in flows[-20:]:
+        print(f"  {f['date']}  {f['amount']:+15,.0f}원  {f.get('memo', '')}")
+
+
+def _doctor_ai(app) -> list[tuple[str, str, str]]:
+    """역할별 AI 에 아주 짧은 요청을 보내 키·모델·네트워크를 확인 (무료 한도 1회씩 사용)."""
+    from .analysts.analysts import assign_roles, make_llm_client
+    out = []
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    for role, prov in assign_roles(app.settings).items():
+        try:
+            c = make_llm_client(app.settings, prov)
+            r = c.complete_json("연결 점검이다.", '{"ok": true} 를 그대로 출력하라.', schema)
+            out.append(("ok" if r.get("ok") is True else "warn", f"AI {role}", f"{prov} · {c.model} 응답 정상"))
+        except Exception as e:  # noqa: BLE001
+            out.append(("fail", f"AI {role}", f"{prov}: {str(e)[:160]}"))
+    return out
+
+
+def cmd_doctor(args):
+    """실행 전 점검: 설정·키·DB·데이터 최신성·marcap·AI·증권사·알림. 키 값은 출력하지 않는다."""
+    import os
+    from pathlib import Path
+
+    from sqlalchemy import func, select
+
+    from .analysts.analysts import assign_roles
+    from .data.db import session_scope
+    from .data.models import Instrument, PriceBar
+    rows: list[tuple[str, str, str]] = []
+    add = lambda st, name, msg: rows.append((st, name, msg))  # noqa: E731
+    add("ok" if sys.version_info >= (3, 11) else "fail", "Python", sys.version.split()[0] + " (3.11 이상 필요)")
+    add("ok" if Path(".env").exists() else "warn", ".env", "있음" if Path(".env").exists()
+        else "없음 → cp .env.example .env 후 값 입력 (./run.sh setup)")
+    try:
+        app = _app(args)
+    except Exception as e:  # noqa: BLE001
+        add("fail", "설정/DB", str(e)[:200])
+        return _print_doctor(rows)
+    st = app.settings
+    add("ok", "모드", f"QUANT_MODE={st.mode.value} · 전략={st.strategy}{' (코어 전용)' if st.core_only else ''}")
+    try:
+        with session_scope(app.engine) as s:
+            n_sym = s.scalar(select(func.count()).select_from(Instrument)) or 0
+            last = s.scalar(select(func.max(PriceBar.ts)))
+        add("ok", "DB", f"연결 OK · 종목 {n_sym}개")
+        if last is None:
+            add("fail", "주가 데이터", "없음 → ./run.sh data (marcap 받기 + quant-ai collect krx)")
+        else:
+            age = app.data_age_days(last)
+            lim = st.max_data_age_days
+            add("ok" if age <= 1 else "warn" if not lim or age <= lim else "fail", "주가 데이터",
+                f"마지막 {str(last)[:10]} · {age}영업일 전" + (f" (>{lim} 이면 자동매매 중단)" if lim else ""))
+    except Exception as e:  # noqa: BLE001
+        add("fail", "DB", str(e)[:200])
+    md = os.environ.get("QUANT_MARCAP_DIR")
+    if md:
+        ok = Path(md).is_dir() and any(Path(md).glob("*.parquet"))
+        add("ok" if ok else "fail", "marcap", md if ok else f"{md} 에 parquet 없음 → git clone FinanceData/marcap")
+    else:
+        add("warn", "marcap", "QUANT_MARCAP_DIR 미설정 → 스케줄러가 데이터를 자동 갱신하지 않음")
+    roles = assign_roles(st)
+    names = {"claude": "Claude", **{k: k for k in st.llm_providers}}
+    if roles:
+        add("ok", "AI 구성", " · ".join(f"{r}={names.get(p, p)}" for r, p in roles.items()))
+    else:
+        add("warn", "AI 구성", "LLM 키 없음 → 휴리스틱 (코어 전용이면 문제 없음). 무료: GEMINI/GROQ/NVIDIA/CLOUDFLARE")
+    if args.ai:
+        rows += _doctor_ai(app)
+    if st.broker == "kis":
+        miss = [k for k in ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT") if not os.environ.get(k)]
+        add("fail" if miss else "ok", "KIS 키", f"누락: {', '.join(miss)}" if miss else f"설정됨 · KIS_ENV={st.kis_env}")
+        if st.kis_env == "real":
+            try:
+                st.assert_live_allowed(champion_ready=True)
+                add("warn", "실전 안전장치", f"통과 · 소액 상한 {st.live_max_capital:,.0f}원 — 실제 돈입니다")
+            except Exception as e:  # noqa: BLE001
+                add("fail", "실전 안전장치", str(e)[:200])
+        if args.kis and not miss:
+            try:
+                from .trading.kis import KISClient
+                cash, pos = KISClient.from_env(st.artifacts_dir).balance()
+                add("ok", "KIS 연결", f"잔고 조회 OK · 예수금 {cash:,.0f}원 · 보유 {len(pos)}종목")
+            except Exception as e:  # noqa: BLE001
+                add("fail", "KIS 연결", str(e)[:200])
+    else:
+        add("warn", "증권사", "QUANT_BROKER=none → 가상매매(PAPER)만. 모의투자: QUANT_BROKER=kis, KIS_ENV=demo")
+    add("ok" if app.notifier.enabled else "warn", "알림", "설정됨" if app.notifier.enabled
+        else "미설정 → 체결·장애 알림을 못 받음 (Discord/Slack/Telegram 권장)")
+    if args.notify and app.notifier.enabled:
+        app.notifier.send("✅ Quant AI 알림 테스트 (quant-ai doctor --notify)", "info")
+        add("ok", "알림 테스트", "전송함 — 휴대폰에서 확인")
+    add("warn" if app.kill_switch_on() else "ok", "킬스위치", "ON (신규 매수 중단 상태)" if app.kill_switch_on() else "OFF")
+    _print_doctor(rows)
+
+
+def _print_doctor(rows):
+    icon = {"ok": "✅", "warn": "⚠️ ", "fail": "❌"}
+    for st_, name, msg in rows:
+        print(f"{icon[st_]} {name:<12} {msg}")
+    n_fail = sum(r[0] == "fail" for r in rows)
+    print(f"\n{'문제 ' + str(n_fail) + '건 — 위 ❌ 부터 해결하세요' if n_fail else '실행 준비 완료'}")
+    sys.exit(1 if n_fail else 0)
+
+
 def cmd_kill(args):
     _app(args).set_kill_switch(args.state == "on", by="cli")
     print(f"킬스위치 {args.state.upper()}")
@@ -371,6 +484,17 @@ def main(argv: list[str] | None = None) -> None:
     od.add_argument("--no-ai", action="store_true", help="AI 거부권·위성 없이 코어 팩터만 (LLM 비용 0)")
     od.add_argument("--out", help="CSV 저장 경로")
     od.set_defaults(fn=cmd_orders)
+    dr = sub.add_parser("doctor", help="실행 전 점검 (설정·키·DB·데이터·AI·증권사·알림)")
+    dr.add_argument("--ai", action="store_true", help="각 AI 에 짧은 테스트 요청 (무료 한도 1회씩 사용)")
+    dr.add_argument("--kis", action="store_true", help="KIS 토큰·잔고 조회 (주문 없음)")
+    dr.add_argument("--notify", action="store_true", help="알림 테스트 메시지 전송")
+    dr.set_defaults(fn=cmd_doctor)
+    cf = sub.add_parser("cashflow", help="입금(+)/출금(-) 기록 — 건강검진 수익률 보정")
+    cf.add_argument("amount", type=float, nargs="?", help="원 단위. 생략하면 목록만")
+    cf.add_argument("--mode", default="live")
+    cf.add_argument("--date", help="YYYY-MM-DD (기본 오늘)")
+    cf.add_argument("--memo")
+    cf.set_defaults(fn=cmd_cashflow)
     ck = sub.add_parser("checkup", help="전략 건강검진 (성과가 과거 검증 범위 안인지)")
     ck.add_argument("--mode", default=None, help="paper / live / attr-core 등 장부 (기본: 현재 모드)")
     ck.add_argument("--no-ic", action="store_true", help="팩터 IC 계산 생략 (빠름)")

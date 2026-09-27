@@ -663,11 +663,10 @@ function viewSettings(d) {
   const risk = Object.entries(sys.risk).map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td class="r num">${esc(v)}</td></tr>`).join("");
   return `
   <div class="grid g-2">
-    ${card("AI 구성", `<table><tbody>
-      <tr><td class="muted">Primary AI</td><td>${esc(sys.primary)}</td></tr>
-      <tr><td class="muted">NVIDIA AI (독립 검증 · Risk AI)</td><td>${esc(sys.nvidia)}</td></tr>
-      <tr><td class="muted">Quant Model</td><td>모델 레지스트리의 champion (없으면 shadow/candidate, Live 는 champion 만)</td></tr>
-      <tr><td class="muted">RAG 임베딩</td><td>${esc(sys.embeddings)}</td></tr></tbody></table>
+    ${card("AI 구성 <span class='small dim'>역할마다 다른 모델 → 관점 분산 · 무료 한도 초과 시 다음 모델로 자동 전환</span>", `<div class="scroll"><table><thead><tr><th>역할</th><th>공급자</th><th>모델 (앞에서부터 시도)</th><th class="r">일 한도</th></tr></thead><tbody>
+      ${(sys.ai_roles || []).map((r) => `<tr><td><b>${esc(r.label)}</b><span class="sub">${esc(r.desc)}</span></td><td>${esc(r.provider)}${r.free && r.models.length ? ' <span class="chip pos">무료</span>' : ""}</td><td class="small mono" style="white-space:normal">${r.models.map(esc).join(" → ") || "-"}</td><td class="r num">${r.daily ?? "-"}</td></tr>`).join("")}
+      <tr><td><b>Quant Model</b></td><td colspan="3" class="small">모델 레지스트리의 champion (없으면 shadow/candidate, Live 는 champion 만)</td></tr>
+      <tr><td><b>RAG 임베딩</b></td><td colspan="3" class="small mono">${esc(sys.embeddings)}</td></tr></tbody></table></div>
       <div class="small dim" style="margin-top:10px">API 키는 서버 환경변수로만 설정합니다 (.env). 화면에는 키가 표시되지 않습니다.</div>`)}
     ${card("리스크 한도", `<table><tbody>${risk}</tbody></table>`)}
   </div>

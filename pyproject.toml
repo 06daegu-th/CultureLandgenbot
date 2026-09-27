@@ -13,10 +13,11 @@ dependencies = [
     "sqlalchemy>=2.0",
     "scikit-learn>=1.4",
     "defusedxml>=0.7",
+    "pyarrow>=15",  # marcap(KRX) parquet 읽기 — 코어 전략의 데이터 원천
 ]
 
 [project.optional-dependencies]
-postgres = ["psycopg[binary]>=3.1"]
+postgres = ["psycopg[binary]>=3.1", "alembic>=1.13"]
 ai = ["anthropic>=1.0"]
 yahoo = ["yfinance>=0.2"]
 dev = ["pytest>=8", "ruff>=0.6"]
@@ -37,7 +38,7 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["main.py", "migrations/versions"]
+extend-exclude = ["migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "S", "UP", "I"]

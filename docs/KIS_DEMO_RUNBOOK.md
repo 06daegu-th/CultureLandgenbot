@@ -38,6 +38,9 @@ QUANT_DISCORD_WEBHOOK=https://...   # 체결·긴급청산·장부불일치·작
 
 ## 3. 최초 점검 (장중에 실행)
 
+`run.sh` 로 한 번에: `./run.sh setup` → `.env` 입력 → `./run.sh data` → `./run.sh doctor --kis --notify` →
+`./run.sh kis-check` → `./run.sh cycle` → `./run.sh start` (또는 Docker `./run.sh up`). 아래는 같은 일을 직접 할 때.
+
 ```bash
 quant-ai collect krx --marcap-dir /data/marcap/data --years 3 --top 100   # 실제 KRX 데이터 적재
 quant-ai kis-check                    # 토큰 → 잔고 → 삼성전자 현재가/호가 (주문 없음)

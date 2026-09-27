@@ -70,6 +70,28 @@
 | `strategy/order_sheet.py` · `QuantAI.order_sheet()` | 보유 종목·현금 → 매도/매수 수량·지정가 가이드·비용. 다른 증권사·ISA 수동 매매용 (CLI `orders`, `POST /api/order-sheet`, 대시보드 '리밸런싱 주문표') |
 | `strategy/health.py` · `QuantAI.strategy_health()` | 실제 자산곡선을 16년 백테스트 분포(`REFERENCE`)와 비교: 낙폭·1년 수익·KOSPI 대비·변동성·회복 기간·팩터 IC t값 → 정상/주의/위험. 스케줄러 `strategy_health` 가 상태 변화 시 알림 (CLI `checkup`) |
 | `research_lab.Costs.historical()` | 연도별 실제 증권거래세(0.30% → 0.15% → 0.20%)로 백테스트 비용 계산 |
+| `QuantAI.add_cashflow()` · `time_weighted_index()` | 입출금 기록 → 건강검진은 시간가중수익률로 판정 (CLI `cashflow`) |
+| `QuantAI._stale_guard()` | 주가 데이터가 `QUANT_MAX_DATA_AGE_DAYS` 영업일보다 오래되면 실시간 사이클 매매를 건너뛰고 하루 한 번 알림 |
+| `cli doctor` · `run.sh` | 실행 전 점검(설정·키·DB·데이터 최신성·marcap·AI 응답·KIS·알림), 설치~운영 명령 모음 |
+| `data/collectors/marcap.sync_marcap()` | 최근 5년 파일만 sparse clone / 갱신 (해 바뀌면 새해 파일 추가). 스케줄러 `krx_data`·`krx_bootstrap` |
+
+## 1-2. 무료 멀티 AI 구성
+
+키가 있는 공급자만 역할에 자동 배정한다 (`analysts.assign_roles`). 역할마다 다른 회사 모델 → 오류가 겹치지 않게.
+
+| 역할 (analyst 이름) | 선호 순서 | 비고 |
+|---|---|---|
+| Primary (`primary`) | Claude(유료 키 있을 때) → Gemini → Groq → NVIDIA → Cloudflare | 종합 판단 |
+| Second (`nvidia`) | NVIDIA → Groq → Gemini → Cloudflare | 독립 검증. 성적표 호환을 위해 이름 유지 |
+| Risk (`risk`) | Groq → NVIDIA → Gemini → Cloudflare | 공급자가 모자라면 다른 역할과 공유 |
+| Panel (`panel`) | Cloudflare → Groq → NVIDIA → Gemini | 남는 공급자가 있을 때만. 앙상블 사전 가중치 0.7 |
+
+- `OpenAICompatClient` 하나로 모든 공급자 처리 (`FREE_PROVIDERS`: base URL · 모델 목록 · 기본 일 한도 · 분당 한도).
+- 429(한도 초과)·404(모델 없음) → 목록의 다음 모델, 그 모델은 그날 제외. 성적표는 1순위 모델 이름(`backend_id`)으로 유지해
+  대체 모델이 답해도 성적이 초기화되지 않는다.
+- `GuardedLLM`: 캐시(기본 12시간 — 일봉이라 같은 날 같은 입력은 재사용) · 유료 공급자 비용 예산 · **무료 공급자 일 호출 한도**
+  (넘으면 그 AI 만 기권, 시스템은 계속) · 감사 로그.
+- AI 에는 종목 가격·국면·뉴스·공시·거시 요약만 보낸다. 계좌·보유 정보는 보내지 않는다.
 
 ## 2. 왜 이렇게 설계했나 (제안 반영 + 개선점)
 

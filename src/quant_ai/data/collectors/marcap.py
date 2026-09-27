@@ -124,3 +124,26 @@ def build_krx_dataset(root: str | Path, start_year: int, end_year: int, top_n: i
     elig = elig[[c for c in elig.columns if c in bars]]
     names = df.drop_duplicates("Code", keep="last").set_index("Code")["Name"].to_dict()
     return KRXDataset(bars, elig, cap_weighted_index(df, "KOSPI"), {c: names.get(c, c) for c in bars})
+
+
+MARCAP_REPO = "https://github.com/FinanceData/marcap.git"
+
+
+def sync_marcap(data_dir, years: int = 5, today=None, run=None) -> Path:
+    """marcap 저장소를 최근 N년 파일만 받아(sparse) 두거나 갱신한다. data_dir = <저장소>/data.
+
+    해가 바뀌면 새해 파일도 받도록 매번 sparse 목록을 다시 설정한다."""
+    import subprocess
+    from datetime import date as _date
+    run = run or (lambda cmd: subprocess.run(cmd, check=True, timeout=1800, capture_output=True))  # noqa: S603
+    repo = Path(data_dir).parent
+    y = (today or _date.today()).year
+    files = [f"/data/marcap-{i}.parquet" for i in range(y - years + 1, y + 1)]
+    if not (repo / ".git").exists():
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        run(["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse", MARCAP_REPO, str(repo)])
+    else:
+        run(["git", "-C", str(repo), "pull", "--ff-only", "-q"])
+    run(["git", "-C", str(repo), "sparse-checkout", "set", "--no-cone", *files])
+    return repo / "data"
+

@@ -2,6 +2,7 @@
 
 - 캐시: 같은 모델·같은 입력이면 TTL 동안 재호출하지 않는다 (장중 15분 주기 × 종목 수 비용 절감).
 - 예산: 하루 비용(USD) 한도를 넘으면 호출하지 않고 기권 → 시스템은 나머지 AI 로 계속 동작.
+- 무료 한도: 공급자별 하루 호출 수(daily_requests)에 닿으면 스스로 멈춘다 (계정 정지·과금 전환 방지).
 - 감사: 모든 호출의 모델·지연·토큰·비용·응답을 `llm_calls` 에 남긴다 (사후 설명·분쟁 대응).
 """
 
@@ -17,7 +18,7 @@ from sqlalchemy.engine import Engine
 
 from ..data.db import session_scope
 from ..data.models import LLMCall
-from .llm_clients import LLMClient, LLMError
+from .llm_clients import FREE_PROVIDERS, LLMClient, LLMError
 
 UTC = UTC
 
@@ -32,7 +33,7 @@ UNKNOWN_PRICE = (10.0, 50.0)
 def estimate_cost(provider: str, model: str, usage: tuple[int, int] | None) -> float:
     if usage is None:
         return 0.0
-    if provider == "nvidia":  # 무료 엔드포인트 (Production 전환 시 라이선스 비용 별도)
+    if provider in FREE_PROVIDERS:  # 무료 등급 (유료 등급으로 바꾸면 여기에 단가를 넣을 것)
         return 0.0
     pin, pout = PRICES.get(model, UNKNOWN_PRICE)
     return (usage[0] * pin + usage[1] * pout) / 1e6
@@ -40,14 +41,30 @@ def estimate_cost(provider: str, model: str, usage: tuple[int, int] | None) -> f
 
 class GuardedLLM(LLMClient):
     def __init__(self, inner: LLMClient, engine: Engine, analyst: str, daily_budget_usd: float = 20.0,
-                 cache_ttl_minutes: float = 60.0):
+                 cache_ttl_minutes: float = 60.0, daily_requests: int | None = None):
         self.inner = inner
         self.engine = engine
         self.analyst = analyst
         self.daily_budget_usd = daily_budget_usd
         self.cache_ttl = timedelta(minutes=cache_ttl_minutes)
-        self.model = inner.model
+        self.daily_requests = daily_requests
         self.provider = inner.provider
+
+    @property
+    def model(self) -> str:  # 폴백 후 실제로 답한 모델
+        return self.inner.model
+
+    @property
+    def backend_id(self) -> str:
+        return getattr(self.inner, "backend_id", None) or self.inner.model
+
+    def requests_today(self) -> int:
+        """이 공급자로 오늘(UTC) 실제로 나간 호출 수 (캐시 제외, 역할 합산)."""
+        start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        with session_scope(self.engine) as s:
+            return int(s.scalar(select(func.count()).select_from(LLMCall).where(
+                LLMCall.ts >= start, LLMCall.provider == self.provider,
+                LLMCall.status.in_(("ok", "error")))) or 0)
 
     def spent_today(self) -> float:
         start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -61,7 +78,7 @@ class GuardedLLM(LLMClient):
                           prompt_hash=h, status=status, **kw))
 
     def complete_json(self, system: str, user: str, schema: dict) -> dict:
-        h = hashlib.sha256(json.dumps([self.model, system, user, schema], ensure_ascii=False,
+        h = hashlib.sha256(json.dumps([self.backend_id, system, user, schema], ensure_ascii=False,
                                       sort_keys=True).encode()).hexdigest()
         with session_scope(self.engine) as s:
             hit = s.scalar(select(LLMCall).where(LLMCall.prompt_hash == h, LLMCall.status == "ok",
@@ -71,9 +88,13 @@ class GuardedLLM(LLMClient):
         if cached is not None:
             self._log(h, "cached", latency_ms=0, cost_usd=0.0)
             return cached
-        if self.daily_budget_usd >= 0 and self.spent_today() >= self.daily_budget_usd:
+        free = self.provider in FREE_PROVIDERS  # 무료 등급은 비용 예산 대신 일 호출 한도로 관리
+        if not free and self.daily_budget_usd >= 0 and self.spent_today() >= self.daily_budget_usd:
             self._log(h, "budget", error=f"일 예산 ${self.daily_budget_usd} 소진")
             raise LLMError(f"LLM 일 예산 ${self.daily_budget_usd} 소진")
+        if self.daily_requests and self.requests_today() >= self.daily_requests:
+            self._log(h, "budget", error=f"{self.provider} 무료 일 한도 {self.daily_requests}회 도달")
+            raise LLMError(f"{self.provider} 무료 일 한도 {self.daily_requests}회 도달 (UTC 자정에 초기화)")
         t0 = time.monotonic()
         try:
             out = self.inner.complete_json(system, user, schema)

@@ -139,12 +139,28 @@ def build_default_scheduler(app, mode) -> Scheduler:
 
     marcap_dir = os.environ.get("QUANT_MARCAP_DIR")
     if marcap_dir:
+        from .data.collectors.marcap import sync_marcap
+
         def krx_data(now):
-            # FinanceData/marcap 은 매일 장 마감 후 갱신 → 받아서 DB 반영 (수정주가 재계산 포함)
-            subprocess.run(["git", "-C", str(Path(marcap_dir).parent), "pull", "--ff-only", "-q"],  # noqa: S603, S607
-                           check=False, timeout=600)
+            # FinanceData/marcap 은 매일 장 마감 후 갱신 → 받아서 DB 반영 (수정주가 재계산 포함). 없으면 처음 받기
+            try:
+                sync_marcap(marcap_dir)
+            except (subprocess.SubprocessError, OSError) as e:  # 네트워크 장애 → 기존 파일로 계속
+                log.warning("marcap 갱신 실패: %s", e)
             app.ingest_krx(marcap_dir, years=3)
         sch.add("krx_data", krx_data, 6 * 3600, "closed")
+
+        def krx_bootstrap(now):
+            # 처음 켰을 때 DB 가 비어 있으면 장중이라도 한 번 적재 (없으면 코어 사이클이 계속 실패)
+            from sqlalchemy import select
+
+            from .data.models import PriceBar
+            with session_scope(app.engine) as s:
+                empty = s.scalar(select(PriceBar.id).limit(1)) is None
+            if empty:
+                krx_data(now)
+        sch.add("krx_bootstrap", krx_bootstrap, 24 * 3600, "always")
+        sch.jobs.insert(0, sch.jobs.pop())  # 매매 작업보다 먼저 실행
     elif mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
         def cycle(now):
             decisions = app.decide()

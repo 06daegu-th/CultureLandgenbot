@@ -20,7 +20,7 @@ def live(tmp_path, monkeypatch):
     from quant_ai.pipeline import QuantAI
     fake_marcap(tmp_path, n_codes=14, days=500)
     st = replace(Settings.from_env({}), database_url=f"sqlite:///{tmp_path}/t.db", artifacts_dir=tmp_path / "a",
-                 broker="kis", kis_env="demo")
+                 broker="kis", kis_env="demo", max_data_age_days=0)  # 가짜 데이터는 2021년 것
     app = QuantAI(st)
     app.ingest_krx(tmp_path, years=0, top_n=10, end_year=2020)
     bars, _, _ = app.market_data()

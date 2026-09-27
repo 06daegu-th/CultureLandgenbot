@@ -30,7 +30,7 @@ class TrackRecord:
 @dataclass(frozen=True)
 class EnsembleConfig:
     prior_weights: dict = field(default_factory=lambda: {
-        "primary": 1.0, "nvidia": 1.0, "quant": 1.0, "regime": 0.4, "risk": 0.5,
+        "primary": 1.0, "nvidia": 1.0, "panel": 0.7, "quant": 1.0, "regime": 0.4, "risk": 0.5,
     })
     skill_floor: float = 0.02  # 성적 0 이어도 남는 최소 가중치
     prior_n: float = 30.0  # 성적 수축 강도 (표본 30개 전까지는 50% 쪽으로 당김)

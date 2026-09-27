@@ -9,11 +9,12 @@ AI 에게 주문 권한은 없다. 신호는 반드시 **리스크 게이트**�
 > 스크린샷은 `quant-ai demo` 의 **가상 데이터**입니다 (실제 시세·뉴스 아님).
 
 ```text
-Market Data ─┬─▶ Primary AI (Claude · 종합 분석)        ─┐
-             ├─▶ NVIDIA AI (Nemotron · 독립 검증)        ─┤
+Market Data ─┬─▶ Primary AI (Gemini 무료 / Claude · 종합)  ─┐
+             ├─▶ Second AI (NVIDIA Nemotron · 독립 검증) ─┤
+             ├─▶ Panel AI (Cloudflare Gemma · 교차검증)  ─┤
              ├─▶ Quant Model (champion · 숫자/통계)      ─┼─▶ Ensemble ─▶ Risk Gate ─▶ Execution ─▶ Broker
              ├─▶ Market Regime (국면)                    ─┤   충돌 탐지      킬스위치      Paper/Shadow/Live
-             └─▶ Risk AI (사지 말아야 할 이유 · veto)     ─┘   성적 가중      손실·비중 한도
+             └─▶ Risk AI (Groq gpt-oss · veto)           ─┘   성적 가중      손실·비중 한도
 장 마감 후 ─▶ 실제 결과로 채점 ─▶ AI 성적표(방향·뉴스·거시·추세·위험) ─▶ 복기 교훈 ─▶ RAG 메모리
 ```
 
@@ -21,6 +22,7 @@ Market Data ─┬─▶ Primary AI (Claude · 종합 분석)        ─┐
 - 실제 KRX 데이터 연구: [docs/RESEARCH_KRX.md](docs/RESEARCH_KRX.md)
 - **실전 투자자 가이드 (기대 수익·최소 투자금·계좌·세금·월간 루틴·멈춤 규칙): [docs/INVESTOR_GUIDE.md](docs/INVESTOR_GUIDE.md)**
 - **KIS 모의투자 연결·운영 절차: [docs/KIS_DEMO_RUNBOOK.md](docs/KIS_DEMO_RUNBOOK.md)**
+- **`.env` 키 발급처 (KIS · 무료 AI · 알림 · 데이터): [docs/ENV_KEYS.md](docs/ENV_KEYS.md)**
 - **서비스 출시 준비도 점검 · 부족한 점 · 법규제 · 로드맵: [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)**
 
 ## 구성 (요청한 16단계 대응)
@@ -45,27 +47,33 @@ Market Data ─┬─▶ Primary AI (Claude · 종합 분석)        ─┐
 | 16 | 소액 Live | `trading/kis.py` 한국투자증권(모의/실전) — 보호 지정가·체결확인·잔량취소·잔고동기화, 소액 상한 |
 
 ### 운영 기능
-- **LLM 가드**: 응답 캐시 · 일 비용 예산 · 모든 호출 감사 로그 (`analysts/guard.py`)
+- **무료 멀티 AI**: Gemini · NVIDIA · Groq · Cloudflare Gemma 를 역할별 자동 배정, 한도 초과 시 다음 모델로 전환 (`analysts/llm_clients.py`)
+- **LLM 가드**: 응답 캐시 · 일 비용 예산 · 공급자별 무료 일 한도 · 모든 호출 감사 로그 (`analysts/guard.py`)
 - **검증 통계**: PSR · DSR(다중검정 보정) · Sharpe 부트스트랩 CI · 비용 2배 스트레스 · 확률 보정표
-- **안전장치**: DB 공유 킬스위치 · 자동 정지(급락) · 치명 위험 시 강제 청산 · 매매 사이클 잠금 · 영속 주문 한도
+- **안전장치**: DB 공유 킬스위치 · 자동 정지(급락) · 치명 위험 시 강제 청산 · 매매 사이클 잠금 · 영속 주문 한도 · 낡은 데이터로 매매 금지
 - **관측**: 작업 실행 기록, `/api/health`, 운영 화면, Discord/Slack/Telegram 알림, JSON 로그
 - **배포**: Dockerfile, docker-compose(PostgreSQL+마이그레이션+스케줄러+웹), Alembic, GitHub Actions CI
 
-## 빠른 시작
+## 빠른 시작 (`run.sh`)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[ai,dev]"          # PostgreSQL: .[postgres]  /  Yahoo 시세: .[yahoo]
-
-quant-ai demo                       # 가상 데이터로 전체 파이프라인 1회 실행 (약 30초)
-quant-ai serve                      # http://127.0.0.1:8050
-pytest                              # 테스트 67개 (PostgreSQL: QUANT_TEST_DATABASE_URL 지정 시 통합 테스트 포함)
+./run.sh setup        # 가상환경 · 설치 · .env 생성 (Python 3.11+)
+# .env 에 키 입력 → docs/ENV_KEYS.md (최소: KIS 모의투자 키 3개. AI 는 무료 키만으로도 가능)
+./run.sh data         # KRX 데이터 받기 + DB 적재 (최근 5년, 몇 분)
+./run.sh doctor       # 점검 (--ai: AI 응답 확인 · --kis: 잔고 조회 · --notify: 알림 테스트)
+./run.sh kis-check    # 장중: KIS 연결 + 모의 1주 주문→취소
+./run.sh cycle        # 코어 1회 (QUANT_BROKER=kis 면 KIS 모의계좌로 주문)
+./run.sh start        # 24시간 스케줄러   /  ./run.sh up  (Docker: PostgreSQL + 스케줄러 + 대시보드)
+./run.sh serve        # 대시보드 http://127.0.0.1:8050
+./run.sh help         # 전체 명령
 ```
+
+가상 데이터 데모: `./run.sh demo && ./run.sh serve` · 테스트: `./run.sh test`
 
 ### 실제 데이터로
 
 ```bash
-cp .env.example .env                # 키 입력 (ANTHROPIC_API_KEY, NVIDIA_API_KEY, DART_API_KEY, FRED_API_KEY …)
+cp .env.example .env                # 키 입력 (docs/ENV_KEYS.md)
 docker compose up -d --build        # PostgreSQL + 마이그레이션 + 스케줄러 + 대시보드 (또는 아래처럼 수동)
 alembic upgrade head                # 스키마 마이그레이션
 quant-ai collect prices --symbols 005930.KS,000660.KS,NVDA,AAPL,^KS11 --years 5
@@ -123,6 +131,3 @@ API 키가 없으면 해당 AI 는 오프라인 휴리스틱으로 대체되어 
 - Live 는 `QUANT_LIVE_ENABLED=true` + `QUANT_LIVE_CONFIRM=I_UNDERSTAND_REAL_MONEY` + 소액 상한 + Shadow 검증 champion 이 모두 있어야 켜진다.
 - NVIDIA 무료 엔드포인트는 연구·테스트 용도로 안내되어 있으니 Live 전에 최신 약관을 확인할 것.
 - 이 프로젝트는 투자 조언이 아니며, 백테스트/가상 성과는 실제 수익을 보장하지 않는다.
-
----
-<sub>`main.py` 는 이 저장소의 이전 디스코드 봇 코드이며 Quant AI 와 무관합니다.</sub>

@@ -41,6 +41,23 @@ class CostModelConfig:
     sell_tax_bps: float = 20.0  # 국내 매도 거래세+농특세. 2026년 0.20% (2025년 0.15%) — 매년 세법 확인, QUANT_SELL_TAX_BPS
 
 
+def _llm_providers(e) -> dict:
+    """환경변수 → 키가 있는 무료 LLM 공급자 설정. 모델·일 한도는 QUANT_<이름>_MODELS / _DAILY_LIMIT 로 조정."""
+    from .analysts.llm_clients import FREE_PROVIDERS
+    out = {}
+    for name, spec in FREE_PROVIDERS.items():
+        key = e.get(spec.key_env)
+        if not key:
+            continue
+        models = [m.strip() for m in e.get(f"QUANT_{name.upper()}_MODELS", "").split(",") if m.strip()]
+        if name == "nvidia" and not models and e.get("QUANT_NVIDIA_MODEL"):
+            models = [e["QUANT_NVIDIA_MODEL"]]
+        out[name] = {"key": key, "models": tuple(models) or spec.models,
+                     "account": e.get("CLOUDFLARE_ACCOUNT_ID") if name == "cloudflare" else None,
+                     "daily": int(e.get(f"QUANT_{name.upper()}_DAILY_LIMIT") or spec.daily_requests)}
+    return out
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = "sqlite:///quant_ai.db"
@@ -54,23 +71,29 @@ class Settings:
     live_confirm: str = ""
     live_max_capital: float = 1_000_000  # 소액 Live 상한
     # 외부 API 키 (없으면 해당 수집기는 건너뜀)
-    dart_api_key: str | None = None
-    fred_api_key: str | None = None
+    dart_api_key: str | None = field(default=None, repr=False)
+    fred_api_key: str | None = field(default=None, repr=False)
     news_feeds: tuple[str, ...] = ()
     # 멀티 AI
     anthropic_enabled: bool = False  # ANTHROPIC_API_KEY 가 있거나 QUANT_PRIMARY_ENABLED=true
     primary_model: str = "claude-opus-5"
     primary_effort: str = "high"
-    nvidia_api_key: str | None = None
+    nvidia_api_key: str | None = field(default=None, repr=False)
     nvidia_model: str = "nvidia/nemotron-3-super-120b-a12b"
     nvidia_embed_model: str = "nvidia/nemotron-3-embed-1b"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     watchlist: tuple[str, ...] = ()
     llm_daily_budget_usd: float = 20.0  # 하루 LLM 비용 상한 (넘으면 LLM 기권, 시스템은 계속 동작)
-    llm_cache_minutes: float = 60.0
+    # 일봉 기반이라 같은 날 같은 입력(뉴스 변화 없음)은 재호출하지 않는다 → 무료 한도·비용 절약
+    llm_cache_minutes: float = 720.0
+    # 무료(한도 있는) OpenAI 호환 공급자: {이름: {"key", "models", "account", "daily"}} — Gemini·Groq·Cloudflare·NVIDIA
+    llm_providers: dict = field(default_factory=dict, repr=False)
+    ai_roles: str = ""  # 예: "primary=gemini,second=nvidia,risk=groq,panel=cloudflare" (비우면 자동 배정)
     # 증권사
     strategy: str = "core_satellite"  # core_satellite (검증된 팩터 코어 + AI) / consensus (AI 합의만)
     broker: str = "none"  # none / kis
+    # 주가 데이터가 이 영업일 수보다 오래되면 자동매매를 멈춘다 (데이터 갱신 장애 시 낡은 순위로 매매 방지). 0 = 끔
+    max_data_age_days: int = 5
     core_only: bool = False  # QUANT_CORE_ONLY=true → 코어-위성 전략에서 AI 오버레이 끔 (코어 100%)
     kis_env: str = "demo"  # demo(모의투자) / real
 
@@ -118,10 +141,13 @@ class Settings:
             watchlist=tuple(x.strip() for x in e.get("QUANT_WATCHLIST", "").split(",") if x.strip()),
             llm_daily_budget_usd=f("QUANT_LLM_DAILY_BUDGET_USD", cls.llm_daily_budget_usd),
             llm_cache_minutes=f("QUANT_LLM_CACHE_MINUTES", cls.llm_cache_minutes),
+            llm_providers=_llm_providers(e),
+            ai_roles=e.get("QUANT_AI_ROLES", ""),
             broker=e.get("QUANT_BROKER", cls.broker),
             strategy=e.get("QUANT_STRATEGY", cls.strategy),
             kis_env=e.get("KIS_ENV", cls.kis_env),
             core_only=e.get("QUANT_CORE_ONLY", "").lower() == "true",
+            max_data_age_days=int(f("QUANT_MAX_DATA_AGE_DAYS", cls.max_data_age_days)),
         )
 
     def assert_live_allowed(self, champion_ready: bool) -> None:

@@ -31,8 +31,30 @@ MACRO_LABELS = {"VIXCLS": "VIX", "DGS10": "美 10년", "DGS2": "美 2년", "DEXK
                 "DCOILWTICO": "WTI", "DFF": "기준금리"}
 REGIME_LABELS = {"bull_quiet": "안정적 상승", "bull_volatile": "변동성 상승", "sideways": "횡보",
                  "bear_quiet": "완만한 하락", "bear_volatile": "변동성 하락", "crisis": "위기"}
-ANALYST_LABELS = {"primary": "Primary AI", "nvidia": "NVIDIA AI", "quant": "Quant Model",
+ANALYST_LABELS = {"primary": "Primary AI", "nvidia": "Second AI", "panel": "Panel AI", "quant": "Quant Model",
                   "regime": "Market Regime", "risk": "Risk AI", "challenger": "Challenger"}
+ROLE_DESC = {"primary": "종합 판단", "nvidia": "독립 검증 (두 번째 의견)", "risk": "리스크 · 거부권", "panel": "교차검증 패널"}
+
+
+def ai_roles_info(settings) -> list[dict]:
+    """역할별로 어떤 AI(공급자·모델)가 맡는지 — 키 값은 절대 포함하지 않는다."""
+    from ..analysts.analysts import AI_ROLES, assign_roles
+    from ..analysts.llm_clients import FREE_PROVIDERS
+    roles = assign_roles(settings)
+    out = []
+    for role in AI_ROLES:
+        prov = roles.get(role)
+        if prov == "claude":
+            info = {"provider": "Anthropic Claude", "models": [settings.primary_model], "free": False, "daily": None}
+        elif prov:
+            cfg = settings.llm_providers[prov]
+            info = {"provider": FREE_PROVIDERS[prov].label, "models": list(cfg["models"]), "free": True,
+                    "daily": cfg["daily"]}
+        else:
+            info = {"provider": "오프라인 휴리스틱" if role != "panel" else "사용 안 함 (남는 무료 공급자 없음)",
+                    "models": [], "free": True, "daily": None}
+        out.append({"role": role, "label": ANALYST_LABELS[role], "desc": ROLE_DESC[role], **info})
+    return out
 
 
 def _f(x, nd=4):
@@ -249,8 +271,7 @@ class DashboardAPI:
             "category_labels": CATEGORY_LABELS, "analyst_labels": ANALYST_LABELS, "models": models,
             "system": {
                 "last_bar": _ts(last_bar),
-                "primary": st.primary_model if st.anthropic_enabled else "오프라인 휴리스틱 (ANTHROPIC_API_KEY 없음)",
-                "nvidia": st.nvidia_model if st.nvidia_api_key else "오프라인 휴리스틱 (NVIDIA_API_KEY 없음)",
+                "ai_roles": ai_roles_info(st),
                 "embeddings": app.memory.embedder.model,
                 "live_enabled": st.live_enabled,
                 "risk": st.risk.__dict__,

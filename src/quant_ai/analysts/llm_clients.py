@@ -1,11 +1,11 @@
 """LLM 백엔드.
 
 - ``ClaudeClient``: Primary AI (Anthropic SDK, 구조화 출력으로 JSON 스키마 보장)
-- ``OpenAICompatClient``: NVIDIA NIM (https://integrate.api.nvidia.com/v1, OpenAI 호환 REST)
+- ``OpenAICompatClient``: OpenAI 호환 REST — NVIDIA NIM · Google Gemini · Groq · Cloudflare Workers AI (``FREE_PROVIDERS``)
 - ``NvidiaEmbeddings`` / ``HashingEmbeddings``: RAG 용 임베딩 (키가 없으면 로컬 해싱으로 대체)
 
-주의: NVIDIA Developer Program 무료 엔드포인트는 프로토타이핑/연구/테스트 용도다.
-실제 돈이 걸린 Live 운용 전에 해당 모델·계정의 최신 약관을 확인할 것.
+주의: 무료 엔드포인트(NVIDIA Developer Program, Gemini 무료 등급 등)는 대부분 프로토타이핑/연구/테스트 용도이며
+무료 등급 입력은 서비스 개선에 쓰일 수 있다. 실제 돈이 걸린 Live 운용 전에 각 공급자의 최신 약관을 확인할 것.
 """
 
 from __future__ import annotations
@@ -13,10 +13,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -95,35 +98,108 @@ class ClaudeClient(LLMClient):
         return json.loads(text)
 
 
+@dataclass(frozen=True)
+class ProviderSpec:
+    """무료(한도 있는) OpenAI 호환 LLM 공급자. 한도는 보수적 기본값이며 계정·시기마다 다르다 → 환경변수로 조정."""
+
+    name: str
+    label: str
+    base_url: str  # {account} 자리표시자 가능 (Cloudflare)
+    models: tuple[str, ...]  # 앞에서부터 시도, 한도 초과(429)·모델 없음(404)이면 다음 모델로
+    key_env: str
+    daily_requests: int  # 이 시스템이 하루에 스스로 멈추는 호출 수 (공급자 한도보다 낮게)
+    rpm: int  # 분당 호출 상한 → 호출 간 최소 간격
+    signup: str
+
+
+FREE_PROVIDERS: dict[str, ProviderSpec] = {
+    "gemini": ProviderSpec("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
+                           ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"), "GEMINI_API_KEY",
+                           daily_requests=300, rpm=8, signup="aistudio.google.com → Get API key"),
+    "nvidia": ProviderSpec("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1",
+                           ("nvidia/nemotron-3-super-120b-a12b",), "NVIDIA_API_KEY",
+                           daily_requests=1000, rpm=30, signup="build.nvidia.com → Get API Key"),
+    "groq": ProviderSpec("groq", "Groq", "https://api.groq.com/openai/v1",
+                         ("openai/gpt-oss-120b", "llama-3.3-70b-versatile"), "GROQ_API_KEY",
+                         daily_requests=800, rpm=20, signup="console.groq.com → API Keys"),
+    "cloudflare": ProviderSpec("cloudflare", "Cloudflare Workers AI",
+                               "https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1",
+                               ("@cf/google/gemma-3-12b-it",), "CLOUDFLARE_API_TOKEN",
+                               daily_requests=150, rpm=30,
+                               signup="dash.cloudflare.com → AI → Workers AI → REST API 토큰 + Account ID"),
+}
+
+_LAST_CALL: dict[str, float] = {}
+_RATE_LOCK = threading.Lock()
+
+
 class OpenAICompatClient(LLMClient):
-    """NVIDIA NIM 등 OpenAI 호환 /chat/completions 엔드포인트."""
+    """OpenAI 호환 /chat/completions (NVIDIA NIM · Gemini · Groq · Cloudflare Workers AI 등).
+
+    models 를 여러 개 주면 한도 초과(429)·모델 없음(404) 시 다음 모델로 넘어가고, 그 모델은 그날 다시 쓰지 않는다.
+    rpm 을 주면 같은 공급자 호출 사이에 최소 간격을 둔다 (무료 분당 한도 보호).
+    """
 
     provider = "nvidia"
 
     def __init__(self, api_key: str, model: str = "nvidia/nemotron-3-super-120b-a12b",
                  base_url: str = "https://integrate.api.nvidia.com/v1", timeout: float = 120.0,
-                 max_tokens: int = 8192):
+                 max_tokens: int = 8192, provider: str | None = None, fallback_models: tuple[str, ...] = (),
+                 rpm: int | None = None):
         self.api_key = api_key
         self.model = model
+        self.models = (model, *[m for m in fallback_models if m != model])
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_tokens = max_tokens
+        self.provider = provider or self.provider
+        self.min_interval = 60.0 / rpm if rpm else 0.0
+        self.exhausted: dict[str, str] = {}  # 모델 → 한도 초과한 날짜 (UTC)
+
+    @classmethod
+    def from_spec(cls, spec: ProviderSpec, api_key: str, models: tuple[str, ...] | None = None,
+                  account: str | None = None, rpm: int | None = None) -> OpenAICompatClient:
+        models = tuple(models or spec.models)
+        base = spec.base_url.format(account=account or "")
+        if "{account}" in spec.base_url and not account:
+            raise LLMError(f"{spec.label}: 계정 ID 가 필요합니다 (CLOUDFLARE_ACCOUNT_ID)")
+        return cls(api_key, models[0], base, provider=spec.name, fallback_models=models[1:],
+                   rpm=rpm if rpm is not None else spec.rpm)
+
+    @property
+    def backend_id(self) -> str:
+        return self.models[0]
+
+    def _throttle(self) -> None:
+        if not self.min_interval:
+            return
+        with _RATE_LOCK:
+            wait = _LAST_CALL.get(self.provider, 0.0) + self.min_interval - time.monotonic()
+            _LAST_CALL[self.provider] = time.monotonic() + max(wait, 0.0)
+        if wait > 0:
+            time.sleep(wait)
+
+    def _send(self, url: str, body: dict) -> dict:
+        req = urllib.request.Request(  # noqa: S310 - https 검사됨
+            url, data=json.dumps(body).encode(), method="POST",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json",
+                     "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - https 확인됨
+            return json.loads(resp.read())
 
     def _post(self, path: str, body: dict, retries: int = 3) -> dict:
         if not self.base_url.startswith("https://"):
             raise LLMError("https 엔드포인트만 허용")
         last: Exception | None = None
         for attempt in range(retries):
-            req = urllib.request.Request(  # noqa: S310 - https 검사됨
-                f"{self.base_url}{path}", data=json.dumps(body).encode(), method="POST",
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json",
-                         "Accept": "application/json"},
-            )
+            self._throttle()
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - https 확인됨
-                    return json.loads(resp.read())
+                return self._send(f"{self.base_url}{path}", body)
             except urllib.error.HTTPError as exc:
                 last = exc
+                if exc.code in (404, 429) and len(self.models) > 1:
+                    raise  # 모델 폴백은 호출자가 처리
                 if exc.code not in (429, 500, 502, 503, 504):  # 4xx 는 재시도해도 소용없음
                     break
             except Exception as exc:  # noqa: BLE001 - 네트워크 오류 재시도
@@ -131,15 +207,27 @@ class OpenAICompatClient(LLMClient):
             time.sleep(min(2 ** attempt, 8))
         raise LLMError(f"{self.base_url}{path} 호출 실패: {last}") from last
 
+    def _chat(self, messages: list[dict]) -> dict:
+        today = datetime.now(UTC).date().isoformat()
+        errors = []
+        for m in self.models:
+            if self.exhausted.get(m) == today:
+                continue
+            try:
+                payload = self._post("/chat/completions", {"model": m, "messages": messages, "temperature": 0.2,
+                                                          "max_tokens": self.max_tokens})
+                self.model = m  # 실제로 답한 모델 (감사 로그·성적표용)
+                return payload
+            except urllib.error.HTTPError as exc:
+                errors.append(f"{m}: HTTP {exc.code}")
+                self.exhausted[m] = today  # 한도 초과·없는 모델 → 오늘은 다음 모델로
+        raise LLMError(f"{self.provider}: 사용 가능한 모델 없음 ({'; '.join(errors) or '오늘 한도 모두 소진'})")
+
     def complete_json(self, system: str, user: str, schema: dict) -> dict:
         sys_prompt = (f"{system}\n\n반드시 아래 JSON 스키마를 따르는 JSON 객체 하나만 출력하라. 다른 텍스트 금지.\n"
                       f"{json.dumps(schema, ensure_ascii=False)}")
-        payload = self._post("/chat/completions", {
-            "model": self.model,
-            "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}],
-            "temperature": 0.2,
-            "max_tokens": self.max_tokens,
-        })
+        self.last_usage = None
+        payload = self._chat([{"role": "system", "content": sys_prompt}, {"role": "user", "content": user}])
         u = payload.get("usage") or {}
         self.last_usage = (int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)) if u else None
         try:

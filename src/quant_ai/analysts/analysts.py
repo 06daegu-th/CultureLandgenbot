@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import UTC, datetime
 
@@ -21,6 +22,8 @@ from ..engines.prediction import Predictor
 from ..engines.regime import REGIME_SCORE, Regime
 from .base import DIRECTION, MACRO, NEWS, RISK, TREND, Analyst, MarketContext, Opinion, clip01, clip11
 from .llm_clients import LLMClient, LLMError
+
+log = logging.getLogger(__name__)
 
 ANALYSIS_SCHEMA = {
     "type": "object",
@@ -60,12 +63,21 @@ ROLE_PROMPTS = {
 특히 (1) 뉴스·공시 중 가격에 실제 영향을 주는 이벤트 선별, (2) 금리·환율·유가·변동성 등 거시 영향,
 (3) 단기/중기 영향 구분, (4) 시장 기대와 다른 부분(서프라이즈)을 중점적으로 본다.
 {COMMON_RULES}""",
+    "panel": f"""너는 퀀트 운용팀의 '교차검증 패널'이다. 다른 애널리스트와 다른 모델로, 다수 의견에 휩쓸리지 않는 판단을 낸다.
+가격 추세·모멘텀이 뉴스·공시와 모순되는지, 이미 가격에 반영된 재료인지(선반영), 확신할 근거가 부족한지를 중점적으로 본다.
+근거가 약하면 prob_up 을 0.5 에 가깝게, confidence 를 낮게 적는다.
+{COMMON_RULES}""",
     "risk": f"""너는 퀀트 운용팀의 '리스크 애널리스트'다. 임무는 이 종목을 **지금 사지 말아야 할 이유**를 찾는 것이다.
 변동성 급증, 임박한 이벤트(실적 발표, FOMC 등), 데이터 이상, 악재성 공시, 과열, 유동성 문제, 국면 악화를 점검한다.
 결정적 위험이 있을 때만 veto=true. 사소한 우려로 veto 하지 않는다 (과도한 veto 도 성적표에서 감점된다).
 prob_up 은 네가 보는 방향 확률이며, 위험 판단과 별개로 정직하게 적는다.
 {COMMON_RULES}""",
 }
+
+
+def backend_id(client) -> str:
+    """성적표용 고정 ID: 무료 한도 때문에 대체 모델(예: pro → flash)이 답해도 같은 백엔드로 본다."""
+    return getattr(client, "backend_id", None) or client.model
 
 
 class LLMAnalyst(Analyst):
@@ -81,7 +93,7 @@ class LLMAnalyst(Analyst):
         try:
             out = self.client.complete_json(self.role, user, ANALYSIS_SCHEMA)
         except (LLMError, ValueError, KeyError) as exc:
-            return Opinion.abstain(self.name, ctx.symbol, str(exc), self.client.model)
+            return Opinion.abstain(self.name, ctx.symbol, str(exc), backend_id(self.client))
         return Opinion(
             analyst=self.name, symbol=ctx.symbol,
             prob_up=clip01(out.get("prob_up")), confidence=clip01(out.get("confidence"), 0.3),
@@ -89,7 +101,7 @@ class LLMAnalyst(Analyst):
             risks=[str(x) for x in out.get("risks", [])][:6],
             sub_scores={NEWS: clip11(out.get("news_impact")), MACRO: clip11(out.get("macro_impact"))},
             veto=bool(out.get("veto", False)), veto_reason=str(out.get("veto_reason") or "") or None,
-            summary=str(out.get("summary", ""))[:600], backend=self.client.model,
+            summary=str(out.get("summary", ""))[:600], backend=backend_id(self.client),
         )
 
 
@@ -247,42 +259,82 @@ class RiskAnalyst(Analyst):
         )
 
 
+AI_ROLES = ("primary", "nvidia", "risk", "panel")  # nvidia = 두 번째 의견(독립 검증) 슬롯 — 성적표 호환 위해 이름 유지
+ROLE_PREFS = {  # 역할별 선호 공급자 (키가 있는 것 중 아직 안 쓴 것 우선 → 모델 다양성)
+    "primary": ("gemini", "groq", "nvidia", "cloudflare"),
+    "nvidia": ("nvidia", "groq", "gemini", "cloudflare"),
+    "risk": ("groq", "nvidia", "gemini", "cloudflare"),
+    "panel": ("cloudflare", "groq", "nvidia", "gemini"),
+}
+
+
+def assign_roles(settings) -> dict[str, str]:
+    """역할 → 공급자. Claude 키가 있으면 primary 는 Claude, 없으면 무료 공급자 중 최고 품질(Gemini) 부터.
+
+    QUANT_AI_ROLES="primary=gemini,second=nvidia,risk=groq,panel=cloudflare" 로 직접 지정 가능.
+    panel 은 남는 공급자가 있을 때만, risk 는 부족하면 다른 역할의 공급자를 함께 쓴다."""
+    avail = set(settings.llm_providers) | ({"claude"} if settings.anthropic_enabled else set())
+    override = {}
+    for part in (settings.ai_roles or "").split(","):
+        if "=" in part:
+            role, prov = (x.strip().lower() for x in part.split("=", 1))
+            role = "nvidia" if role == "second" else role
+            if role in AI_ROLES and prov in avail:
+                override[role] = prov
+    roles: dict[str, str] = dict(override)
+    if "primary" not in roles and settings.anthropic_enabled:
+        roles["primary"] = "claude"
+    for role in AI_ROLES:
+        if role in roles:
+            continue
+        used = set(roles.values())
+        fresh = [p for p in ROLE_PREFS[role] if p in avail and p not in used]
+        if fresh:
+            roles[role] = fresh[0]
+        elif role == "risk":
+            reuse = [p for p in ROLE_PREFS[role] if p in avail and p != roles.get("primary")] \
+                or [p for p in (*ROLE_PREFS[role], "claude") if p in avail]
+            if reuse:
+                roles[role] = reuse[0]
+    return roles
+
+
+def make_llm_client(settings, provider: str):
+    from .llm_clients import FREE_PROVIDERS, ClaudeClient, OpenAICompatClient
+    if provider == "claude":
+        return ClaudeClient(settings.primary_model, settings.primary_effort)
+    cfg = settings.llm_providers[provider]
+    return OpenAICompatClient.from_spec(FREE_PROVIDERS[provider], cfg["key"], cfg["models"], cfg.get("account"))
+
+
 def build_analysts(settings, predictor: Predictor | None, model_version: str | None = None,
                    engine=None) -> list[Analyst]:
     """설정된 키에 따라 애널리스트 구성. 키가 없으면 휴리스틱으로 대체.
 
-    engine 을 주면 모든 LLM 호출이 GuardedLLM(캐시·일 예산·감사 로그)을 거친다.
+    engine 을 주면 모든 LLM 호출이 GuardedLLM(캐시·일 예산·무료 일 한도·감사 로그)을 거친다.
     """
     from .guard import GuardedLLM
-    from .llm_clients import ClaudeClient, OpenAICompatClient
 
-    def guard(client, name):
-        if engine is None:
-            return client
-        return GuardedLLM(client, engine, name, settings.llm_daily_budget_usd, settings.llm_cache_minutes)
-
-    analysts: list[Analyst] = []
-    primary_llm = nvidia_llm = None
-    if settings.anthropic_enabled:
+    roles = assign_roles(settings)
+    llms: dict[str, LLMAnalyst] = {}
+    for role, prov in roles.items():
         try:
-            primary_llm = LLMAnalyst("primary", guard(ClaudeClient(settings.primary_model, settings.primary_effort),
-                                                      "primary"))
-        except LLMError:
-            primary_llm = None
-    if settings.nvidia_api_key:
-        nvidia_llm = LLMAnalyst("nvidia", guard(OpenAICompatClient(
-            settings.nvidia_api_key, settings.nvidia_model, settings.nvidia_base_url), "nvidia"))
-    analysts.append(primary_llm or HeuristicAnalyst("primary"))
-    analysts.append(nvidia_llm or HeuristicAnalyst("nvidia"))
+            client = make_llm_client(settings, prov)
+        except LLMError as exc:
+            log.warning("%s 역할 %s 초기화 실패: %s", role, prov, exc)
+            continue
+        if engine is not None:
+            daily = settings.llm_providers.get(prov, {}).get("daily")
+            client = GuardedLLM(client, engine, role, settings.llm_daily_budget_usd, settings.llm_cache_minutes,
+                                daily_requests=daily)
+        llms[role] = LLMAnalyst(role, client)
+    analysts: list[Analyst] = [llms.get("primary") or HeuristicAnalyst("primary"),
+                               llms.get("nvidia") or HeuristicAnalyst("nvidia")]
+    if "panel" in llms:
+        analysts.append(llms["panel"])
     analysts.append(QuantAnalyst(predictor, model_version))
     analysts.append(RegimeAnalyst())
-    risk_llm = None
-    # 리스크 AI 는 primary 와 다른 모델로 (관점 분산). 감사 로그에는 'risk' 로 남긴다.
-    base = nvidia_llm or primary_llm
-    if base is not None:
-        inner = base.client.inner if hasattr(base.client, "inner") else base.client
-        risk_llm = LLMAnalyst("risk", guard(inner, "risk"))
-    analysts.append(RiskAnalyst(risk_llm))
+    analysts.append(RiskAnalyst(llms.get("risk")))
     return analysts
 
 
