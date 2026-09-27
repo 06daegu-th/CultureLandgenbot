@@ -37,6 +37,7 @@ from .data.models import (
     NewsArticle,
     OrderRecord,
     PortfolioSnapshot,
+    PriceBar,
     Scenario,
 )
 from .data.quality import validate_bars
@@ -105,6 +106,7 @@ class QuantAI:
 
     def ingest_prices(self, source, symbols: list[str], start, end, interval: str = "1d") -> int:
         """수집 → 품질검사(문제 행 제거·경고) → 저장. 품질 리포트는 대시보드에 표시된다."""
+        self._md_cache = None  # 수정주가 재계산은 행 수가 같아도 값이 바뀐다
         n = 0
         reports = ops.get_state(self.engine, "data_quality")
         for sym in symbols:
@@ -122,6 +124,7 @@ class QuantAI:
     def ingest_krx(self, marcap_dir, years: int = 3, top_n: int = 100, end_year: int | None = None) -> dict:
         """실제 KRX 데이터 적재: 최근 N년 동안 시총 상위 N 에 들었던 종목(상장폐지 포함) + 월별 유니버스."""
         from .data.collectors.marcap import build_krx_dataset
+        self._md_cache = None
 
         end_year = end_year or datetime.now(UTC).year
         ds = build_krx_dataset(marcap_dir, end_year - years, end_year, top_n)
@@ -163,6 +166,23 @@ class QuantAI:
         return uni[months[-1]] if months else None
 
     def market_data(self, as_of: datetime | None = None):
+        """(bars, bench, sentiment). 실시간(as_of 없음) 호출은 DB 가 바뀌지 않았으면 60초 동안 재사용
+        (대시보드·감시·분석이 동시에 전 종목 일봉을 다시 읽지 않도록). 재생(as_of)은 항상 새로 읽는다."""
+        if as_of is None:
+            import time as _time
+            with session_scope(self.engine) as s:
+                key = (s.scalar(select(func.max(PriceBar.id))), s.scalar(select(func.max(NewsArticle.id))),
+                       tuple(self.symbols()))
+            hit = getattr(self, "_md_cache", None)
+            if hit and hit[1] == key and _time.monotonic() - hit[0] < 60:
+                bars, bench, sent = hit[2]
+                return dict(bars), bench, sent
+            out = self._market_data(None)
+            self._md_cache = (_time.monotonic(), key, out)
+            return dict(out[0]), out[1], out[2]
+        return self._market_data(as_of)
+
+    def _market_data(self, as_of: datetime | None = None):
         syms = self.symbols()
         with session_scope(self.engine) as s:
             bars = load_bars(s, syms)

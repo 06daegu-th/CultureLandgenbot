@@ -40,7 +40,7 @@ GLOBAL_STOCKS: list[tuple[str, str, tuple[str, ...]]] = [
     ("NKE", "나이키", ("nike", "나이키")), ("BRK-B", "버크셔 해서웨이", ("berkshire", "버크셔", "버핏")),
     ("LLY", "일라이 릴리", ("eli lilly", "일라이릴리", "릴리")), ("NVO", "노보 노디스크", ("novo", "노보노디스크")),
     ("UNH", "유나이티드헬스", ("unitedhealth", "유나이티드헬스")), ("XOM", "엑슨모빌", ("exxon", "엑슨모빌")),
-    ("COIN", "코인베이스", ("coinbase", "코인베이스")), ("MSTR", "스트래티지(마이크로스트래티지)", ("microstrategy", "마이크로스트래티지", "스트래티지")),
+    ("COIN", "코인베이스", ("coinbase", "코인베이스")), ("MSTR", "스트래티지", ("microstrategy", "마이크로스트래티지", "스트래티지")),
     ("IONQ", "아이온큐", ("ionq", "아이온큐")), ("UBER", "우버", ("uber", "우버")), ("BABA", "알리바바", ("alibaba", "알리바바")),
     ("SPY", "S&P500 ETF (SPY)", ("s&p500", "에스앤피", "snp", "spy")), ("QQQ", "나스닥100 ETF (QQQ)", ("nasdaq", "나스닥", "qqq")),
     ("SOXX", "반도체 ETF (SOXX)", ("반도체etf", "soxx")), ("TQQQ", "나스닥 3배 (TQQQ)", ("tqqq",)),

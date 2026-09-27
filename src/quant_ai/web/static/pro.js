@@ -111,8 +111,8 @@ function aiAlphaCard(na) {
   const row = (lab, r, sub) => !r ? "" : `<tr><td><b>${lab}</b><span class="sub">${sub}</span></td><td class="r num ${sgn(r.excess)}"><b>${ppp(r.excess)}</b></td>
     <td class="r num">${r.t}</td><td class="r num ${sgn(r.ann)}">${pp(r.ann, 1)}</td><td class="r num small">${pp(r.ci90_ann[0], 1)} ~ ${pp(r.ci90_ann[1], 1)}</td><td class="r num">${r.days}</td>
     <td class="r">${r.days >= 60 && r.excess > 0 && r.t > 1.64 ? '<span class="chip ok">증명</span>' : r.days >= 60 && r.excess <= 0 ? '<span class="chip bad">없음</span>' : '<span class="chip">표본 부족</span>'}</td></tr>`;
-  return `<table><thead><tr><th>구성</th><th class="r">누적</th><th class="r">t</th><th class="r">연율</th><th class="r">90% 구간</th><th class="r">일수</th><th class="r">판정</th></tr></thead><tbody>
-    ${row("AI 알파 전체", a.total, `${esc(na.ai_book)} − 코어`)}${row("└ 거부권·긴급청산", a.veto, "코어+거부권 − 코어")}${row("└ 위성 베팅", a.satellite, "전체 − 코어+거부권")}</tbody></table>
+  return `<div class="scroll"><table><thead><tr><th>구성</th><th class="r">누적</th><th class="r">t</th><th class="r">연율</th><th class="r">90% 구간</th><th class="r">일수</th><th class="r">판정</th></tr></thead><tbody>
+    ${row("AI 알파 전체", a.total, `${esc(na.ai_book)} − 코어`)}${row("└ 거부권·긴급청산", a.veto, "코어+거부권 − 코어")}${row("└ 위성 베팅", a.satellite, "전체 − 코어+거부권")}</tbody></table></div>
     <div class="small dim" style="margin-top:8px">세 장부는 같은 날·같은 가격·같은 코어 규칙으로 움직이고 AI 가 관여한 부분만 다릅니다 → 차이가 곧 AI 의 순수 기여 (비용 포함). t &gt; 1.64 (단측 5%) 이고 60거래일 이상일 때만 '증명'.</div>`;
 }
 
@@ -148,11 +148,11 @@ async function viewAlpha(el) {
   <div class="grid g-2">
     ${card("⑥ 반복되나 <span class='small dim'>20거래일 구간별 AI 알파 · 국면별</span>", (rep.blocks?.length ? blocksSvg(rep.blocks) + `<div class="small dim" style="margin:6px 0 10px">${esc(rep.detail || "")}</div>` : "")
       + (regRows ? `<table><thead><tr><th>국면</th><th class="r">일수</th><th class="r">AI 알파</th></tr></thead><tbody>${regRows}</tbody></table>` : empty("구간·국면 기록이 쌓이면 표시")))}
-    ${card("반사실 (Counterfactual) <span class='small dim'>다르게 했다면?</span>", (paths ? `<table><thead><tr><th>경로</th><th class="r">수익</th><th class="r">최대낙폭</th></tr></thead><tbody>${paths}</tbody></table>` : empty())
+    ${card("반사실 (Counterfactual) <span class='small dim'>다르게 했다면?</span>", (paths ? `<div class="scroll"><table><thead><tr><th>경로</th><th class="r">수익</th><th class="r">최대낙폭</th></tr></thead><tbody>${paths}</tbody></table></div>` : empty())
       + (v.n ? `<div class="lesson" style="margin-top:10px">거부권 ${v.n}건 — 샀다면 평균 <b class="${sgn(v.avg_return_if_bought)}">${pp(v.avg_return_if_bought)}</b> · 하락 회피율 ${pctRaw(v.avoided_loss_rate, 0)} → <b>${esc(v.verdict)}</b></div>` : ""))}
   </div>
   <div class="grid g-2">
-    ${card("NO TRADE 사유별 가치", nt ? `<table><thead><tr><th>사유</th><th class="r">건수</th><th class="r">하락 회피율</th><th class="r">진입했다면</th></tr></thead><tbody>${nt}</tbody></table>` : empty())}
+    ${card("NO TRADE 사유별 가치", nt ? `<div class="scroll"><table><thead><tr><th>사유</th><th class="r">건수</th><th class="r">하락 회피율</th><th class="r">진입했다면</th></tr></thead><tbody>${nt}</tbody></table></div>` : empty())}
     ${card(`실행 품질 <span class='small dim'>${esc((ex.mode || "").toUpperCase())} · 최근 ${ex.days}일</span>`, `<div class="stat-row" style="grid-template-columns:repeat(4,1fr)">
       <div class="stat"><div class="l">주문</div><div class="big num">${ex.orders ?? 0}</div></div>
       <div class="stat"><div class="l">체결률</div><div class="big num">${pctRaw(ex.fill_rate, 0)}</div></div>
@@ -193,7 +193,7 @@ async function viewSafety(el) {
     <div><div><b>${esc(sub)}</b></div><div class="small muted">${ks.on ? `${ks.halt ? "자동 정지" : "수동 정지"} · ${esc(ks.by || "")} · ${time(ks.at, true)} — ${esc(ks.reason || "")}` : "10개 조건 중 하나라도 '심각' 이면 즉시 HALTED (매도 포함 새 주문 없음). 자동 해제는 없습니다 — 원인을 확인한 사람이 해제합니다."}</div></div>
     <div class="sh-btns"><button class="btn-sm" id="g-check">${ICONS.refresh} 지금 점검</button>${ks.on ? `<button class="btn-sm danger" id="g-release">정지 해제</button>` : ""}</div>
   </div>
-  ${card("자동 킬스위치 조건 <span class='small dim'>5분마다 자동 점검 · 매매 사이클 직전에도 확인</span>", `<table class="cond-table"><tbody>${conds}</tbody></table>`)}
+  ${card("자동 킬스위치 조건 <span class='small dim'>5분마다 자동 점검 · 매매 사이클 직전에도 확인</span>", `<div class="scroll"><table class="cond-table"><tbody>${conds}</tbody></table></div>`)}
   <div class="grid g-2">
     ${card("Champion 모델 감시 → 자동 롤백", champ.status === "none" ? empty("champion 모델 없음 — 코어 팩터 전략은 모델 없이 운용됩니다") : `<div class="stat-row" style="grid-template-columns:repeat(4,1fr)">
       <div class="stat"><div class="l">champion</div><div class="num"><b>${esc(champ.version || "-")}</b></div></div>
@@ -203,7 +203,7 @@ async function viewSafety(el) {
       ${(champ.failures || []).map((f) => `<div class="veto">${esc(f)}</div>`).join("")}
       <div class="small dim" style="margin-top:8px">롤백 기준: 전진 60건 이상에서 적중률 45% 미만 · Brier 가 기저율보다 0.01 이상 나쁨 · 확률 붕괴(표준편차 0.003 미만)</div>`)
       + (ev ? card("롤백 기록", ev) : "")}
-    ${card(`데이터 신뢰도 <span class="chip ${conf.score >= 80 ? "ok" : conf.score < 55 ? "bad" : ""}">${conf.score ?? "-"} / 100 · ${esc(conf.label || "")}</span>`, `<table class="tight"><tbody>${items}</tbody></table>
+    ${card(`데이터 신뢰도 <span class="chip ${conf.score >= 80 ? "ok" : conf.score < 55 ? "bad" : ""}">${conf.score ?? "-"} / 100 · ${esc(conf.label || "")}</span>`, `<div class="scroll"><table class="tight"><tbody>${items}</tbody></table></div>
       <div class="small dim" style="margin-top:8px">커버리지: 마지막 거래일에 시세가 있는 종목 ${conf.symbols_on_last_bar}/${conf.symbols} (${pctRaw(conf.coverage, 0)}) · 품질 경고 ${conf.quality_warnings}건</div>`)}
   </div>
   ${card(`포트폴리오 스트레스 테스트 <span class='small dim'>${esc(st.note || "")}</span>`, st.n_positions ? `<div class="scroll"><table><thead><tr><th>시나리오</th><th class="r">KOSPI</th><th class="r">내 포트폴리오</th><th class="r">손실(원)</th></tr></thead><tbody>${sc}</tbody></table></div>

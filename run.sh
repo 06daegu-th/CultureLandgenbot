@@ -14,6 +14,12 @@
 #   ./run.sh orders --cash 30000000 --holdings my.csv   수동 매매용 주문표
 #   ./run.sh checkup          전략 건강검진
 #   ./run.sh cashflow 5000000 입금 기록 (출금은 음수)
+#   ./run.sh chat             터미널 채팅 AI (대시보드 오른쪽 아래 'AI 에게 묻기' 와 같은 두뇌)
+#   ./run.sh proof [--market US]   증명 체인 6단계 (시점 정확 → 확률 → AI 추가수익 → 비용 → 실주문 → 반복)
+#   ./run.sh guardian         자동 킬스위치 10개 조건 점검
+#   ./run.sh us               미국 장부 (일봉 받기 + 코어·AI 가상매매 한 사이클)
+#   ./run.sh warmup           빈 화면 채우기 (뉴스·공시·거시 · AI 판단 1회)
+#   ./run.sh db-clean [--yes] DB 정리 (기본 미리보기 · 주문·판단 기록은 보존)
 #   ./run.sh up | down | logs Docker 로 상시 운영 (PostgreSQL + 스케줄러 + 대시보드)
 #   ./run.sh test             테스트 + 린트
 #   ./run.sh <그 외>           quant-ai <그 외> 로 그대로 전달 (예: ./run.sh kill on)
@@ -203,6 +209,7 @@ open_browser() {
 WEB_PID=""
 cleanup() {
   if [[ -n "$WEB_PID" ]] && kill -0 "$WEB_PID" 2>/dev/null; then kill "$WEB_PID" 2>/dev/null || true; fi
+  if [[ -n "${WARM_PID:-}" ]] && kill -0 "$WARM_PID" 2>/dev/null; then kill "$WARM_PID" 2>/dev/null || true; fi
 }
 
 cmd_auto() {
@@ -223,11 +230,6 @@ cmd_auto() {
   local dargs=()
   [[ "$mode" == "live" ]] && dargs+=(--kis)
   qa doctor ${dargs[@]+"${dargs[@]}"} || die "점검 실패 — 위 ❌ 항목을 해결한 뒤 다시 ./run.sh"
-  if [[ "$mode" == "paper" ]]; then
-    say "가상매매(PAPER) 코어 사이클 1회 (리밸런싱 날이 아니면 주문 없음)"
-    cmd_cycle --mode paper || warn "사이클 실패 — 위 메시지 확인"
-  fi
-
   say "5/5 대시보드 + 24시간 운영 시작"
   mkdir -p "$LOG_DIR"
   trap cleanup EXIT INT TERM
@@ -240,6 +242,14 @@ cmd_auto() {
   fi
   ok "대시보드: http://127.0.0.1:$PORT"
   open_browser "http://127.0.0.1:$PORT"
+  # 빈 화면 채우기 (뉴스·공시·거시 수집 · AI 판단 1회 · 미국 장부) — 대시보드는 바로 쓰고 뒤에서 진행
+  ( qa warmup; [[ "$(env_get QUANT_US)" == "false" ]] || qa us ) >"$LOG_DIR/warmup.log" 2>&1 &
+  WARM_PID=$!
+  ok "뒤에서 데이터 채우는 중 (뉴스·AI 판단·미국 장부) — 진행: logs/warmup.log · 대시보드 '시작 체크리스트'"
+  if [[ "$mode" == "paper" ]]; then
+    say "가상매매(PAPER) 코어 사이클 1회 (리밸런싱 날이 아니면 주문 없음)"
+    cmd_cycle --mode paper || warn "사이클 실패 — 위 메시지 확인"
+  fi
   if [[ "$mode" == "live" ]]; then
     if [[ "$(env_get KIS_ENV)" == "real" ]]; then ok "KIS 실전 계좌로 운영 — 장중(09:10~15:10) 매시간 자동 매매"
     else ok "KIS 모의투자 계좌로 운영 (실제 돈 아님) — 장중(09:10~15:10) 매시간 자동 매매"; fi
@@ -320,6 +330,7 @@ main() {
     orders)     qa orders "$@" ;;
     checkup)    qa checkup "$@" ;;
     cashflow)   qa cashflow "$@" ;;
+    proof)      qa net-alpha "$@" ;;
     up)         cmd_up ;;
     down)       compose down ;;
     logs)       compose logs -f --tail 200 "$@" ;;

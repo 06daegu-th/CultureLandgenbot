@@ -530,3 +530,7 @@ body.on-chat .chat-dock { display: none; }
 .blk .pos { background: var(--up); } .blk .neg { background: var(--down); opacity: .85; }
 @media (max-width: 1480px) { .steps-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 1750px) { .funnel { flex-wrap: wrap; } .funnel .fstep { flex: 1 1 30%; } .funnel .farrow { display: none; } }
+.feed-it .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.tight td:first-child { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) { .cond-table .sub { display: none; } .cond-table td { padding-left: 4px; padding-right: 4px; } }
+@media (max-width: 900px) { table.tight td:first-child { max-width: 120px; } }

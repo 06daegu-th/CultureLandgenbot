@@ -120,8 +120,11 @@ def run_cycle(app, as_of: datetime | None = None, ts: datetime | None = None, cf
     for book, (use_veto, use_sat) in runs.items():
         bst = ops.get_state(app.engine, f"cs:{book}")
         scale = trend["scale"] if due(bst) or "trend_scale" not in bst else bst["trend_scale"]
+        # 1주 가격이 종목당 목표 금액보다 훨씬 비싸면 다음 순위로 대체 (국내와 같은 규칙, 소수점 주식 없음)
+        equity = app.load_portfolio(book).equity({k: q.last for k, q in quotes.items()})
         plan = build_plan(scores, bst.get("core", []), due(bst), cfg, vetoes, exits, buys,
-                          use_veto=use_veto, use_satellite=use_sat, core_scale=scale)
+                          use_veto=use_veto, use_satellite=use_sat, core_scale=scale,
+                          unaffordable=app._unaffordable(scores, bars, equity, cfg))
         app._apply_var_budget(plan, bars)
         fills = app.trade(decisions, Mode.PAPER, ts=ts, quotes=dict(quotes), signals=signals(plan), book=book)
         ops.set_state(app.engine, f"cs:{book}", {
