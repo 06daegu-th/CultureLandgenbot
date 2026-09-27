@@ -390,13 +390,18 @@ def _ai_hint(msg: str) -> str:
     m = msg.lower()
     if "error-10" in m or "1010" in m or "banned your access" in m:
         return " → 요청 서명 차단(Cloudflare 1010): 최신 버전으로 업데이트하면 해결"
-    if "workers ai" in m or ("not allowe" in m and "cloudflare" in m) or "aierror" in m:
+    if "사용 가능한 모델 없음" in msg:
+        if "http 429" in m:
+            return " → 시도한 모델이 모두 무료 한도 초과: 한국시간 오후 4~5시(UTC 자정)에 초기화, 그 전엔 다른 AI 로 계속"
+        return (" → 이 계정에서 쓸 수 있는 모델을 못 찾음: 공급자 콘솔에서 키 등급·사용 가능 모델 확인, "
+                "또는 .env 에 QUANT_<공급자>_MODELS=쓸 수 있는 모델명 (그 AI 는 기권하고 나머지로 계속)")
+    if "not allowed to access" in m:
+        return " → 이 계정에서 막힌 모델: 다른 모델로 자동 전환 (토큰은 정상)"
+    if "workers ai" in m or ("cloudflare" in m and "authentication" in m):
         return (" → Cloudflare API 토큰에 'Workers AI' 권한 필요: dash.cloudflare.com → 내 프로필 → API 토큰 → "
                 "'Workers AI' 템플릿으로 새 토큰 → .env CLOUDFLARE_API_TOKEN 교체 (계정 ID 도 확인)")
-    if "http 503" in m or "overloaded" in m or "unavailable" in m:
+    if "http 503" in m or "overloaded" in m:
         return " → 공급자 일시 과부하: 다른 모델로 자동 전환됨, 잠시 후 다시"
-    if "사용 가능한 모델 없음" in msg and "404" in m:
-        return " → 설정한 모델이 종료됨: 쓸 수 있는 모델을 자동으로 찾았지만 실패 — QUANT_<공급자>_MODELS 를 비우거나 최신 모델명으로"
     if any(x in m for x in ("tunnel connection", "timed out", "name or service", "nodename", "connection refused",
                             "network is unreachable", "urlopen error", "ssl")):
         return " → 네트워크·방화벽·VPN 확인 (회사망이면 차단됐을 수 있음)"

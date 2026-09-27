@@ -314,7 +314,7 @@ def test_chat_client_prefers_gemini_pro():
     from quant_ai.assistant import chat_client
     from quant_ai.config import Settings
     c, prov = chat_client(Settings.from_env({"GROQ_API_KEY": "g", "GEMINI_API_KEY": "x"}))
-    assert prov == "gemini" and c.models[0] == "gemini-2.5-pro"
+    assert prov == "gemini" and c.models[0] == "gemini-pro-latest"  # 항상 최신 세대 별칭
     c, prov = chat_client(Settings.from_env({"GROQ_API_KEY": "g", "GEMINI_API_KEY": "x", "QUANT_CHAT_PROVIDER": "groq"}))
     assert prov == "groq"
     assert chat_client(Settings.from_env({}))[0] is None

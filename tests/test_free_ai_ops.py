@@ -106,7 +106,7 @@ def test_cloudflare_needs_account_and_builds_url():
         OpenAICompatClient.from_spec(FREE_PROVIDERS["cloudflare"], "k")
     c = OpenAICompatClient.from_spec(FREE_PROVIDERS["cloudflare"], "k", account="acc")
     assert c.base_url == "https://api.cloudflare.com/client/v4/accounts/acc/ai/v1"
-    assert c.model.startswith("@cf/google/gemma")
+    assert c.model.startswith("@cf/") and "@cf/google/gemma-3-12b-it" in c.models  # 막힌 계정 대비 여러 후보
 
 
 def test_rate_limit_spacing(monkeypatch):

@@ -42,10 +42,10 @@
 
 | 역할 | 기본 공급자 | 기본 모델 (앞에서부터 시도) | 발급 |
 |---|---|---|---|
-| Primary (종합 판단) | **Google Gemini** | gemini-2.5-pro → 2.5-flash → 2.5-flash-lite | aistudio.google.com → Get API key → `GEMINI_API_KEY` |
+| Primary (종합 판단) | **Google Gemini** | gemini-pro-latest → flash-latest → flash-lite-latest (항상 최신 세대, 막히면 목록에서 자동 탐색) | aistudio.google.com → Get API key → `GEMINI_API_KEY` |
 | Second (독립 검증) | **NVIDIA NIM** | nemotron-3-super-120b | build.nvidia.com → 로그인 → Get API Key (`nvapi-…`) → `NVIDIA_API_KEY` |
 | Risk (거부권) | **Groq** | openai/gpt-oss-120b → llama-3.3-70b-versatile | console.groq.com → API Keys → `GROQ_API_KEY` |
-| Panel (교차검증) | **Cloudflare Workers AI** | @cf/google/gemma-3-12b-it | dash.cloudflare.com → AI → Workers AI → **Use REST API** → "Workers AI" 권한 토큰 → `CLOUDFLARE_API_TOKEN`, 같은 화면의 Account ID → `CLOUDFLARE_ACCOUNT_ID` |
+| Panel (교차검증) | **Cloudflare Workers AI** | @cf/openai/gpt-oss-120b → llama-3.3-70b → gemma-3-12b (계정에서 막힌 모델은 자동으로 건너뜀) | dash.cloudflare.com → AI → Workers AI → **Use REST API** → "Workers AI" 권한 토큰 → `CLOUDFLARE_API_TOKEN`, 같은 화면의 Account ID → `CLOUDFLARE_ACCOUNT_ID` |
 
 - 키가 하나뿐이어도 된다: Gemini 하나면 Primary 와 Risk 를 Gemini 가 맡고, Second 는 휴리스틱.
 - 유료 Claude 키(`ANTHROPIC_API_KEY`)가 있으면 Primary 는 Claude, 나머지 무료 공급자가 다른 역할을 맡는다.

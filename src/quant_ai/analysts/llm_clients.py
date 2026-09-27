@@ -115,7 +115,8 @@ class ProviderSpec:
 
 FREE_PROVIDERS: dict[str, ProviderSpec] = {
     "gemini": ProviderSpec("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
-                           ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"), "GEMINI_API_KEY",
+                           # '-latest' 별칭은 Google 이 항상 최신 세대로 연결 (구세대 종료에 영향 없음). 실패하면 목록에서 자동 탐색
+                           ("gemini-pro-latest", "gemini-flash-latest", "gemini-flash-lite-latest"), "GEMINI_API_KEY",
                            daily_requests=300, rpm=8, signup="aistudio.google.com → Get API key"),
     "nvidia": ProviderSpec("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1",
                            ("nvidia/nemotron-3-super-120b-a12b", "nvidia/llama-3.3-nemotron-super-49b-v1.5",
@@ -126,7 +127,9 @@ FREE_PROVIDERS: dict[str, ProviderSpec] = {
                          daily_requests=800, rpm=20, signup="console.groq.com → API Keys"),
     "cloudflare": ProviderSpec("cloudflare", "Cloudflare Workers AI",
                                "https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1",
-                               ("@cf/google/gemma-3-12b-it",), "CLOUDFLARE_API_TOKEN",
+                               # 계정마다 막힌 모델이 있어(예: gemma-3 'not allowed') 여러 후보를 차례로
+                               ("@cf/openai/gpt-oss-120b", "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                                "@cf/google/gemma-3-12b-it", "@cf/meta/llama-3.1-8b-instruct-fast"), "CLOUDFLARE_API_TOKEN",
                                daily_requests=150, rpm=30,
                                signup="dash.cloudflare.com → AI → Workers AI → REST API 토큰 + Account ID"),
 }
@@ -134,6 +137,18 @@ FREE_PROVIDERS: dict[str, ProviderSpec] = {
 USER_AGENT = "quant-ai/1.0 (+https://github.com/06daegu-th)"  # 파이썬 기본 서명은 일부 공급자(Cloudflare 1010)가 차단
 FALLBACK_CODES = (404, 429, 500, 502, 503, 504)  # 이 응답이면 다음 모델로
 _DISCOVERED: dict[tuple, list[str]] = {}
+
+
+def _model_blocked(code: int, detail: str) -> bool:
+    """403/400 중 '이 모델만' 막힌 경우 (키는 정상) → 다음 모델로. 예: 'not allowed to access @cf/...', 'no longer available'."""
+    d = detail.lower()
+    return code in (400, 403) and any(x in d for x in ("not allowed to access", "no longer available", "not found",
+                                                         "does not exist", "not supported", "invalid model"))
+
+
+def _reason(detail: str) -> str:
+    m = re.search(r'"message"\s*:\s*"([^"]{1,140})', detail)
+    return (m.group(1) if m else detail[:140]).strip()
 
 
 class ModelUnavailable(Exception):
@@ -161,7 +176,7 @@ def rank_models(provider: str, ids: list[str]) -> list[str]:
             tier = 3 if "-pro" in low else 1 if "flash-lite" in low else 2 if "flash" in low else 0
             if not ver or not tier:
                 continue
-            score = (tier, float(ver.group(1)), -("preview" in low or "exp" in low))
+            score = (float(ver.group(1)), tier, -("preview" in low or "exp" in low))
         elif provider == "nvidia":
             tier = 3 if "nemotron" in low and "super" in low else 2 if "llama-3.3-70b" in low or "nemotron" in low and "ultra" in low \
                 else 1 if "70b" in low or "gpt-oss" in low else 0
@@ -269,7 +284,7 @@ class OpenAICompatClient(LLMClient):
                     detail = exc.read()[:500].decode("utf-8", "replace").replace("\n", " ")
                 except Exception:  # noqa: BLE001
                     detail = ""
-                if exc.code in FALLBACK_CODES and path == "/chat/completions":
+                if path == "/chat/completions" and (exc.code in FALLBACK_CODES or _model_blocked(exc.code, detail)):
                     raise ModelUnavailable(exc.code, detail) from exc  # 다음 모델로 (호출자가 처리)
                 last = RuntimeError(f"HTTP {exc.code} {detail}".strip())
                 if exc.code not in (429, 500, 502, 503, 504):  # 4xx 는 재시도해도 소용없음
@@ -289,8 +304,9 @@ class OpenAICompatClient(LLMClient):
                 self.model = m  # 실제로 답한 모델 (감사 로그·성적표용)
                 return payload
             except ModelUnavailable as exc:
-                errors.append(f"{m}: HTTP {exc.code} {exc.detail[:120]}".strip())
-                if exc.code in (404, 429):  # 없는 모델·한도 초과 → 오늘은 다음 모델로 (503 과부하는 다음 호출에 다시)
+                # 첫 오류만 이유를 길게, 나머지는 코드만 (doctor 한 줄에 어떤 모델을 시도했는지 다 보이게)
+                errors.append(f"{m}: HTTP {exc.code}" + (f" {_reason(exc.detail)}" if not errors else ""))
+                if exc.code in (400, 403, 404, 429):  # 없는·막힌 모델, 한도 초과 → 오늘은 다음 모델로 (503 과부하는 다시)
                     self.exhausted[m] = today
         return None
 
@@ -302,7 +318,7 @@ class OpenAICompatClient(LLMClient):
             return payload
         if any(": HTTP 404" in e for e in errors) and all(": HTTP 404" in e or ": HTTP 503" in e for e in errors):
             # 설정한 모델이 모두 사라짐(예: 구세대 모델 종료) → 공급자 목록에서 현재 쓸 수 있는 최고 모델을 찾는다
-            found = [m for m in self.discover_models() if m not in self.models][:3]
+            found = [m for m in self.discover_models() if m not in self.models][:6]
             if found:
                 payload = self._try_models(found, messages, errors, today)
                 if payload is not None:

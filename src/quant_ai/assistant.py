@@ -28,7 +28,7 @@ from .data.models import ConsensusRecord, Disclosure, Instrument, LLMCall, NewsA
 
 log = logging.getLogger(__name__)
 CHAT_ORDER = ("gemini", "claude", "groq", "nvidia", "cloudflare")
-CHAT_MODELS = {"gemini": ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite")}
+CHAT_MODELS = {"gemini": ("gemini-pro-latest", "gemini-flash-latest", "gemini-flash-lite-latest")}
 MAX_INPUT = 2000
 MAX_TOOL_ROUNDS = 4
 

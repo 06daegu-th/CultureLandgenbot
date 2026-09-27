@@ -212,21 +212,22 @@ def test_retired_models_are_replaced_by_discovery(monkeypatch):
 
     def send(url, body):
         sent.append(body["model"])
-        if body["model"].startswith("gemini-2.5"):
-            raise _http_error(404, b'{"error":{"message":"models/gemini-2.5-pro is not found"}}')
+        if not body["model"].startswith("gemini-3"):
+            raise _http_error(404, b'{"error":{"code":404,"message":"This model models/gemini-2.5-pro is no longer '
+                                   b'available to new users."}}')
         return {"choices": [{"message": {"content": '{"ok": true}'}}]}
     monkeypatch.setattr(c, "_send", send)
     monkeypatch.setattr(c, "_get", lambda path: {"data": [{"id": f"models/{m}"} for m in (
         "gemini-3-flash", "gemini-3-pro-preview", "gemini-embedding-001", "gemini-3-flash-lite", "gemini-2.0-flash-tts")]})
     c.min_interval = 0
     assert c.complete_json("s", "u", {}) == {"ok": True}
-    assert sent[:3] == ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    assert sent[:3] == ["gemini-pro-latest", "gemini-flash-latest", "gemini-flash-lite-latest"]
     assert c.model == "gemini-3-pro-preview" and c.models[0] == "gemini-3-pro-preview"
     sent.clear()
     c.complete_json("s", "u", {})
     assert sent == ["gemini-3-pro-preview"]  # 다음 호출부터 바로 새 모델
     assert lc.rank_models("gemini", ["models/gemini-3-flash", "models/gemini-2.5-pro", "models/text-embedding-004"]) == \
-        ["gemini-2.5-pro", "gemini-3-flash"]
+        ["gemini-3-flash", "gemini-2.5-pro"]  # 최신 세대 먼저 (구세대는 새 사용자에게 막힘)
 
 
 def test_overloaded_model_falls_back_without_blacklisting(monkeypatch):
@@ -279,7 +280,30 @@ def test_requests_carry_program_user_agent(monkeypatch):
 def test_doctor_hints_for_real_errors():
     from quant_ai.cli import _ai_hint
     assert "1010" in _ai_hint('HTTP 403 {"type":"https://developers.cloudflare.com/.../cloudflare-1xxx-errors/error-1010"}')
-    assert "Workers AI" in _ai_hint('HTTP 403 {"errors":[{"message":"AiError: Ai: This account is not allowed'
-                                    ' to access this model"}]} cloudflare')
+    assert "막힌 모델" in _ai_hint('HTTP 403 {"errors":[{"message":"AiError: Ai: This account is not allowed'
+                                 ' to access @cf/google/gemma-3-12b-it."}]}')
+    assert "한도" in _ai_hint("gemini: 사용 가능한 모델 없음 (gemini-3-pro: HTTP 429 quota; gemini-3-flash: HTTP 429)")
     assert "과부하" in _ai_hint('HTTP 503 {"error":{"message":"Service temporarily overloaded"}}')
     assert "키 값" in _ai_hint("HTTP 400 Please pass a valid API key")
+
+
+def test_cloudflare_blocked_model_moves_to_next(monkeypatch):
+    """실제 오류: 'This account is not allowed to access @cf/google/gemma-3-12b-it' (토큰은 정상, 그 모델만 막힘)."""
+    from quant_ai.analysts import llm_clients as lc
+    c = lc.OpenAICompatClient.from_spec(lc.FREE_PROVIDERS["cloudflare"], "k", ("@cf/google/gemma-3-12b-it",
+                                        "@cf/openai/gpt-oss-120b"), account="acc")
+    c.min_interval = 0
+
+    def send(url, body):
+        if "gemma" in body["model"]:
+            raise _http_error(403, b'{"errors":[{"message":"AiError: Ai: This account is not allowed to access '
+                                   b'@cf/google/gemma-3-12b-it. (id)","code":5018}]}')
+        return {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    monkeypatch.setattr(c, "_send", send)
+    assert c.complete_json("s", "u", {}) == {"ok": True} and c.model == "@cf/openai/gpt-oss-120b"
+    # 진짜 인증 실패(403)는 모델 문제로 착각하지 않는다
+    monkeypatch.setattr(c, "_send", lambda url, body: (_ for _ in ()).throw(
+        _http_error(403, b'{"errors":[{"message":"Authentication error","code":10000}]}')))
+    c.exhausted.clear()
+    with pytest.raises(lc.LLMError, match="Authentication"):
+        c.complete_json("s", "u", {})
