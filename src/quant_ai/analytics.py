@@ -77,7 +77,7 @@ def _signal_stats(app, since, book: str) -> tuple[dict, dict]:
     hits = sum(bool(c) for _, _, c, _ in direc)
     traded = [x for x in direc if x[0] in traded_ids]
     rets = [(r or 0) * (1 if a == "BUY" else -1) for _, a, _, r in traded]
-    signals = {"n": len(direc), "hits": hits, "base_rate": base}
+    signals = {"n": len(direc), "hits": hits, "base_rate": base, "resolved": len(resolved)}
     conv = {"signals": len(direc), "correct": hits, "traded": len(traded),
             "traded_correct": sum(bool(c) for _, _, c, _ in traded),
             "avg_trade_return": round(float(np.mean(rets)), 5) if rets else None}

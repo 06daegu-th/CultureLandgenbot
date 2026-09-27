@@ -180,6 +180,22 @@ def build_default_scheduler(app, mode) -> Scheduler:
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "strategy_health"):
         # 장 마감 후 하루 한 번 정도: 성과가 과거 검증 범위를 벗어나면(상태 변화 시) 알림
         sch.add("strategy_health", lambda now: app.strategy_health(mode.value), 12 * 3600, "closed")
+    if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "guardian"):
+        # 자동 킬스위치: 5분마다 10개 조건 점검 → critical 이면 HALTED (+ champion 이상이면 롤백)
+        sch.add("guardian", lambda now: app.guardian(mode.value, market_open=sch.phases(now).get("KRX") == "open"),
+                300, "always")
+
+        def ai_snapshot(now):
+            # 장외에만 켜 둔 경우에도 AI 판단 기록이 쌓이도록 (새 일봉마다 한 번, 장중 섀도가 이미 했으면 건너뜀)
+            from .actions import ai_snapshot as snap
+            if st.has_llm and st.ai_shadow:
+                snap(app)
+        sch.add("ai_snapshot", ai_snapshot, 6 * 3600, "closed")
+
+        def event_db(now):
+            from .analytics import event_reactions
+            event_reactions(app, refresh=True)
+        sch.add("event_reactions", event_db, 24 * 3600, "closed")
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "ai_verdict"):
         sch.add("ai_verdict", lambda now: app.ai_verdict(), 12 * 3600, "closed")  # 추천 단계가 바뀌면 알림
     sch.add("shadow_eval", lambda now: app.evaluate_shadow_models(), 12 * 3600, "closed")

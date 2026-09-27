@@ -24,6 +24,14 @@ class Mode(str, Enum):
 LIVE_CONFIRM_PHRASE = "I_UNDERSTAND_REAL_MONEY"
 
 
+DEFAULT_NEWS_FEEDS = (
+    "https://www.yna.co.kr/rss/economy.xml",  # 연합뉴스 경제
+    "https://www.hankyung.com/feed/finance",  # 한국경제 증권
+    "https://www.mk.co.kr/rss/50200011/",  # 매일경제 증권
+    "https://news.google.com/rss/search?q=%EC%BD%94%EC%8A%A4%ED%94%BC&hl=ko&gl=KR&ceid=KR:ko",  # 구글뉴스 '코스피'
+)
+
+
 @dataclass(frozen=True)
 class RiskLimits:
     max_position_weight: float = 0.10  # 종목당 최대 비중
@@ -90,6 +98,8 @@ class Settings:
     llm_cache_minutes: float = 720.0
     # 무료(한도 있는) OpenAI 호환 공급자: {이름: {"key", "models", "account", "daily"}} — Gemini·Groq·Cloudflare·NVIDIA
     llm_providers: dict = field(default_factory=dict, repr=False)
+    chat_provider: str = ""  # 사이트 채팅 AI 공급자 (비우면 gemini → claude → groq → nvidia → cloudflare 중 있는 것)
+    chat_models: tuple[str, ...] = ()  # 채팅 모델 목록 (비우면 공급자별 최고 품질부터)
     ai_roles: str = ""  # 예: "primary=gemini,second=nvidia,risk=groq,panel=cloudflare" (비우면 자동 배정)
     # 증권사
     strategy: str = "core_satellite"  # core_satellite (검증된 팩터 코어 + AI) / consensus (AI 합의만)
@@ -125,7 +135,11 @@ class Settings:
             slippage_bps=f("QUANT_SLIPPAGE_BPS", CostModelConfig.slippage_bps),
             sell_tax_bps=f("QUANT_SELL_TAX_BPS", CostModelConfig.sell_tax_bps),
         )
-        feeds = tuple(u.strip() for u in e.get("QUANT_NEWS_FEEDS", "").split(",") if u.strip())
+        raw_feeds = e.get("QUANT_NEWS_FEEDS", "").strip()
+        # 비우면 기본 국내 경제·증권 RSS (키 필요 없음). 뉴스를 끄려면 QUANT_NEWS_FEEDS=none
+        feeds = (() if raw_feeds.lower() == "none" else
+                 tuple(u.strip() for u in raw_feeds.split(",") if u.strip()) if raw_feeds else
+                 (DEFAULT_NEWS_FEEDS if env is None or e.get("QUANT_DEFAULT_FEEDS") == "1" else ()))
         return cls(
             database_url=e.get("DATABASE_URL", cls.database_url),
             mode=Mode(e.get("QUANT_MODE", Mode.RESEARCH.value)),
@@ -151,6 +165,8 @@ class Settings:
             llm_cache_minutes=f("QUANT_LLM_CACHE_MINUTES", cls.llm_cache_minutes),
             llm_providers=_llm_providers(e),
             ai_roles=e.get("QUANT_AI_ROLES", ""),
+            chat_provider=e.get("QUANT_CHAT_PROVIDER", "").strip().lower(),
+            chat_models=tuple(m.strip() for m in e.get("QUANT_CHAT_MODELS", "").split(",") if m.strip()),
             broker=e.get("QUANT_BROKER", cls.broker),
             strategy=e.get("QUANT_STRATEGY", cls.strategy),
             kis_env=e.get("KIS_ENV", cls.kis_env),

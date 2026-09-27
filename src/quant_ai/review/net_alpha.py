@@ -49,8 +49,10 @@ def hit_step(signals: dict) -> dict:
     n, hits = int(signals.get("n") or 0), int(signals.get("hits") or 0)
     base = signals.get("base_rate")
     if n == 0:
-        return _step("hit", "① 얼마나 자주 맞았나", "insufficient", "기록 없음",
-                     "AI 방향 신호가 채점되면 (보통 5거래일 뒤) 여기 쌓입니다.", n=0)
+        tot = int(signals.get("resolved") or 0)
+        return _step("hit", "① 얼마나 자주 맞았나", "insufficient", "방향 신호 0건",
+                     (f"채점된 판단 {tot}건이 모두 HOLD·NO TRADE (매수·매도 신호 없음)" if tot else
+                      "AI 방향 신호가 채점되면 (보통 5거래일 뒤) 여기 쌓입니다."), n=0)
     rate = hits / n
     # 기준율: 무조건 다수 방향으로 찍었을 때의 적중률
     ref = max(base, 1 - base) if base is not None else 0.5
@@ -125,14 +127,16 @@ def bench_step(st: dict | None, ai: dict | None) -> dict:
     if st is None:
         return _step("bench", "④ 벤치마크보다 나았나", "insufficient", "기록 없음",
                      "운용 장부와 KOSPI 가 겹치는 날이 쌓이면 계산합니다.")
-    status = ("insufficient" if st["days"] < MIN_DAYS else
-              "pass" if st["excess"] > 0 and (st["t"] or 0) > 1.0 else "fail")
+    # 초과수익이 +여도 t 값이 작으면 우연과 구분되지 않는다 → 통과가 아니라 '표본 부족'
+    status = ("insufficient" if st["days"] < MIN_DAYS or (st["excess"] > 0 and (st["t"] or 0) <= 1.0) else
+              "pass" if st["excess"] > 0 else "fail")
     ai_txt = ""
     if ai is not None:
         ai_txt = f" · AI 가 코어에 더한 순수익 {ai['excess']:+.2%}p"
+    note = (" · 아직 우연과 구분 안 됨 (t≤1)" if st["excess"] > 0 and (st["t"] or 0) <= 1.0 else "")
     return _step("bench", "④ 벤치마크보다 나았나", status, f"{st['excess']:+.2%}p",
                  f"운용 {st['book']:+.2%} vs KOSPI {st['bench']:+.2%} · 베타 {st['beta']:.2f} · "
-                 f"연 알파 {st['alpha_ann']:+.1%} · t={st['t'] if st['t'] is not None else '-'}{ai_txt}",
+                 f"연 알파 {st['alpha_ann']:+.1%} · t={st['t'] if st['t'] is not None else '-'}{ai_txt}{note}",
                  **{k: v for k, v in st.items() if k != "curve"}, ai=ai and {k: v for k, v in ai.items() if k != "curve"})
 
 

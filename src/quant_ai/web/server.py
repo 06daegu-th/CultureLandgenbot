@@ -102,6 +102,26 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.orders(arg("mode"), int(arg("limit", "200"))))
                     if url.path == "/api/strategy-health":
                         return self._json(api.strategy_health(arg("mode")))
+                    if url.path == "/api/net-alpha":
+                        return self._json(api.net_alpha(arg("mode")))
+                    if url.path == "/api/guardian":
+                        return self._json(api.guardian())
+                    if url.path.startswith("/api/an/"):
+                        return self._json(api.analytics(url.path.rsplit("/", 1)[-1], arg("mode")))
+                    if url.path == "/api/search":
+                        return self._json(api.search(arg("q", "")[:60]))
+                    if url.path == "/api/ensure":
+                        return self._json(api.ensure_symbol(arg("symbol", "")[:20]))
+                    if url.path == "/api/setup":
+                        return self._json(api.setup())
+                    if url.path == "/api/server":
+                        return self._json(api.server())
+                    if url.path == "/api/db":
+                        return self._json(api.db_preview())
+                    if url.path == "/api/action":
+                        return self._json(api.action(arg("name", "")))
+                    if url.path == "/api/chat":
+                        return self._json(api.chat_history(arg("sid", "")))
                 except Exception as exc:  # noqa: BLE001
                     log.exception("API 오류")
                     return self._json({"error": str(exc)}, 500)
@@ -143,6 +163,20 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     return self._json({"error": str(e)}, 400)
             if url.path == "/api/strategy-health":
                 return self._json(api.strategy_health(refresh=True))
+            try:
+                if url.path == "/api/action":
+                    return self._json(api.action(str(body.get("name", "")), start=True))
+                if url.path == "/api/chat":
+                    return self._json(api.chat(body))
+                if url.path == "/api/chat/clear":
+                    from ..assistant import clear
+                    clear(api.engine, str(body.get("sid", ""))[:40])
+                    return self._json({"ok": True})
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("API 오류")
+                return self._json({"error": str(exc)}, 500)
             self._json({"error": "not found"}, 404)
 
     return Handler

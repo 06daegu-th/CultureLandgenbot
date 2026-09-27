@@ -289,6 +289,76 @@ def cmd_checkup(args):
     sys.exit(2 if r["status"] == "critical" else 0)
 
 
+def cmd_warmup(args):
+    """빈 화면 채우기: 뉴스·공시·거시 수집 → 공시 반응 통계 → AI 판단(코어 후보, 새 일봉마다 한 번) → 자동 감시."""
+    from .actions import warmup
+    r = warmup(_app(args), progress=lambda m: print("  ·", m, flush=True))
+    for k, v in r.items():
+        print(f"  {k}: {v}")
+
+
+def cmd_guardian(args):
+    """자동 킬스위치 10개 조건 점검. --act 면 critical 시 HALTED + champion 롤백."""
+    r = _app(args).guardian(args.mode, act=args.act)
+    icon = {"ok": "🟢", "warn": "🟡", "critical": "🔴", "na": "⚪", "unknown": "⚫"}
+    print(f"매매 상태: {r['state']}  [{r['mode']}]")
+    for c in r["conditions"]:
+        print(f"  {icon.get(c['status'], '?')} {c['name']:<24} {c['detail']}")
+    sys.exit(2 if r["state"] == "HALTED" else 0)
+
+
+def cmd_net_alpha(args):
+    """Net Alpha: 적중 → 돈 → 비용 후 → KOSPI 대비 → 국면별."""
+    from .analytics import net_alpha_report
+    r = net_alpha_report(_app(args), args.mode)
+    icon = {"pass": "🟢", "fail": "🔴", "insufficient": "⚪"}
+    print(f"Net Alpha [{r['mode']}] — {r['verdict']['title']}")
+    for st in r["steps"]:
+        print(f"  {icon[st['status']]} {st['title']:<18} {st['headline']:>10}   {st['detail']}")
+    if r["attribution"]:
+        print("\n수익 분해:")
+        for a in r["attribution"]:
+            print(f"  {a['label']:<30} {a['value']:+.2%}")
+
+
+def cmd_db_clean(args):
+    """DB 정리: 기본은 미리보기. --yes 로 실제 삭제 (주문·판단·복기 기록은 보존)."""
+    from .actions import db_maintenance
+    r = db_maintenance(_app(args), dry_run=not args.yes)
+    for x in r["rows"]:
+        print(f"  {x['label']:<44} {x['rows']:>9,}행")
+    size = lambda b: f"{(b or 0) / 1e6:,.1f}MB"  # noqa: E731
+    print(f"  합계 {r['total']:,}행 · 크기 {size(r['size_before'])}" + (f" → {size(r['size_after'])} ({r['vacuum']})" if args.yes else ""))
+    print(f"  {r['kept']}")
+    if not args.yes and r["total"]:
+        print("  실제로 지우려면: ./run.sh db-clean --yes")
+
+
+def cmd_chat(args):
+    """터미널 채팅: 대시보드 채팅 AI 와 같은 두뇌 (종목·시장·서버·DB·성과)."""
+    from .assistant import chat_client, reply
+    app = _app(args)
+    client, prov = chat_client(app.settings)
+    print(f"Quant AI 채팅 — {prov + ' · ' + client.models[0] if client else 'AI 키 없음 (데이터 요약 모드)'}  (종료: exit)")
+    sid = "cli"
+    msgs = [args.message] if args.message else None
+    while True:
+        try:
+            q = msgs.pop(0) if msgs else input("\n나> ").strip()
+        except (EOFError, KeyboardInterrupt, IndexError):
+            break
+        if not q or q.lower() in ("exit", "quit", "종료"):
+            break
+        r = reply(app, q, sid)
+        print(f"\nAI> {r['answer']}")
+        if r["tools_used"]:
+            print("   (조회: " + ", ".join(t["tool"] for t in r["tools_used"]) + ")")
+        for a in r["actions"]:
+            print(f"   ▶ 제안: {a['label']} — 대시보드 버튼 또는 ./run.sh {a['action'].replace('_', '-')}")
+        if args.message:
+            break
+
+
 def cmd_cashflow(args):
     """입금(+)·출금(-) 기록 → 건강검진이 입출금을 수익으로 착각하지 않게."""
     from datetime import date as _date
@@ -525,6 +595,21 @@ def main(argv: list[str] | None = None) -> None:
     cy.add_argument("--mode", default="paper", choices=["paper", "shadow", "live"])
     cy.add_argument("--core-only", action="store_true", help="AI 오버레이 없이 팩터 코어만 (QUANT_CORE_ONLY=true 와 같음)")
     cy.set_defaults(fn=cmd_cycle)
+    wu = sub.add_parser("warmup", help="빈 화면 채우기 (뉴스·공시·거시 수집 + AI 판단 1회 + 자동 감시)")
+    wu.set_defaults(fn=cmd_warmup)
+    gd = sub.add_parser("guardian", help="자동 킬스위치 10개 조건 점검")
+    gd.add_argument("--mode", default=None)
+    gd.add_argument("--act", action="store_true", help="critical 이면 HALTED + 모델 롤백 실행")
+    gd.set_defaults(fn=cmd_guardian)
+    na = sub.add_parser("net-alpha", help="성과 검증 5단계 + 수익 분해")
+    na.add_argument("--mode", default=None)
+    na.set_defaults(fn=cmd_net_alpha)
+    dc = sub.add_parser("db-clean", help="DB 정리 (기본 미리보기, --yes 로 실행)")
+    dc.add_argument("--yes", action="store_true")
+    dc.set_defaults(fn=cmd_db_clean)
+    ch = sub.add_parser("chat", help="터미널 채팅 AI")
+    ch.add_argument("message", nargs="?", default=None, help="한 번만 묻기")
+    ch.set_defaults(fn=cmd_chat)
     rp = sub.add_parser("replay", help="최근 N 거래일 코어-위성 재생 (가상 장부 + AI 기여도)")
     rp.add_argument("--days", type=int, default=60)
     rp.add_argument("--mode", default="paper", choices=["paper", "shadow"])

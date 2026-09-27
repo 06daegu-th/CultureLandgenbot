@@ -60,6 +60,7 @@ from .trading.risk import RiskEngine
 
 log = logging.getLogger("quant_ai")
 
+GLOBAL_MARKET = "GLOBAL"
 BENCHMARK_MARKET = "INDEX"  # instruments.market == INDEX 인 종목은 지수 (매매 대상 아님)
 
 
@@ -92,7 +93,8 @@ class QuantAI:
         with session_scope(self.engine) as s:
             q = select(Instrument)
             rows = s.scalars(q).all()
-            syms = [i.symbol for i in rows if include_index or i.market != BENCHMARK_MARKET]
+            # 해외 관심 종목(GLOBAL)은 조회·채팅용 캐시일 뿐 국내 전략 유니버스가 아니다
+            syms = [i.symbol for i in rows if i.market != GLOBAL_MARKET and (include_index or i.market != BENCHMARK_MARKET)]
         if self.settings.watchlist:
             syms = [x for x in syms if x in self.settings.watchlist] or list(self.settings.watchlist)
         return syms

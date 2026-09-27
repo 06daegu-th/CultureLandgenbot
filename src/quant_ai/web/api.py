@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import func, select
 
+from .. import ops as _ops
 from ..clock import MARKETS
 from ..data.db import load_bars, session_scope
 from ..data.models import (
@@ -29,6 +31,7 @@ from ..data.models import (
 from ..engines.regime import EXPOSURE_MULTIPLIER, Regime, regime_series
 from ..ensemble.tracker import CATEGORY_LABELS, scoreboard, scoreboard_table
 
+log = logging.getLogger(__name__)
 GLOBAL_ORDER = ("SP500", "NASDAQCOM", "VIXCLS", "DGS10", "DTWEXBGS", "DEXKOUS", "DCOILWTICO", "DGS2", "DFF")
 MACRO_LABELS = {"VIXCLS": "VIX", "DGS10": "美 10년", "DGS2": "美 2년", "DEXKOUS": "달러/원",
                 "NASDAQCOM": "나스닥", "SP500": "S&P 500", "DTWEXBGS": "달러지수",
@@ -349,6 +352,7 @@ class DashboardAPI:
 
     # ------------------------------------------------------------------ 차트
     def chart(self, symbol: str, n: int = 260) -> dict:
+        self.ensure_symbol(symbol)  # 해외 종목: 처음 볼 때 무료 일봉 받기
         with session_scope(self.engine) as s:
             b = self._bars(s, [symbol]).get(symbol)
             cons = s.scalars(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol)
@@ -376,6 +380,7 @@ class DashboardAPI:
 
     # ------------------------------------------------------------------ 종목 분석
     def analysis(self, symbol: str) -> dict:
+        fetched = self.ensure_symbol(symbol)
         with session_scope(self.engine) as s:
             inst = self._instruments(s)
             c = s.scalar(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol)
@@ -402,6 +407,8 @@ class DashboardAPI:
             "checklist": self._checklist(c, b), "range": self._range(b, (c.payload or {}).get("horizon", 5) if c else 5),
             "symbol": symbol, "name": inst[symbol].name if symbol in inst else symbol,
             "market": inst[symbol].market if symbol in inst else "",
+            "currency": inst[symbol].currency if symbol in inst else "",
+            "fetch": fetched if fetched.get("error") or fetched.get("source") else None,
             "consensus": ({**(c.payload or {}), "as_of": _ts(c.as_of), "id": c.id} if c else None),
             "details": details, "scenario": scen.payload if scen else None, "news": news, "similar": similar,
             "history": [{"ts": _ts(h.as_of), "action": h.action, "prob_up": _f(h.prob_up), "confidence": h.confidence,
@@ -521,6 +528,123 @@ class DashboardAPI:
             counts[r["status"]] = counts.get(r["status"], 0) + 1
         return {"rows": rows, "counts": counts,
                 "slippage": {m: self.app.slippage_stats(m) for m in ("live", "shadow", "paper")}}
+
+    # ------------------------------------------------------------------ Net Alpha · 분석 · 안전 (무거운 것은 캐시)
+    def _cached(self, key: str, ttl: float, fn):
+        import time
+        hit = self._risk_cache.get(key)
+        if hit and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+        try:
+            out = fn()
+        except Exception as e:  # noqa: BLE001 - 대시보드는 계속 떠야 한다
+            log.exception("API %s 실패", key)
+            return {"error": f"{type(e).__name__}: {e}"}
+        self._risk_cache[key] = (time.monotonic(), out)
+        return out
+
+    def net_alpha(self, mode: str | None = None) -> dict:
+        from ..analytics import net_alpha_report
+        return self._cached(f"net_alpha:{mode}", 60, lambda: net_alpha_report(self.app, mode))
+
+    def guardian(self) -> dict:
+        # 화면 조회는 판정만 (정지 실행은 스케줄러의 guardian 작업과 매매 사이클이 한다)
+        return self._cached("guardian", 20, lambda: self.app.guardian(act=False))
+
+    def analytics(self, kind: str, mode: str | None = None) -> dict:
+        from .. import analytics as an
+        fns = {"execution": lambda: an.execution_quality(self.app, mode),
+               "counterfactual": lambda: an.counterfactual(self.app),
+               "events": lambda: an.event_reactions(self.app),
+               "confidence": lambda: an.data_confidence(self.app),
+               "stress": lambda: an.stress_test(self.app, mode),
+               "experiments": lambda: self.experiments(),
+               "ai_verdict": lambda: self.app.ai_verdict(),
+               "champion": lambda: {**self.app.check_champion(rollback=False),
+                                    "events": _ops.get_state(self.engine, "model_events").get("events", [])[::-1][:20]}}
+        if kind not in fns:
+            return {"error": "unknown"}
+        return self._cached(f"an:{kind}:{mode}", 60, fns[kind])
+
+    def experiments(self) -> dict:
+        """실험 레지스트리: 모델 후보(게이트 결과·DSR) + 실데이터 연구 리포트의 시험 수. 다중검정 보정 근거."""
+        import json
+        from pathlib import Path
+
+        from ..data.models import ModelRecord
+        with session_scope(self.engine) as s:
+            models = [{"kind": "model", "name": r.name, "version": r.version, "created_at": _ts(r.created_at),
+                       "status": r.status, "notes": r.notes,
+                       "metrics": {k: (r.metrics or {}).get(k) for k in ("dsr", "n_trials")} | {
+                           k: ((r.metrics or {}).get("strategy") or {}).get(k) for k in ("sharpe", "max_drawdown", "cagr")},
+                       "shadow": r.shadow_metrics}
+                      for r in s.scalars(select(ModelRecord).order_by(ModelRecord.created_at.desc()).limit(100))]
+        research = []
+        d = Path(self.app.settings.artifacts_dir) / "research"
+        for f in sorted(d.glob("*.json"))[-30:] if d.exists() else []:
+            try:
+                j = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            trials = j.get("trials") or j.get("configs") or []
+            research.append({"kind": j.get("kind", "research"), "file": f.name, "created_at": j.get("created_at"),
+                             "n_trials": len(trials) if isinstance(trials, list) else j.get("n_trials"),
+                             "dev_end": j.get("dev_end"), "data": j.get("data")})
+        n_total = len(models) + sum(r["n_trials"] or 0 for r in research)
+        return {"models": models, "research": research[::-1], "n_trials_total": n_total,
+                "note": "시험을 많이 할수록 우연히 좋아 보이는 결과가 늘어난다 → DSR(다중검정 보정 샤프)로 승격 기준을 올린다"}
+
+    # ------------------------------------------------------------------ 검색 · 해외 종목
+    def search(self, q: str) -> dict:
+        from ..data.global_stocks import search
+        with session_scope(self.engine) as s:
+            res = search(s, q, 10)
+            cons = self._latest_consensus(s)
+        for r in res:
+            c = cons.get(r["symbol"])
+            r["action"] = c.action if c else None
+        return {"results": res}
+
+    def ensure_symbol(self, symbol: str) -> dict:
+        """해외 종목이면 무료 일봉을 받아 캐시 (처음 한 번 · 12시간마다 갱신)."""
+        from ..data.global_stocks import GLOBAL_MARKET, GLOBAL_STOCKS, ensure_global, global_name
+        with session_scope(self.engine) as s:
+            inst = s.scalar(select(Instrument).where(Instrument.symbol == symbol))
+            market = inst.market if inst else None
+        if market == GLOBAL_MARKET or (market is None and any(symbol == g[0] for g in GLOBAL_STOCKS)):
+            return ensure_global(self.engine, symbol, global_name(symbol))
+        return {"ok": market is not None}
+
+    # ------------------------------------------------------------------ 준비 상태 · 서버 · 동작 · 채팅
+    def setup(self) -> dict:
+        from ..actions import setup_status
+        return self._cached("setup", 15, lambda: setup_status(self.app))
+
+    def server(self) -> dict:
+        from ..actions import server_status
+        return self._cached("server", 10, lambda: server_status(self.app))
+
+    def db_preview(self) -> dict:
+        from ..actions import db_maintenance
+        return db_maintenance(self.app, dry_run=True)
+
+    def action(self, name: str, start: bool = False) -> dict:
+        from ..actions import get_action, start_action
+        if start:
+            self._cache = None
+            self._risk_cache.clear()
+            return start_action(self.app, name)
+        return get_action(name)
+
+    def chat(self, body: dict) -> dict:
+        from ..assistant import reply
+        return reply(self.app, str(body.get("message", "")), body.get("sid"))
+
+    def chat_history(self, sid: str) -> dict:
+        from ..assistant import chat_client, history
+        client, prov = chat_client(self.app.settings)
+        return {"messages": history(self.engine, sid), "provider": prov,
+                "model": client.models[0] if client else None}
 
     # ------------------------------------------------------------------ 운영
     def health(self) -> dict:
