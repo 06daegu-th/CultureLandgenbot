@@ -33,11 +33,13 @@ def save_consensus(session: Session, sig: ConsensusSignal, opinions: list[Opinio
                           payload={**sig.to_dict(), "regime": regime, "horizon": horizon})
     session.add(rec)
     session.flush()
+    cal = {c.analyst: c.prob_up for c in sig.contributions if c.prob_raw is not None}
     for op in opinions:
         base = dict(consensus_id=rec.id, analyst=op.analyst, symbol=op.symbol, as_of=as_of, horizon_bars=horizon,
                     confidence=op.confidence, veto=op.veto)
         payload = {"reasons": op.reasons, "risks": op.risks, "summary": op.summary, "backend": op.backend,
-                   "veto_reason": op.veto_reason, "error": op.error, "regime": regime, **op.meta}
+                   "veto_reason": op.veto_reason, "error": op.error, "regime": regime, **op.meta,
+                   **({"prob_cal": round(cal[op.analyst], 4)} if op.analyst in cal else {})}
         if op.prob_up is not None:
             session.add(AnalystOpinionRecord(category=DIRECTION, prob_up=op.prob_up, payload=payload, **base))
         for cat, score in op.sub_scores.items():
@@ -139,3 +141,55 @@ def scoreboard_table(board: dict[tuple[str, str], TrackRecord]) -> list[dict]:
 
 
 CATEGORY_LABELS = {DIRECTION: "단기 방향", NEWS: "뉴스 해석", MACRO: "거시경제", TREND: "추세", RISK: "위험 경고"}
+
+
+def provider_of(model: str | None, provider: str | None = None) -> str:
+    """백엔드 모델 이름 → 공급자 표시 이름 (성적표를 '어느 AI 가 무엇을 잘하나' 로 보여주기 위해)."""
+    if provider:
+        return {"gemini": "Gemini", "nvidia": "NVIDIA", "groq": "Groq", "cloudflare": "Cloudflare",
+                "anthropic": "Claude", "claude": "Claude"}.get(provider, provider)
+    m = (model or "").lower()
+    if not m:
+        return "?"
+    if "gemini" in m:
+        return "Gemini"
+    if m.startswith("@cf/"):
+        return "Cloudflare"
+    if m.startswith("nvidia/"):
+        return "NVIDIA"
+    if "claude" in m:
+        return "Claude"
+    if "gpt-oss" in m or "llama" in m:
+        return "Groq"
+    if m.startswith("sklearn"):
+        return "Quant 모델"
+    if m.startswith("regime"):
+        return "국면 엔진"
+    if m.startswith("rules"):
+        return "리스크 규칙"
+    if m == "heuristic":
+        return "휴리스틱"
+    return model or "?"
+
+
+def provider_scoreboard(session: Session, window_days: int | None = 365) -> list[dict]:
+    """AI(공급자·모델) × 카테고리 성적. 예: Gemini 뉴스 해석 75% (n=120) · Groq 위험 경고 81%."""
+    q = select(AnalystOpinionRecord.analyst, AnalystOpinionRecord.category, AnalystOpinionRecord.prob_up,
+               AnalystOpinionRecord.correct, AnalystOpinionRecord.realized_return,
+               AnalystOpinionRecord.payload).where(AnalystOpinionRecord.correct.is_not(None))
+    if window_days is not None:
+        q = q.where(AnalystOpinionRecord.as_of >= datetime.now(UTC) - timedelta(days=window_days))
+    acc: dict[tuple[str, str, str], list] = defaultdict(lambda: [0, 0, 0.0, set()])
+    for analyst, cat, prob, correct, rr, payload in session.execute(q):
+        p = payload or {}
+        prov = provider_of(p.get("backend"), p.get("provider"))
+        a = acc[(prov, p.get("backend") or "?", cat)]
+        a[0] += 1
+        a[1] += int(bool(correct))
+        a[2] += ((prob if prob is not None else 0.5) - (1.0 if (rr or 0) > 0 else 0.0)) ** 2
+        a[3].add(analyst)
+    rows = [{"provider": prov, "model": model, "category": cat, "label": CATEGORY_LABELS.get(cat, cat),
+             "roles": sorted(v[3]), "n": v[0], "accuracy": v[1] / v[0] if v[0] else None,
+             "brier": v[2] / v[0] if v[0] else None}
+            for (prov, model, cat), v in acc.items()]
+    return sorted(rows, key=lambda r: (r["provider"], r["category"]))

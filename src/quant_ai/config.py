@@ -32,6 +32,8 @@ class RiskLimits:
     max_order_value: float = 5_000_000  # 1회 주문 최대 금액
     max_orders_per_day: int = 100
     min_confidence: float = 0.55  # 이 확률 미만의 매수 신호는 무시
+    max_adv_participation: float = 0.05  # 1회 매수 금액 ≤ 20일 평균 거래대금 × 5% (시장 충격·유동성)
+    max_var95: float = 0.04  # 계획 포트폴리오 1일 VaR95 한도 → 넘으면 전체 비중 축소
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,8 @@ class Settings:
             max_order_value=f("QUANT_MAX_ORDER_VALUE", RiskLimits.max_order_value),
             max_orders_per_day=int(f("QUANT_MAX_ORDERS_PER_DAY", RiskLimits.max_orders_per_day)),
             min_confidence=f("QUANT_MIN_CONFIDENCE", RiskLimits.min_confidence),
+            max_adv_participation=f("QUANT_MAX_ADV_PARTICIPATION", RiskLimits.max_adv_participation),
+            max_var95=f("QUANT_MAX_VAR95", RiskLimits.max_var95),
         )
         costs = CostModelConfig(
             commission_bps=f("QUANT_COMMISSION_BPS", CostModelConfig.commission_bps),

@@ -102,6 +102,7 @@ class LLMAnalyst(Analyst):
             sub_scores={NEWS: clip11(out.get("news_impact")), MACRO: clip11(out.get("macro_impact"))},
             veto=bool(out.get("veto", False)), veto_reason=str(out.get("veto_reason") or "") or None,
             summary=str(out.get("summary", ""))[:600], backend=backend_id(self.client),
+            meta={"provider": getattr(self.client, "provider", None), "model_used": self.client.model},
         )
 
 

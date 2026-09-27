@@ -125,3 +125,16 @@ def load_bars(session: Session, symbols: Iterable[str], interval: str = "1d") ->
         df.index = to_utc_index(df.index)
         out[symbol] = df
     return out
+
+
+def recent_adv(session: Session, symbols: Iterable[str], n: int = 20, interval: str = "1d") -> dict[str, float]:
+    """종목별 최근 n 봉 평균 거래대금 (종가 × 거래량). 유동성 한도용 — 전체 이력을 읽지 않는다."""
+    out: dict[str, float] = {}
+    for symbol in set(symbols):
+        rows = session.execute(select(PriceBar.close, PriceBar.volume).where(
+            PriceBar.symbol == symbol, PriceBar.interval == interval).order_by(PriceBar.ts.desc()).limit(n)).all()
+        vals = [c * v for c, v in rows if c and v]
+        if vals:
+            out[symbol] = sum(vals) / len(vals)
+    return out
+

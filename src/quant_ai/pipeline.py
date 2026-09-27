@@ -28,7 +28,7 @@ from .analysts.memory import Memory
 from .backtest.backtester import BacktestConfig, Backtester, performance
 from .backtest.stats import deflated_sharpe
 from .config import Mode, Settings
-from .data.db import init_db, load_bars, make_engine, session_scope, upsert_bars
+from .data.db import init_db, load_bars, make_engine, recent_adv, session_scope, upsert_bars
 from .data.models import (
     AnalystOpinionRecord,
     ConsensusRecord,
@@ -45,6 +45,7 @@ from .engines.news_intel import daily_sentiment
 from .engines.prediction import Prediction, Predictor, direction_of
 from .engines.regime import EXPOSURE_MULTIPLIER, Regime, RegimeState, equal_weight_index, regime_series
 from .engines.scenario import build_scenarios
+from .ensemble.calibration import fit_calibrators, load_calibrators
 from .ensemble.engine import ConsensusSignal, EnsembleEngine, records_for
 from .ensemble.tracker import resolve, save_consensus, scoreboard
 from .registry.model_registry import ModelRegistry
@@ -276,6 +277,7 @@ class QuantAI:
             # 백엔드가 바뀌면(예: 휴리스틱 → Claude) 이전 성적을 물려받지 않는다
             backends = {a.name: backend_id(a.client) for a in analysts if getattr(a, "client", None) is not None}
             board = records_for(scoreboard(s, backends={k: v for k, v in backends.items() if v}))
+            calibrators = load_calibrators(ops.get_state(self.engine, "calibration"))
             for sym in symbols or list(bars):
                 if sym not in bars or bars[sym].empty:
                     continue
@@ -286,7 +288,7 @@ class QuantAI:
                 ctx = build_context(s, sym, t.to_pydatetime(), self.horizon, bars[sym], frow, rrow,
                                     memory=self.memory, events=events, macro=macro)
                 opinions = [a.analyze(ctx) for a in analysts]
-                sig = self.ensemble.combine(sym, opinions, board)
+                sig = self.ensemble.combine(sym, opinions, board, calibrators)
                 cid = None
                 if persist:
                     rec = save_consensus(s, sig, opinions, ctx.as_of, self.horizon, ctx.regime.get("regime"))
@@ -449,6 +451,8 @@ class QuantAI:
             journal.note(ts, "signal", f"{d.symbol} {d.signal.action} P(up)={d.signal.prob_up:.2f} "
                          f"신뢰도 {d.signal.confidence:.0f} 충돌 {d.signal.conflict}", d.symbol,
                          consensus_id=d.consensus_id, vetoes=d.signal.vetoes)
+        with session_scope(self.engine) as s:  # 유동성 한도: 20일 평균 거래대금 대비 주문 금액
+            risk.adv = recent_adv(s, {x.symbol for x in signals} | set(pf.positions))
         engine = ExecutionEngine(broker, risk, journal)
         fills = engine.rebalance(signals, quotes, ts, mult)
         with session_scope(self.engine) as s:
@@ -530,6 +534,35 @@ class QuantAI:
         per_name = equity * cfg.core_weight / cfg.core_top_k
         return {s for s in scores.index[:cfg.core_buffer_k]
                 if s in bars and float(bars[s]["close"].iloc[-1]) > per_name * cfg.affordability_slack}
+
+    def _apply_var_budget(self, plan: Plan, bars: dict) -> None:
+        """계획 포트폴리오의 1일 VaR95 가 한도를 넘으면 모든 비중을 같은 비율로 줄인다 (나머지 현금)."""
+        from .trading.portfolio_risk import PortfolioRiskLimits, var_budget_scale
+        scale, var = var_budget_scale(plan.weights, bars, PortfolioRiskLimits(max_var95=self.settings.risk.max_var95))
+        if var is not None and scale < 1.0:
+            plan.weights = {s: w * scale for s, w in plan.weights.items()}
+            plan.notes.append(f"VaR 예산: 계획 1일 VaR95 {var:.1%} > 한도 {self.settings.risk.max_var95:.0%} "
+                              f"→ 전체 비중 ×{scale:.2f}")
+
+    def portfolio_risk(self, mode: str | None = None) -> dict:
+        """현재 장부(또는 증권사 잔고와 동기화된 live 장부)의 포트폴리오 리스크."""
+        from .trading.portfolio_risk import PortfolioRiskLimits, portfolio_risk
+        mode = mode or (self.settings.mode.value if self.settings.mode.value in ("paper", "shadow", "live") else "paper")
+        pf = self.load_portfolio(mode)
+        bars, bench, _ = self.market_data()
+        prices = {s: float(b["close"].iloc[-1]) for s, b in bars.items() if len(b)}
+        for s, p in pf.positions.items():
+            prices.setdefault(s, p.avg_price)
+        equity = pf.equity(prices)
+        values = {s: p.qty * prices[s] for s, p in pf.positions.items() if p.qty}
+        weights = {s: v / equity for s, v in values.items()} if equity > 0 else {}
+        with session_scope(self.engine) as s:
+            inst = {i.symbol: i for i in s.scalars(select(Instrument))}
+        res = portfolio_risk(weights, bars, bench, names={k: v.name for k, v in inst.items()},
+                             currencies={k: v.currency for k, v in inst.items()}, values=values,
+                             limits=PortfolioRiskLimits(max_var95=self.settings.risk.max_var95))
+        return res | {"mode": mode, "equity": equity, "cash_weight": round(pf.cash / equity, 4) if equity else 1.0,
+                      "var95_krw": round(res.get("var95", 0) * equity), "es95_krw": round(res.get("es95", 0) * equity)}
 
     def order_sheet(self, holdings: dict[str, int], cash: float, use_ai: bool = True,
                     cfg: CoreSatelliteConfig | None = None, prices: dict[str, float] | None = None):
@@ -650,6 +683,7 @@ class QuantAI:
         plan = build_plan(scores, prev_core, due(state), cfg, vetoes, exits, buys,
                           use_veto=cfg.use_ai, use_satellite=cfg.use_ai,
                           core_scale=scale_for(state), unaffordable=unaffordable)
+        self._apply_var_budget(plan, bars)
         if not cfg.use_ai:
             plan.notes.append("코어 전용 모드 (AI 오버레이 꺼짐 · 코어 100%)")
         if quotes is None and mode is Mode.LIVE and self.settings.broker == "kis":
@@ -684,6 +718,7 @@ class QuantAI:
                 bplan = build_plan(scores, bst.get("core", []), due(bst), cfg, vetoes, exits, buys,
                                    use_veto=use_veto, use_satellite=use_sat, core_scale=scale_for(bst),
                                    unaffordable=unaffordable)
+                self._apply_var_budget(bplan, bars)
                 self.trade(decisions, Mode.PAPER, ts=ts, quotes=dict(quotes) if quotes else None,
                            signals=to_signals(bplan), book=book)
                 ops.set_state(self.engine, f"cs:{book}", {
@@ -839,6 +874,9 @@ class QuantAI:
         bars, bench, _ = self.market_data()
         with session_scope(self.engine) as s:
             n = resolve(s, bars, bench)
+        with session_scope(self.engine) as s:  # 채점이 끝난 의견으로 AI 별 확률 보정 다시 적합
+            fitted = fit_calibrators(s)
+        ops.set_state(self.engine, "calibration", fitted)
         with session_scope(self.engine) as s:
             report = daily_review(s, day or datetime.now(UTC).date(), memory=self.memory)
             s.flush()

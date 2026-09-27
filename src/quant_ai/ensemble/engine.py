@@ -54,6 +54,7 @@ class Contribution:
     backend: str
     summary: str
     veto: bool
+    prob_raw: float | None = None  # AI 가 말한 원래 확률 (prob_up 은 보정 후)
 
 
 @dataclass
@@ -93,21 +94,27 @@ class EnsembleEngine:
         return prior * skill * (0.5 + 0.5 * op.confidence)
 
     def combine(self, symbol: str, opinions: list[Opinion],
-                records: dict[str, TrackRecord] | None = None) -> ConsensusSignal:
+                records: dict[str, TrackRecord] | None = None, calibrators: dict | None = None) -> ConsensusSignal:
+        """calibrators: {analyst: Platt} — 과거 적중 기록으로 적합한 확률 보정 (없으면 원래 확률)."""
         records = records or {}
+        calibrators = calibrators or {}
         cfg = self.cfg
         contribs: list[Contribution] = []
         num = den = 0.0
         for op in opinions:
             rec = records.get(op.analyst)
             w = 0.0 if op.abstained else self.weight(op, rec)
+            cal = calibrators.get(op.analyst)
+            p = cal.apply(op.prob_up) if cal is not None and not op.abstained else op.prob_up
             if not op.abstained:
-                num += w * _logit(op.prob_up)
+                num += w * _logit(p)
                 den += w
             contribs.append(Contribution(
-                analyst=op.analyst, prob_up=op.prob_up, stance=op.stance, weight=w, confidence=op.confidence,
+                analyst=op.analyst, prob_up=p, stance=2 * p - 1 if p is not None else 0.0, weight=w,
+                confidence=op.confidence,
                 accuracy=rec.hits / rec.n if rec and rec.n else None, n_scored=rec.n if rec else 0,
                 backend=op.backend, summary=op.summary or (op.error or ""), veto=op.veto,
+                prob_raw=op.prob_up if cal is not None else None,
             ))
         total_w = sum(c.weight for c in contribs) or 1.0
         for c in contribs:
