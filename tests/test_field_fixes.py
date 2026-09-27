@@ -307,3 +307,20 @@ def test_cloudflare_blocked_model_moves_to_next(monkeypatch):
     c.exhausted.clear()
     with pytest.raises(lc.LLMError, match="Authentication"):
         c.complete_json("s", "u", {})
+
+
+def test_stale_git_lock_is_cleared_before_marcap_sync(tmp_path):
+    """실제 오류: 'Unable to create .../data/marcap/.git/index.lock: File exists' (중간에 끊긴 git)."""
+    import os
+
+    from quant_ai.data.collectors.marcap import _clear_stale_lock, sync_marcap
+    repo = tmp_path / "marcap"
+    (repo / ".git").mkdir(parents=True)
+    lock = repo / ".git" / "index.lock"
+    lock.touch()
+    assert not _clear_stale_lock(repo) and lock.exists()  # 방금 생긴 잠금은 다른 git 이 쓰는 중일 수 있어 둔다
+    old = time.time() - 3600
+    os.utime(lock, (old, old))
+    cmds = []
+    sync_marcap(repo / "data", run=lambda cmd: cmds.append(cmd))
+    assert not lock.exists() and cmds[0][3] == "pull"

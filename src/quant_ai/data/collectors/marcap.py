@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -126,7 +127,7 @@ def build_krx_dataset(root: str | Path, start_year: int, end_year: int, top_n: i
     return KRXDataset(bars, elig, cap_weighted_index(df, "KOSPI"), {c: names.get(c, c) for c in bars})
 
 
-MARCAP_REPO = "https://github.com/FinanceData/marcap.git"
+MARCAP_REPO = os.environ.get("QUANT_MARCAP_REPO", "https://github.com/FinanceData/marcap.git")
 
 
 def sync_marcap(data_dir, years: int = 5, today=None, run=None) -> Path:
@@ -139,11 +140,23 @@ def sync_marcap(data_dir, years: int = 5, today=None, run=None) -> Path:
     repo = Path(data_dir).parent
     y = (today or _date.today()).year
     files = [f"/data/marcap-{i}.parquet" for i in range(y - years + 1, y + 1)]
+    _clear_stale_lock(repo)
     if not (repo / ".git").exists():
         repo.parent.mkdir(parents=True, exist_ok=True)
         run(["git", "clone", "--depth", "1", "--filter=blob:none", "--sparse", MARCAP_REPO, str(repo)])
     else:
         run(["git", "-C", str(repo), "pull", "--ff-only", "-q"])
+    _clear_stale_lock(repo)
     run(["git", "-C", str(repo), "sparse-checkout", "set", "--no-cone", *files])
     return repo / "data"
+
+
+def _clear_stale_lock(repo: Path, max_age_s: float = 600) -> bool:
+    """중간에 끊긴 git 이 남긴 .git/index.lock (10분 넘게 된 것) 제거. 남아 있으면 이후 모든 갱신이 실패한다."""
+    import time as _time
+    lock = repo / ".git" / "index.lock"
+    if lock.exists() and _time.time() - lock.stat().st_mtime > max_age_s:
+        lock.unlink(missing_ok=True)
+        return True
+    return False
 

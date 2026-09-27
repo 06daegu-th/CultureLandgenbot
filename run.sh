@@ -158,6 +158,32 @@ ensure_db() {
 }
 
 # ------------------------------------------------------------------ 데이터
+git_unlock() {  # 중간에 끊긴 git 이 남긴 잠금 파일 (지금 도는 git 이 없거나 1분 넘게 된 것만 지운다)
+  local lock="$1/.git/index.lock"
+  [[ -f "$lock" ]] || return 0
+  if [[ -n "$(find "$lock" -mmin +1 2>/dev/null)" ]] || ! pgrep -x git >/dev/null 2>&1; then
+    warn "이전에 중단된 데이터 받기의 잠금 파일을 지웁니다 (.git/index.lock)"
+    rm -f "$lock"
+  fi
+}
+
+marcap_fetch() {  # 받기(없으면 clone, 있으면 pull) + 최근 5년 파일만. 실패하면 0 이 아닌 값
+  local repo="$1"; shift
+  local url="${QUANT_MARCAP_REPO:-https://github.com/FinanceData/marcap.git}"
+  if [[ -d "$repo/.git" ]]; then
+    git_unlock "$repo"
+    git -C "$repo" rev-parse --verify -q HEAD >/dev/null 2>&1 || return 1  # clone 이 중간에 끊긴 흔적
+    say "KRX 주가 데이터 갱신"
+    git -C "$repo" pull --ff-only -q || warn "git pull 실패 — 기존 데이터로 계속"
+  else
+    say "KRX 주가 데이터 받기 → $repo (최근 5년만, 약 100MB)"
+    mkdir -p "$(dirname "$repo")"
+    git clone -q --depth 1 --filter=blob:none --sparse "$url" "$repo" || return 1
+  fi
+  git_unlock "$repo"
+  git -C "$repo" sparse-checkout set --no-cone "$@"
+}
+
 cmd_data() {
   command -v git >/dev/null 2>&1 || die "git 이 필요합니다 (macOS: xcode-select --install)"
   local mdir; mdir="$(env_get QUANT_MARCAP_DIR)"
@@ -169,15 +195,16 @@ cmd_data() {
   local y; y="$(date +%Y)"
   local files=()
   for ((i = y - 4; i <= y; i++)); do files+=("/data/marcap-$i.parquet"); done  # 최근 5년 (모멘텀 12개월 + 200일선 + 여유)
-  if [[ ! -d "$repo/.git" ]]; then
-    say "KRX 주가 데이터 받기 → $repo (최근 5년만, 약 100MB)"
-    mkdir -p "$(dirname "$repo")"
-    git clone -q --depth 1 --filter=blob:none --sparse https://github.com/FinanceData/marcap.git "$repo"
-  else
-    say "KRX 주가 데이터 갱신"
-    git -C "$repo" pull --ff-only -q || warn "git pull 실패 — 기존 데이터로 계속"
+  if ! marcap_fetch "$repo" "${files[@]}"; then
+    # 이 프로그램이 만든 폴더(data/ 아래)만 지우고 처음부터 다시 받는다. 사용자가 지정한 다른 경로는 건드리지 않는다
+    if [[ "$repo" == "$DATA_DIR/"* ]]; then
+      warn "데이터 폴더가 중간에 끊긴 상태라 처음부터 다시 받습니다"
+      rm -rf "$repo"
+      marcap_fetch "$repo" "${files[@]}" || die "KRX 데이터 받기 실패 — 인터넷 연결 확인 후 ./run.sh data"
+    else
+      die "KRX 데이터 받기 실패 ($repo) — 폴더를 확인하거나 .env 의 QUANT_MARCAP_DIR 을 비우고 ./run.sh data"
+    fi
   fi
-  git -C "$repo" sparse-checkout set --no-cone "${files[@]}"
   say "DB 적재 (시가총액 상위 100, 최근 3년) — 1~2분"
   QUANT_MARCAP_DIR="$mdir" qa collect krx --marcap-dir "$mdir" --years 3 --top 100
   mkdir -p "$DATA_DIR" && touch "$DATA_DIR/.last_sync"
