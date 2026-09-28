@@ -135,15 +135,20 @@ class QuantAI:
                     s.add(Instrument(symbol=code, market="KRX", name=ds.names.get(code, code), currency="KRW"))
             if "KOSPI" not in have:
                 s.add(Instrument(symbol="KOSPI", market=BENCHMARK_MARKET, name="코스피(시총가중 대용)", currency=""))
+            for k in ds.extra_indices:  # 화면용 (벤치마크는 항상 KOSPI)
+                if k not in have:
+                    s.add(Instrument(symbol=k, market=BENCHMARK_MARKET, name={"KOSDAQ": "코스닥"}.get(k, k) + "(시총가중 대용)",
+                                     currency=""))
+        idx = {"KOSPI": ds.benchmark, **ds.extra_indices}
 
         class _Src:
             name = "marcap"
 
             def fetch_bars(self, sym, start, end, interval="1d"):
-                b = ds.benchmark if sym == "KOSPI" else ds.bars[sym]
+                b = idx[sym] if sym in idx else ds.bars[sym]
                 return b[["open", "high", "low", "close", "volume"]]
 
-        n = self.ingest_prices(_Src(), [*ds.bars, "KOSPI"], None, None)
+        n = self.ingest_prices(_Src(), [*ds.bars, *idx], None, None)
         months = ds.eligible.index.tz_convert(None).to_period("M")
         universe = {}
         for m in sorted(set(months)):
@@ -198,7 +203,7 @@ class QuantAI:
             idx = {k: v[v.index <= ts] for k, v in idx.items()}
             if not news.empty:
                 news = news[pd.to_datetime(news["published_at"], utc=True) <= ts]
-        bench = next(iter(idx.values())) if idx else equal_weight_index(bars)
+        bench = idx.get("KOSPI", next(iter(idx.values()))) if idx else equal_weight_index(bars)
         sentiment = daily_sentiment(news) if not news.empty else None
         return bars, bench, sentiment
 

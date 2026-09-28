@@ -15,12 +15,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 COLS = ["Date", "Code", "Name", "Open", "High", "Low", "Close", "Changes", "Volume", "Amount", "Marcap", "Market"]
 
@@ -114,6 +117,7 @@ class KRXDataset:
     eligible: pd.DataFrame
     benchmark: pd.DataFrame
     names: dict[str, str]
+    extra_indices: dict[str, pd.DataFrame] = field(default_factory=dict)  # 화면용 (KOSDAQ 대용)
 
 
 def build_krx_dataset(root: str | Path, start_year: int, end_year: int, top_n: int = 100,
@@ -124,7 +128,13 @@ def build_krx_dataset(root: str | Path, start_year: int, end_year: int, top_n: i
     bars = adjusted_bars(df, codes)
     elig = elig[[c for c in elig.columns if c in bars]]
     names = df.drop_duplicates("Code", keep="last").set_index("Code")["Name"].to_dict()
-    return KRXDataset(bars, elig, cap_weighted_index(df, "KOSPI"), {c: names.get(c, c) for c in bars})
+    extra = {}
+    if (df["Market"] == "KOSDAQ").any():
+        try:
+            extra["KOSDAQ"] = cap_weighted_index(df, "KOSDAQ")
+        except (ValueError, ZeroDivisionError) as e:  # 화면용이라 실패해도 적재는 계속
+            log.warning("KOSDAQ 대용 지수 계산 실패: %s", e)
+    return KRXDataset(bars, elig, cap_weighted_index(df, "KOSPI"), {c: names.get(c, c) for c in bars}, extra)
 
 
 MARCAP_REPO = os.environ.get("QUANT_MARCAP_REPO", "https://github.com/FinanceData/marcap.git")

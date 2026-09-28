@@ -485,3 +485,188 @@ function bindAnalyze(sym, auto, rerender) {
   // AI 키가 있으면 화면을 여는 순간 자동으로 한 번 (같은 종목은 10분 안에 다시 자동 실행하지 않음)
   if (auto) startAnalyze(sym, rerender);
 }
+
+// ================================================================= 종목 상세 (투자 전에 보는 것들)
+const PF = {};  // 종목별 상세 캐시 (화면 전환 때 다시 부르지 않게)
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+function moneyShort(v, cur) {
+  if (v == null) return "-";
+  const a = Math.abs(v);
+  if (cur === "KRW") return a >= 1e12 ? `${(v / 1e12).toFixed(1)}조원` : a >= 1e8 ? `${num(v / 1e8)}억원` : `${num(v)}원`;
+  const s = cur === "USD" ? "$" : "";
+  return a >= 1e12 ? `${s}${(v / 1e12).toFixed(2)}T` : a >= 1e9 ? `${s}${(v / 1e9).toFixed(2)}B` : a >= 1e6 ? `${s}${(v / 1e6).toFixed(1)}M` : `${s}${num(v, 2)}`;
+}
+function evDate(iso) {
+  if (!iso) return "-";
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return `${m}월 ${d}일 (${WD[dt.getUTCDay()]})`;
+}
+const EV_ICON = { earnings: "📊", earnings_prelim: "📊", ex_div: "✂️", div_pay: "💰", dividend: "💰", ir: "🎤", agm: "🏛️", report: "📑", offering: "⚠️", buyback: "🔁" };
+const safeUrl = (u) => /^https?:\/\//i.test(u || "") ? esc(u) : null;
+
+function pfEvents(p) {
+  const evs = p.events || [];
+  if (!evs.length) return `<div class="ev-none small dim">예정된 실적 발표·배당 일정 정보가 없습니다${(p.sources || []).length ? "" : " — 외부 데이터 소스에 연결하지 못했습니다"}</div>`;
+  const earn = evs.find((e) => (e.kind === "earnings") && !e.past);
+  const warn = earn && earn.d_day <= 7 ? `<div class="ev-warn">⚡ <b>${earn.d_label === "오늘" ? "오늘" : earn.d_label}</b> 실적 발표 — 발표 전후로 주가 변동이 커질 수 있습니다. 새로 사기 전에 발표 결과를 확인하는 것도 방법입니다.</div>` : "";
+  return `<div class="ev-strip">${evs.slice(0, 6).map((e) => `<div class="ev ${e.kind === "earnings" && !e.past ? "hot" : ""} ${e.past ? "past" : ""}">
+    <div class="ev-d">${esc(e.d_label)}</div>
+    <div class="ev-b"><div><span>${EV_ICON[e.kind] || "📌"}</span> <b>${esc(e.label)}</b>${e.estimated ? ' <span class="chip xs">예상</span>' : ""}${e.filed ? ' <span class="chip xs">공시</span>' : ""}</div>
+      <div class="small">${evDate(e.date)}${e.date_end ? ` ~ ${evDate(e.date_end)}` : ""}${e.time ? ` · ${esc(e.time)}` : ""}</div>
+      ${e.detail ? `<div class="xs dim ev-det">${e.url && safeUrl(e.url) ? `<a class="link" href="${safeUrl(e.url)}" target="_blank" rel="noopener">${esc(e.detail)}</a>` : esc(e.detail)}</div>` : ""}</div></div>`).join("")}</div>${warn}`;
+}
+
+function range52(st, cur) {
+  if (st.high52 == null || st.low52 == null) return "";
+  const pos = st.pos52 == null ? null : Math.max(0, Math.min(1, st.pos52));
+  return `<div class="r52"><div class="xs muted">52주 범위 ${pos == null ? "" : `· 현재 <b>${Math.round(pos * 100)}%</b> 위치`}</div>
+    <div class="r52-bar">${pos == null ? "" : `<i style="left:${pos * 100}%"></i>`}</div>
+    <div class="r52-l xs"><span class="down">${esc(priceCur(st.low52, cur))}</span><span class="up">${esc(priceCur(st.high52, cur))}</span></div></div>`;
+}
+const priceCur = (v, cur) => v == null ? "-" : cur === "KRW" ? `${num(v)}원` : `${cur === "USD" ? "$" : ""}${num(v, 2)}`;
+const ratio = (v, d = 1) => v == null ? "-" : `${(v * 100).toFixed(d)}%`;
+const times = (v) => v == null ? "-" : `${v.toFixed(1)}배`;
+
+function pfStats(p, cur) {
+  const s = p.stats || {};
+  const tiles = [
+    ["시가총액", moneyShort(s.market_cap, cur), "회사 전체 가격"],
+    ["PER", times(s.per), "주가 ÷ 1주당 순이익 (낮을수록 이익 대비 싸다)"],
+    ["선행 PER", times(s.fwd_per), "내년 예상 이익 기준"],
+    ["PBR", times(s.pbr), "주가 ÷ 1주당 순자산"],
+    ["EPS", s.eps == null ? "-" : priceCur(s.eps, cur), "1주당 순이익 (최근 4분기)"],
+    ["배당수익률", s.div_yield == null ? "-" : ratio(s.div_yield, 2), s.div_rate ? `1주당 연 ${priceCur(s.div_rate, cur)}` : "연간 배당 ÷ 주가"],
+    ["베타", s.beta == null ? "-" : s.beta.toFixed(2), "시장이 1% 움직일 때 평균 움직임"],
+    ["평균 거래량", s.avg_volume == null ? "-" : num(s.avg_volume), "최근 3개월 하루 평균"],
+    ...(s.foreign_rate != null ? [["외국인 소진율", ratio(s.foreign_rate), "외국인 한도 대비 보유"]] : []),
+  ].filter((t) => t[1] !== "-");
+  const known = new Set(["시총", "PER", "PBR", "EPS", "배당수익률", "52주 최고", "52주 최저", "외인소진율", "추정PER"]);
+  const extra = (p.stats_text || []).filter((r) => !known.has(r.label)).map((r) => `<span class="chip">${esc(r.label)} <b>${esc(r.value)}</b></span>`).join(" ");
+  if (!tiles.length && !extra && s.high52 == null) return "";
+  return `<div class="kv-grid">${tiles.map(([l, v, h]) => `<div class="kvt" title="${esc(h)}"><div class="xs muted">${l}</div><div class="num b">${esc(v)}</div></div>`).join("")}</div>
+    ${range52(s, cur)}${extra ? `<div class="chips" style="margin-top:8px">${extra}</div>` : ""}`;
+}
+
+function pfAnalyst(p, cur) {
+  const a = p.analyst || {}, s = p.stats || {};
+  if (!a.target_mean && !a.rating && !(a.reports || []).length) return "";
+  let bar = "";
+  if (a.target_low && a.target_high && a.target_high > a.target_low) {
+    const lo = Math.min(a.target_low, s.price || a.target_low), hi = Math.max(a.target_high, s.price || a.target_high);
+    const x = (v) => `${((v - lo) / (hi - lo)) * 100}%`;
+    bar = `<div class="tg-bar"><div class="tg-rng" style="left:${x(a.target_low)};right:calc(100% - ${x(a.target_high)})"></div>
+      ${s.price ? `<i class="now" style="left:${x(s.price)}" title="현재가"></i>` : ""}<i class="avg" style="left:${x(a.target_mean)}" title="평균 목표가"></i></div>
+      <div class="r52-l xs"><span>최저 ${esc(priceCur(a.target_low, cur))}</span><span>최고 ${esc(priceCur(a.target_high, cur))}</span></div>`;
+  }
+  const dist = a.distribution;
+  const tot = dist ? Object.values(dist).reduce((x, y) => x + y, 0) : 0;
+  const DL = { strongBuy: ["강력매수", "#ef4444"], buy: ["매수", "#f97316"], hold: ["보유", "#94a3b8"], sell: ["매도", "#3b82f6"], strongSell: ["강력매도", "#1d4ed8"] };
+  const distBar = tot ? `<div class="dist">${Object.entries(dist).filter(([, v]) => v).map(([k, v]) => `<span style="flex:${v};background:${DL[k][1]}" title="${DL[k][0]} ${v}"></span>`).join("")}</div>
+    <div class="xs muted">${Object.entries(dist).filter(([, v]) => v).map(([k, v]) => `${DL[k][0]} ${v}`).join(" · ")}</div>` : "";
+  const reps = (a.reports || []).map((r) => `<tr><td class="dim small">${esc(r.date || "")}</td><td style="white-space:normal">${esc(r.title)}</td><td class="small muted">${esc(r.broker || "")}</td></tr>`).join("");
+  return `<div class="tg-top"><div><div class="xs muted">평균 목표가${a.n ? ` · ${Math.round(a.n)}명` : ""}</div><div class="big num">${a.target_mean ? esc(priceCur(a.target_mean, cur)) : "-"}</div>
+      ${a.upside != null ? `<div class="${a.upside >= 0 ? "up" : "down"} b">현재가 대비 ${a.upside >= 0 ? "+" : ""}${(a.upside * 100).toFixed(1)}%</div>` : ""}</div>
+    ${a.rating ? `<div class="r"><div class="xs muted">투자의견</div><div class="rating">${esc(a.rating)}</div>${a.rec_mean ? `<div class="xs dim">평균 ${a.rec_mean.toFixed(2)} — ${esc(a.scale || "")}</div>` : ""}</div>` : ""}</div>
+    ${bar}${distBar}
+    ${reps ? `<div class="small muted" style="margin:10px 0 4px">최근 증권사 리포트</div><table class="tight"><tbody>${reps}</tbody></table>` : ""}
+    <div class="xs dim" style="margin-top:8px">증권사 애널리스트 의견입니다. 이 플랫폼의 AI 판단과는 별개입니다${a.as_of ? ` · ${esc(a.as_of)} 기준` : ""}.</div>`;
+}
+
+function barsSvg(rows, key, cur, color) {
+  const vals = rows.map((r) => r[key]).filter((v) => v != null);
+  if (vals.length < 2) return "";
+  const mx = Math.max(...vals.map(Math.abs)) || 1, W = 100 / rows.length;
+  return `<svg viewBox="0 0 100 44" preserveAspectRatio="none" class="qbars">${rows.map((r, i) => {
+    const v = r[key]; if (v == null) return "";
+    const h = Math.abs(v) / mx * 36;
+    return `<rect x="${i * W + W * 0.18}" width="${W * 0.64}" y="${v >= 0 ? 38 - h : 38}" height="${Math.max(h, 0.5)}" rx="1" fill="${v >= 0 ? color : "var(--down)"}"><title>${r.period} ${moneyShort(v, cur)}</title></rect>`;
+  }).join("")}</svg><div class="qlab xs dim">${rows.map((r) => `<span>${esc(r.period.slice(2))}</span>`).join("")}</div>`;
+}
+
+function pfEarnings(p, cur) {
+  const h = p.earnings_history || [], q = p.quarterly || [];
+  if (!h.length && !q.length) return "";
+  const hist = h.slice().reverse().map((x) => `<tr><td class="small">${esc(x.date)}</td><td class="r num">${x.eps_estimate == null ? "-" : x.eps_estimate.toFixed(2)}</td><td class="r num b">${x.eps_actual.toFixed(2)}</td>
+    <td class="r">${x.surprise_pct == null ? "" : `<span class="chip ${x.beat ? "pos" : "neg"}">${x.beat ? "상회" : "하회"} ${x.surprise_pct >= 0 ? "+" : ""}${x.surprise_pct.toFixed(1)}%</span>`}</td></tr>`).join("");
+  const beats = h.filter((x) => x.beat != null);
+  const last = q[q.length - 1];
+  const margin = last && last.revenue && last.op_income != null ? last.op_income / last.revenue : null;
+  return `${q.length ? `<div class="q-grid">
+      <div><div class="xs muted">분기 매출 ${last?.revenue ? `· 최근 <b>${esc(moneyShort(last.revenue, cur))}</b>` : ""}</div>${barsSvg(q, "revenue", cur, "var(--accent)")}</div>
+      <div><div class="xs muted">영업이익 ${margin != null ? `· 이익률 <b>${(margin * 100).toFixed(1)}%</b>` : ""}</div>${barsSvg(q, "op_income", cur, "var(--good)")}</div></div>` : ""}
+    ${hist ? `<div class="small muted" style="margin:10px 0 4px">EPS 서프라이즈 ${beats.length ? `— 최근 ${beats.length}번 중 <b>${beats.filter((x) => x.beat).length}번</b> 예상 상회` : ""}</div>
+      <table class="tight"><thead><tr><th>발표</th><th class="r">예상</th><th class="r">실제</th><th class="r"></th></tr></thead><tbody>${hist}</tbody></table>` : ""}`;
+}
+
+function pfFinance(p, cur) {
+  const s = p.stats || {};
+  const tone = (v, good, bad) => v == null ? "" : v >= good ? "good" : v <= bad ? "bad-t" : "";
+  const rows = [
+    ["매출 성장률 (전년 대비)", s.rev_growth, ratio(s.rev_growth), tone(s.rev_growth, 0.1, 0)],
+    ["이익 성장률 (전년 대비)", s.earn_growth, ratio(s.earn_growth), tone(s.earn_growth, 0.1, 0)],
+    ["영업이익률", s.op_margin, ratio(s.op_margin), tone(s.op_margin, 0.15, 0.03)],
+    ["순이익률", s.profit_margin, ratio(s.profit_margin), tone(s.profit_margin, 0.1, 0)],
+    ["ROE (자기자본이익률)", s.roe, ratio(s.roe), tone(s.roe, 0.15, 0.05)],
+    ["부채비율 (부채 ÷ 자본)", s.debt_to_equity, ratio(s.debt_to_equity, 0), s.debt_to_equity == null ? "" : s.debt_to_equity <= 0.5 ? "good" : s.debt_to_equity >= 2 ? "bad-t" : ""],
+    ["잉여현금흐름 (FCF)", s.fcf, moneyShort(s.fcf, cur), tone(s.fcf, 1, -1)],
+    ["현금 / 총부채", s.cash, `${moneyShort(s.cash, cur)} / ${moneyShort(s.debt, cur)}`, ""],
+    ["매출 (최근 4분기)", s.revenue, moneyShort(s.revenue, cur), ""],
+    ["기관 보유 비율", s.institutions, ratio(s.institutions), ""],
+    ["공매도 비율 (유통주식 대비)", s.short_float, ratio(s.short_float), s.short_float >= 0.1 ? "warn-t" : ""],
+  ].filter((r) => r[1] != null);
+  if (!rows.length) return "";
+  return `<table class="tight"><tbody>${rows.map(([l, , v, t]) => `<tr><td class="muted">${l}</td><td class="r num b ${t}">${esc(v)}</td></tr>`).join("")}</tbody></table>
+    <div class="xs dim" style="margin-top:6px">초록 = 양호 · 빨강 = 주의 (업종마다 기준이 다르니 참고용)</div>`;
+}
+
+function pfCompany(p, name) {
+  const c = p.company || {};
+  if (!c.sector && !c.summary && !c.industry) return "";
+  const facts = [["섹터", c.sector], ["산업", c.industry], ["직원 수", c.employees ? `${num(c.employees)}명` : null],
+    ["국가", c.country], ["거래소", c.exchange]].filter((x) => x[1]);
+  const web = safeUrl(c.website);
+  return `<div class="chips">${facts.map(([k, v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join(" ")}${web ? ` <a class="chip link" href="${web}" target="_blank" rel="noopener">웹사이트 ↗</a>` : ""}</div>
+    ${c.summary ? `<div class="co-sum small muted" id="co-sum">${esc(c.summary)}</div><div style="display:flex;gap:8px;margin-top:8px"><button class="btn-sm" id="co-more">더 보기</button>
+    <button class="btn-sm primary" onclick="askAI('${esc((name || "").replace(/'/g, ""))} 회사 소개를 한국어로 쉽게 요약하고, 투자 전에 확인할 점을 알려줘')">${ICONS.chat} AI 한국어 요약</button></div>` : ""}`;
+}
+
+function pfNews(p, dbNews) {
+  const items = [
+    ...(dbNews || []).map((n) => ({ ...n, src: n.source || "RSS" })),
+    ...(p.news || []).map((n) => ({ ...n, src: n.source })),
+  ];
+  const seen = new Set();
+  const list = items.filter((n) => { const k = (n.title || "").slice(0, 40).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || ""))).slice(0, 15);
+  if (!list.length) return "";
+  return `<div class="news-list">${list.map((n) => { const u = safeUrl(n.url); return `<div class="pfn"><div style="flex:1;min-width:0">
+    <div class="t">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(n.title)}</a>` : esc(n.title)}</div>
+    <div class="xs dim">${esc(n.src || "")} · ${n.ts ? time(n.ts, true) : ""}</div></div>${n.sentiment != null ? sentChip(n.sentiment) : ""}</div>`; }).join("")}</div>`;
+}
+
+async function loadProfile(sym, name, a, refresh = false) {
+  const box = $("#pf-sections"), evBox = $("#pf-events"), stBox = $("#pf-stats");
+  if (!box) return;
+  let p = !refresh && PF[sym] && Date.now() - PF[sym].at < 300e3 ? PF[sym].p : null;
+  if (!p) {
+    try { p = await api(`/api/profile?symbol=${encodeURIComponent(sym)}${refresh ? "&refresh=1" : ""}`); PF[sym] = { p, at: Date.now() }; } catch (e) { p = { errors: [String(e.message || e)], events: [], sources: [] }; }
+  }
+  if (S.view !== "analysis" || (S.symbol && S.symbol !== sym)) return;  // 그 사이 다른 화면·종목으로 이동
+  const cur = p.currency || a.currency || (isKR(sym) ? "KRW" : "USD");
+  if (evBox) evBox.innerHTML = pfEvents(p);
+  if (stBox) stBox.innerHTML = pfStats(p, cur) || empty("지표를 받지 못했습니다");
+  const secs = [
+    ["애널리스트 전망", pfAnalyst(p, cur)], ["실적", pfEarnings(p, cur)],
+    ["재무 건전성", pfFinance(p, cur)], ["기업 정보", pfCompany(p, name)],
+  ].filter((x) => x[1]);
+  const news = pfNews(p, a.news);
+  const src = (p.sources || []).length ? `출처: ${p.sources.map(esc).join(" · ")}${p.fetched_at ? ` · ${time(p.fetched_at, true)} 기준` : ""}${p.stale ? " · <span class='warn-t'>최신 갱신 실패 — 이전 자료</span>" : ""}` : `<span class="warn-t">외부 데이터 소스에 연결하지 못했습니다</span> — 30분 뒤 자동으로 다시 시도합니다`;
+  const errs = (p.errors || []).length ? `<details class="xs dim" style="display:inline"><summary>세부</summary>${p.errors.map(esc).join("<br>")}</details>` : "";
+  box.innerHTML = `${secs.length ? `<div class="grid g-2">${secs.map(([t, b]) => card(t, b)).join("")}</div>` : ""}
+    ${news ? card("관련 뉴스", news, `<span class="xs dim">${(a.news || []).length ? "국내 RSS" : ""}${(a.news || []).length && (p.news || []).length ? " + " : ""}${(p.news || []).length ? "Yahoo" : ""}</span>`) : ""}
+    <div class="pf-src xs dim">${src} ${errs} <button class="btn-sm" id="pf-refresh">새로 고침</button></div>`;
+  const more = $("#co-more");
+  if (more) more.onclick = () => { $("#co-sum").classList.toggle("open"); more.textContent = $("#co-sum").classList.contains("open") ? "접기" : "더 보기"; };
+  $("#pf-refresh").onclick = (e) => { e.target.disabled = true; e.target.textContent = "불러오는 중…"; loadProfile(sym, name, a, true); };
+}

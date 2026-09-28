@@ -119,7 +119,7 @@ class DashboardAPI:
         with session_scope(self.engine) as s:
             inst = self._instruments(s)
             demo = s.scalar(select(func.count()).select_from(PriceBar).where(PriceBar.source == "synthetic-demo")) > 0
-            idx_syms = [k for k, v in inst.items() if v.market == "INDEX"]
+            idx_syms = sorted((k for k, v in inst.items() if v.market == "INDEX"), key=lambda k: k != "KOSPI")  # 벤치마크 먼저
             trade_syms = [k for k, v in inst.items() if v.market != "INDEX"]
             bars = self._bars(s, trade_syms + idx_syms)
             cons = self._latest_consensus(s)
@@ -178,30 +178,36 @@ class DashboardAPI:
                 if b is None or len(b) < 2:
                     continue
                 c = cons.get(sym)
+                tail = b.iloc[-20:]
                 watch.append({
+                    "_liq": float((tail["close"] * tail["volume"]).mean() or 0) if inst[sym].currency == "KRW" else 0.0,
                     "symbol": sym, "name": inst[sym].name, "market": inst[sym].market,
                     "currency": inst[sym].currency, "last": _f(b["close"].iloc[-1], 2),
                     "chg_pct": _f(b["close"].iloc[-1] / b["close"].iloc[-2] - 1),
                     "action": c.action if c else None, "prob_up": _f(c.prob_up) if c else None,
                     "confidence": c.confidence if c else None, "conflict": c.conflict if c else None,
                 })
-            # 종목이 많으면(실제 KRX 유니버스) 보유·코어·위성·AI 분석 종목 우선 40개만 관심 종목으로
+            # 관심 종목 순서: 보유·위성 → 코어 → 내가 본 종목 → AI 신호 → 나머지(거래대금 큰 순). 많으면 40개만
+            from ..ops import get_state
+            prio: dict[str, int] = {}
+            for m in ("live", "shadow", "paper"):
+                snap = s.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == m)
+                                .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()))
+                for sym in (snap.positions or {}) if snap else {}:
+                    prio.setdefault(sym, 0)
+                plan = get_state(self.engine, f"cs-plan:{m}")
+                for x in plan.get("satellite", []):
+                    prio.setdefault(x["symbol"], 0)
+                for sym in plan.get("core", []):
+                    prio.setdefault(sym, 1)
+            for sym in reversed(get_state(self.engine, "watch_symbols").get("symbols", [])):
+                prio.setdefault(sym, 2)
+            watch.sort(key=lambda w: (prio.get(w["symbol"], 3 if w["action"] else 4), -w["_liq"], w["name"] or ""))
+            for w in watch:
+                w["tier"] = {0: "held", 1: "core", 2: "watched"}.get(prio.get(w["symbol"]), "signal" if w["action"] else None)
+                w.pop("_liq")
             all_symbols = [{"symbol": w["symbol"], "name": w["name"], "action": w["action"]} for w in watch]
-            if len(watch) > 40:
-                from ..ops import get_state
-                prio: dict[str, int] = {}
-                for m in ("live", "shadow", "paper"):
-                    snap = s.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == m)
-                                    .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()))
-                    for sym in (snap.positions or {}) if snap else {}:
-                        prio.setdefault(sym, 0)
-                    plan = get_state(self.engine, f"cs-plan:{m}")
-                    for sym in plan.get("core", []):
-                        prio.setdefault(sym, 1)
-                    for x in plan.get("satellite", []):
-                        prio.setdefault(x["symbol"], 0)
-                watch.sort(key=lambda w: (prio.get(w["symbol"], 2 if w["action"] else 3), w["name"]))
-                watch = watch[:40]
+            watch = watch[:40]
 
             # ---- 신호 / AI 요약
             recent = s.scalars(select(ConsensusRecord).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc())
@@ -328,7 +334,25 @@ class DashboardAPI:
                                            else "")
             out.append({"ts": ts.isoformat(), "name": name, "importance": e.get("importance"), "country": country,
                         "symbol": e.get("symbol")})
+        out += self._stock_events(now)
         return sorted(out, key=lambda x: x["ts"])[:12]
+
+    def _stock_events(self, now: datetime) -> list[dict]:
+        """이미 열어 본 종목(캐시된 종목 상세)의 실적 발표·배당락 일정 — 30일 이내. 네트워크 호출 없음."""
+        from ..data.fundamentals import with_d_day
+        from ..data.models import SystemState
+        out = []
+        with session_scope(self.engine) as s:
+            rows = s.scalars(select(SystemState).where(SystemState.key.like("profile:%"))).all()
+            names = {i.symbol: i.name for i in s.scalars(select(Instrument))}
+            prof = [(r.key.split(":", 1)[1], (r.value or {}).get("data") or {}) for r in rows]
+        for sym, p in prof:
+            for e in with_d_day([e for e in p.get("events") or [] if e.get("kind") in ("earnings", "ex_div")]):
+                if not e["past"] and e["d_day"] <= 30:
+                    out.append({"ts": pd.Timestamp(f"{e['date']}T00:00:00+09:00").tz_convert("UTC").isoformat(), "name": f"{names.get(sym) or sym} {e['label']}"
+                                + (" (예상)" if e.get("estimated") else ""), "importance": 0.9 if e["kind"] == "earnings" else 0.6,
+                                "country": "KR" if sym.isdigit() else "US", "symbol": sym, "d_label": e["d_label"]})
+        return out
 
     def _portfolio(self, s, mode, bars, inst) -> dict:
         snaps = s.scalars(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
@@ -394,10 +418,11 @@ class DashboardAPI:
                              .order_by(ConsensusRecord.as_of.desc()).limit(30)).all()
             from ..data.models import AnalystOpinionRecord
             ops = s.scalars(select(AnalystOpinionRecord).where(AnalystOpinionRecord.consensus_id == c.id)).all() if c else []
+            terms = self._news_terms(symbol, inst[symbol].name if symbol in inst else None)
             news = [{"ts": _ts(n.published_at), "title": n.title, "sentiment": _f(n.sentiment, 2),
-                     "events": n.events or []}
-                    for n in s.scalars(select(NewsArticle).order_by(NewsArticle.published_at.desc()).limit(400))
-                    if symbol in (n.symbols or [])][:12]
+                     "events": n.events or [], "source": n.source, "url": n.url}
+                    for n in s.scalars(select(NewsArticle).order_by(NewsArticle.published_at.desc()).limit(600))
+                    if symbol in (n.symbols or []) or any(t in (n.title or "").lower() for t in terms)][:15]
             similar = self.app.memory.search(s, f"{symbol} {inst[symbol].name if symbol in inst else ''} "
                                              + " ".join(n["title"] for n in news[:3]), k=5,
                                              before=c.as_of if c else None, symbol=symbol)
@@ -411,6 +436,10 @@ class DashboardAPI:
             "checklist": self._checklist(c, b), "range": self._range(b, (c.payload or {}).get("horizon", 5) if c else 5),
             "symbol": symbol, "name": inst[symbol].name if symbol in inst else symbol,
             "market": inst[symbol].market if symbol in inst else "",
+            "last": _f(b["close"].iloc[-1], 2) if b is not None and len(b) else None,
+            "chg": _f(b["close"].iloc[-1] - b["close"].iloc[-2], 2) if b is not None and len(b) > 1 else None,
+            "chg_pct": _f(b["close"].iloc[-1] / b["close"].iloc[-2] - 1) if b is not None and len(b) > 1 else None,
+            "last_ts": _ts(b.index[-1]) if b is not None and len(b) else None,
             "currency": inst[symbol].currency if symbol in inst else "",
             "fetch": fetched if fetched.get("error") or fetched.get("source") else None,
             "has_llm": self.app.settings.has_llm,
@@ -419,6 +448,19 @@ class DashboardAPI:
             "history": [{"ts": _ts(h.as_of), "action": h.action, "prob_up": _f(h.prob_up), "confidence": h.confidence,
                          "correct": h.correct, "realized": _f(h.realized_return)} for h in hist],
         }
+
+    @staticmethod
+    def _news_terms(symbol: str, name: str | None) -> list[str]:
+        """제목으로 관련 뉴스 찾기: 종목명 · 한글 별칭 · (해외) 티커·영문명. 너무 짧은 말은 오탐이 많아 뺀다."""
+        from ..data.global_stocks import GLOBAL_STOCKS, KR_NICKNAMES
+        terms = {(name or "").lower()}
+        for sym, ko, aliases in GLOBAL_STOCKS:
+            if sym == symbol:
+                terms |= {ko.lower(), *(a.lower() for a in aliases)}
+                if len(sym) >= 3:
+                    terms.add(sym.lower())
+        terms |= {k.lower() for k, v in KR_NICKNAMES.items() if name and v == name}
+        return [t for t in terms if len(t) >= 2 and not t.isdigit() and t not in {"spy", "arm", "meta", "비자", "우버"}]
 
     @staticmethod
     def _checklist(c, b) -> list[dict]:
@@ -610,6 +652,39 @@ class DashboardAPI:
             c = cons.get(r["symbol"])
             r["action"] = c.action if c else None
         return {"results": res}
+
+    def profile(self, symbol: str, refresh: bool = False) -> dict:
+        """종목 상세 (토스식): 다가오는 일정 D-day · 핵심 지표 · 애널리스트 · 실적 · 기업 정보 · 뉴스."""
+        import re as _re
+
+        from ..data.fundamentals import stock_profile
+        if not _re.fullmatch(r"[A-Za-z0-9.\-]{1,12}", symbol or ""):
+            return {"error": "잘못된 종목 코드"}
+        with session_scope(self.engine) as s:
+            inst = s.scalar(select(Instrument).where(Instrument.symbol == symbol))
+            if inst is not None and inst.market == "INDEX":
+                return {"symbol": symbol, "events": [], "skipped": "지수"}
+            b = self._bars(s, [symbol]).get(symbol)
+        try:
+            p = stock_profile(self.engine, symbol, refresh=refresh)
+        except Exception as e:  # noqa: BLE001 - 상세가 없어도 분석 화면은 떠야 한다
+            log.warning("종목 상세 %s 실패: %s", symbol, e)
+            return {"symbol": symbol, "events": [], "errors": [str(e)[:200]], "sources": []}
+        st = dict(p.get("stats") or {})
+        if b is not None and len(b):
+            st["price"] = float(b["close"].iloc[-1])  # 화면의 차트와 같은 값으로
+            st["price_ts"] = _ts(b.index[-1])
+            if len(b) >= 2:
+                st["chg_pct"] = float(b["close"].iloc[-1] / b["close"].iloc[-2] - 1)
+            if st.get("high52") is None and len(b) >= 200:
+                st["high52"], st["low52"] = float(b["high"].iloc[-250:].max()), float(b["low"].iloc[-250:].min())
+        if st.get("price") and st.get("high52") and st.get("low52") and st["high52"] > st["low52"]:
+            st["pos52"] = (st["price"] - st["low52"]) / (st["high52"] - st["low52"])
+        a = dict(p.get("analyst") or {})
+        if a.get("target_mean") and st.get("price"):
+            a["upside"] = a["target_mean"] / st["price"] - 1
+        return {**p, "stats": st, "analyst": a, "name": inst.name if inst else symbol,
+                "market": inst.market if inst else ""}
 
     def ensure_symbol(self, symbol: str) -> dict:
         """해외 종목이면 무료 일봉을 받아 캐시 (처음 한 번 · 12시간마다 갱신)."""

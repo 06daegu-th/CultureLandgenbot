@@ -539,3 +539,56 @@ table.tight td:first-child { max-width: 180px; overflow: hidden; text-overflow: 
 .analyze-card .an-ic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: #fff; flex: none;
   background: linear-gradient(135deg, #6366f1, #22d3ee); }
 @media (max-width: 900px) { .analyze-card { flex-wrap: wrap; } }
+
+/* ---- 종목 상세 (투자 전 체크) */
+.b { font-weight: 700; }
+.stock-head .sh-top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.sh-name { font-size: 20px; font-weight: 800; overflow-wrap: anywhere; }
+.sh-price { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.sh-price > .num:first-child { font-size: 30px; font-weight: 800; letter-spacing: -.5px; }
+.sh-act { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sh-act .sym-select { max-width: 240px; }
+.ev-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.ev { display: flex; gap: 12px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--panel-2); min-width: 0; }
+.ev.hot { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: var(--glow); }
+.ev.past { opacity: .6; }
+.ev-d { flex: none; min-width: 52px; text-align: center; font-weight: 800; font-size: 15px; padding: 6px 4px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-3); }
+.ev.past .ev-d { background: var(--panel-3); color: var(--muted); }
+.ev-b { min-width: 0; }
+.ev-det { margin-top: 3px; overflow-wrap: anywhere; }
+.ev-warn { margin-top: 10px; padding: 9px 12px; border-radius: 10px; font-size: 12.5px; background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); }
+.ev-none { padding: 10px 0; }
+.kv-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.kvt { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--panel-2); min-width: 0; cursor: help; }
+.kvt .num { font-size: 15px; margin-top: 2px; overflow-wrap: anywhere; }
+.r52 { margin-top: 12px; }
+.r52-bar, .tg-bar { position: relative; height: 8px; border-radius: 999px; margin: 8px 0 4px; background: linear-gradient(90deg, var(--down), var(--muted), var(--up)); opacity: .9; }
+.r52-bar i, .tg-bar i { position: absolute; top: -4px; width: 4px; height: 16px; border-radius: 3px; background: var(--text); transform: translateX(-2px); }
+.r52-l { display: flex; justify-content: space-between; }
+.tg-top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.tg-top .r { text-align: right; }
+.rating { font-size: 18px; font-weight: 800; color: var(--accent-3); }
+.tg-bar { background: var(--panel-3); margin-top: 14px; }
+.tg-rng { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.tg-bar i.avg { background: var(--accent-3); }
+.dist { display: flex; height: 10px; border-radius: 999px; overflow: hidden; margin: 12px 0 4px; gap: 2px; }
+.q-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.qbars { width: 100%; height: 70px; display: block; margin-top: 6px; }
+.qlab { display: flex; justify-content: space-around; }
+.co-sum { margin-top: 10px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.co-sum.open { display: block; }
+.pf-src { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 2px 16px; }
+.pfn { display: flex; gap: 10px; align-items: center; padding: 9px 2px; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); font-size: 13px; }
+.pfn:last-child { border-bottom: 0; }
+.pfn .t { line-height: 1.45; overflow-wrap: anywhere; }
+.pfn .t a { color: var(--text); }
+.pfn .t a:hover { color: var(--accent-3); }
+@media (max-width: 900px) {
+  .kv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .q-grid { grid-template-columns: 1fr; }
+  .sh-price > .num:first-child { font-size: 24px; }
+  .sh-act { width: 100%; } .sh-act .sym-select { flex: 1; max-width: none; min-width: 0; }
+  .ev-strip { grid-template-columns: 1fr; }
+}
+.idx.click { cursor: pointer; } .idx.click:hover { border-color: var(--accent); }
+.ev-it.click { cursor: pointer; } .ev-it.click:hover { color: var(--accent-3); }
