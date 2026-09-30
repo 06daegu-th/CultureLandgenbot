@@ -592,3 +592,146 @@ table.tight td:first-child { max-width: 180px; overflow: hidden; text-overflow: 
 }
 .idx.click { cursor: pointer; } .idx.click:hover { border-color: var(--accent); }
 .ev-it.click { cursor: pointer; } .ev-it.click:hover { color: var(--accent-3); }
+
+/* =================================================================== 살아 있는 화면 (v11) */
+/* ---- 등장 애니메이션 · 스켈레톤 */
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.995); } to { opacity: 1; transform: none; } }
+.rise { animation: rise .42s cubic-bezier(.2,.7,.2,1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+.card { transition: border-color .2s, box-shadow .25s, transform .25s; }
+.card:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+@keyframes shimmer { from { background-position: -400px 0; } to { background-position: 400px 0; } }
+.sk-card { display: grid; gap: 12px; }
+.sk { height: 14px; border-radius: 8px; background: linear-gradient(90deg, var(--panel-2) 0%, var(--panel-3) 40%, var(--panel-2) 80%); background-size: 800px 100%; animation: shimmer 1.3s linear infinite; }
+.sk.tall { height: 180px; }
+
+/* ---- 실시간 가격 깜빡임 */
+@keyframes flashUp { 0% { background: color-mix(in srgb, var(--up) 45%, transparent); color: #fff; } 100% { background: transparent; } }
+@keyframes flashDown { 0% { background: color-mix(in srgb, var(--down) 45%, transparent); color: #fff; } 100% { background: transparent; } }
+.flash-up { animation: flashUp 1.1s ease-out; border-radius: 4px; }
+.flash-down { animation: flashDown 1.1s ease-out; border-radius: 4px; }
+
+/* ---- 토스트 */
+#toasts { position: fixed; top: 76px; right: 18px; z-index: 90; display: flex; flex-direction: column; gap: 10px; width: min(380px, calc(100vw - 32px)); pointer-events: none; }
+.toast { pointer-events: auto; position: relative; overflow: hidden; display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px 14px; border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(14px); border: 1px solid var(--line-2);
+  box-shadow: 0 14px 40px rgba(0,0,0,.35); cursor: pointer; animation: toastIn .38s cubic-bezier(.2,.9,.25,1.15) both; }
+.toast.out { animation: toastOut .28s ease-in both; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes toastOut { to { opacity: 0; transform: translateX(40px) scale(.96); } }
+.toast::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
+.toast.lv-good::before { background: var(--good); } .toast.lv-warn::before { background: var(--warn); } .toast.lv-bad::before { background: var(--bad); }
+.toast.dir-up::before { background: var(--up); } .toast.dir-down::before { background: var(--down); }
+.toast-ic { font-size: 20px; line-height: 1; margin-top: 2px; }
+.toast-b { flex: 1; min-width: 0; } .toast-b b { display: block; font-size: 14px; } .toast-b .small { color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+.toast.dir-up .toast-b b { color: var(--up); } .toast.dir-down .toast-b b { color: var(--down); }
+.toast-x { background: none; border: 0; color: var(--muted); font-size: 18px; cursor: pointer; padding: 0 2px; line-height: 1; }
+.toast-bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; background: color-mix(in srgb, var(--accent) 60%, transparent); transform-origin: left; animation: toastBar linear forwards; }
+.toast.hold .toast-bar { animation-play-state: paused; }
+@keyframes toastBar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* ---- 알림센터 */
+.bell-wrap .cnt.pop { animation: pop .45s cubic-bezier(.3,1.6,.5,1); }
+@keyframes pop { 0% { transform: scale(.4); } 100% { transform: scale(1); } }
+.bell-panel { width: 380px; max-height: 520px; padding: 0; display: none; flex-direction: column; }
+.bell-panel.open { display: flex; animation: rise .22s ease both; }
+.al-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.al-head b { flex: 1; } .al-head .xs { flex: none; }
+.al-list { overflow: auto; padding: 6px; }
+.al-it { display: flex; gap: 10px; padding: 10px; border-radius: 10px; color: var(--text); text-decoration: none; border-left: 3px solid transparent; }
+.al-it:hover { background: var(--panel-2); }
+.al-it.new { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.al-it.lv-warn { border-left-color: var(--warn); } .al-it.lv-bad { border-left-color: var(--bad); } .al-it.lv-good { border-left-color: var(--good); }
+.al-it.dir-up { border-left-color: var(--up); } .al-it.dir-down { border-left-color: var(--down); }
+.al-ic { font-size: 18px; } .al-t b { font-size: 13px; } .al-b { overflow-wrap: anywhere; margin: 2px 0; }
+.al-foot { padding: 8px 14px; border-top: 1px solid var(--line); }
+.chk-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 12.5px; cursor: pointer; background: var(--panel-2); }
+.chk-chip input { accent-color: var(--accent); }
+.al-prefs { display: flex; flex-wrap: wrap; gap: 8px; }
+.al-sw { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+
+/* ---- 실시간 티커 */
+.ticker { display: flex; align-items: center; gap: 12px; padding: 6px 18px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 70%, transparent); font-size: 12.5px; overflow: hidden; }
+.tk-live { flex: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 800; font-size: 11px; color: var(--bad); letter-spacing: .5px; }
+.tk-live i, .ls-dot i, .ctl-live i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; animation: livePulse 1.6s ease-out infinite; }
+@keyframes livePulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent); } 80%, 100% { box-shadow: 0 0 0 8px transparent; } }
+.tk-track { flex: 1; overflow: hidden; mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent); }
+.tk-row { display: inline-flex; gap: 26px; white-space: nowrap; animation: marquee 45s linear infinite; }
+.tk-track:hover .tk-row { animation-play-state: paused; }
+.tk-track.static .tk-row { animation: none; }
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.tk { color: var(--text); text-decoration: none; } .tk:hover b { color: var(--accent-3); }
+
+/* ---- 홈: AI 24H 한 줄 */
+.live-strip { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 16px; border-radius: 14px; text-decoration: none; color: var(--text);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 14%, var(--panel)), var(--panel) 60%); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); font-size: 13px; }
+.live-strip:hover { border-color: var(--accent); }
+.ls-dot { color: var(--dim); display: inline-flex; } .live-strip.on .ls-dot { color: var(--good); }
+.ls-it { color: var(--muted); } .ls-it b { color: var(--text); }
+.ls-last { flex: 1; min-width: 200px; } .ls-go { color: var(--accent-3); display: inline-flex; gap: 4px; align-items: center; }
+
+/* ---- 24H 관제실 */
+.ctl-hero { background: radial-gradient(1200px 300px at 10% -40%, color-mix(in srgb, var(--accent-2) 30%, transparent), transparent), var(--card-bg); }
+.ctl-top { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.ctl-top h2 { margin: 6px 0 4px; font-size: 26px; letter-spacing: -.5px; }
+.ctl-live { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--warn); }
+.ctl-live.on { color: var(--good); }
+.ctl-kpi { display: grid; grid-template-columns: repeat(4, auto); gap: 22px; align-items: end; }
+.stage-chip { font-size: 16px !important; padding: 4px 12px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-3); }
+.flow { display: flex; align-items: stretch; gap: 0; margin-top: 16px; overflow-x: auto; padding-bottom: 4px; }
+.flow-n { flex: 1 1 0; min-width: 118px; padding: 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); animation: rise .45s both; animation-delay: calc(var(--i) * 70ms); }
+.flow-n b { display: block; font-size: 12.5px; margin: 6px 0 2px; }
+.flow-ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--panel-3); color: var(--muted); }
+.flow-n.st-ok .flow-ic { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
+.flow-n.st-fail { border-color: color-mix(in srgb, var(--bad) 50%, transparent); } .flow-n.st-fail .flow-ic { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+.flow-arrow { flex: 0 0 18px; display: grid; place-items: center; }
+.flow-arrow i { display: block; width: 18px; height: 2px; background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 8px); background-size: 16px 2px; animation: flowDash .8s linear infinite; }
+@keyframes flowDash { from { background-position: 0 0; } to { background-position: 16px 0; } }
+.pred-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.pred { padding: 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); display: grid; gap: 7px; min-width: 0; }
+.pred.hit { border-color: color-mix(in srgb, var(--good) 45%, transparent); } .pred.miss { border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+.pred-h { display: flex; justify-content: space-between; gap: 8px; } .pred-h a { color: var(--text); text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pred-px { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; }
+.pred-f { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 3px 10px; font-size: 12px; }
+.pred-f > div { display: flex; justify-content: space-between; gap: 6px; }
+.fac { font-family: "JetBrains Mono", monospace; font-weight: 700; letter-spacing: 1px; } .fac.up { color: var(--up); } .fac.down { color: var(--down); } .fac.flat { color: var(--dim); }
+.pred-ai { font-size: 12.5px; padding-top: 6px; border-top: 1px dashed var(--line-2); }
+.pred-r { font-size: 12.5px; }
+.lsteps { display: grid; gap: 6px; }
+.lstep { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; border: 1px solid transparent; color: var(--muted); }
+.lstep b { color: var(--muted); } .lstep.done b { color: var(--text); }
+.lstep.cur { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: var(--glow); }
+.lstep.cur b { color: var(--accent-3); }
+.lnum { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: var(--panel-3); }
+.lstep.done .lnum { background: var(--good); color: #04120a; } .lstep.cur .lnum { background: var(--accent); color: #fff; }
+.lad-eff { display: grid; gap: 4px; margin-top: 12px; padding: 10px; border-radius: 10px; background: var(--panel-2); }
+.conds { display: grid; gap: 6px; }
+.cond { display: flex; gap: 10px; align-items: flex-start; padding: 7px 8px; border-radius: 9px; }
+.cond-ic { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: var(--panel-3); color: var(--dim); }
+.cond.st-pass .cond-ic { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--good); }
+.cond.st-fail .cond-ic { background: color-mix(in srgb, var(--bad) 22%, transparent); color: var(--bad); }
+.sc-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.sc-t { padding: 12px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); min-width: 0; }
+.sc-t .big { font-size: 22px; margin: 4px 0; }
+.sc-charts { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-top: 14px; align-items: end; }
+.curve { width: 100%; height: 90px; display: block; } .curve polyline { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.curve polyline.pos { stroke: var(--up); } .curve polyline.neg { stroke: var(--down); }
+.curve .base, .calib .diag { stroke: var(--line-2); stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.calib { width: 160px; height: 110px; display: block; } .calib circle { fill: color-mix(in srgb, var(--accent) 55%, transparent); stroke: var(--accent); }
+.sh-pred { margin-top: 10px; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 10%, transparent); display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.com-top { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.com-bar { flex: 1; min-width: 160px; display: flex; height: 22px; border-radius: 999px; overflow: hidden; font-size: 11px; font-weight: 700; }
+.com-bar span { display: grid; place-items: center; color: #fff; min-width: 40px; } .com-bar .b { background: var(--up); } .com-bar .r { background: var(--down); } .com-bar .n { flex: 1; background: var(--panel-3); color: var(--muted); }
+@media (max-width: 1480px) { .sc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px) {
+  .ctl-kpi { grid-template-columns: repeat(2, auto); gap: 12px 18px; }
+  .flow { flex-direction: column; } .flow-arrow { flex-basis: 12px; } .flow-arrow i { width: 2px; height: 12px; background: repeating-linear-gradient(180deg, var(--accent) 0 4px, transparent 4px 8px); }
+  .sc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sc-charts { grid-template-columns: 1fr; }
+  #toasts { top: auto; bottom: 86px; right: 16px; left: 16px; width: auto; }
+  .bell-panel { width: min(360px, calc(100vw - 24px)); right: -60px; }
+  .ticker { padding: 6px 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rise, .flow-n, .toast, .toast.out, .bell-panel.open, .sk { animation: none !important; }
+  .tk-row, .flow-arrow i, .tk-live i, .ls-dot i, .ctl-live i { animation: none !important; }
+  .card { transition: none; }
+}

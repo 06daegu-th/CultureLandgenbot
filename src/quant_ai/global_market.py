@@ -97,7 +97,10 @@ def run_cycle(app, as_of: datetime | None = None, ts: datetime | None = None, cf
     calendar = bench.index
     held = set(app.load_portfolio(MAIN).positions)
     prev = ops.get_state(app.engine, f"cs:{MAIN}")
-    shortlist = list(dict.fromkeys([*scores.index[:cfg.shortlist_k], *prev.get("core", []), *[s for s in held if s in bars]]))
+    from .actions import watch_symbols
+    watched = [s for s in watch_symbols(app) if s in bars]  # 내가 본 미국 종목은 매일 예측·채점
+    shortlist = list(dict.fromkeys([*scores.index[:cfg.shortlist_k], *prev.get("core", []), *[s for s in held if s in bars],
+                                    *watched]))
     decisions = []
     try:  # AI 는 코어 전용이어도 측정 장부를 위해 판단 (주문엔 us-paper 설정대로만 반영)
         decisions = app.decide(as_of=as_of, symbols=shortlist, scenarios=False, market="US")

@@ -659,6 +659,7 @@ async function loadProfile(sym, name, a, refresh = false) {
   const secs = [
     ["애널리스트 전망", pfAnalyst(p, cur)], ["실적", pfEarnings(p, cur)],
     ["재무 건전성", pfFinance(p, cur)], ["기업 정보", pfCompany(p, name)],
+    ["커뮤니티 분위기 <span class='small dim'>참고용</span>", pfCommunity(p)],
   ].filter((x) => x[1]);
   const news = pfNews(p, a.news);
   const src = (p.sources || []).length ? `출처: ${p.sources.map(esc).join(" · ")}${p.fetched_at ? ` · ${time(p.fetched_at, true)} 기준` : ""}${p.stale ? " · <span class='warn-t'>최신 갱신 실패 — 이전 자료</span>" : ""}` : `<span class="warn-t">외부 데이터 소스에 연결하지 못했습니다</span> — 30분 뒤 자동으로 다시 시도합니다`;

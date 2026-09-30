@@ -339,7 +339,7 @@ def watch_symbols(app) -> list[str]:
 
 
 def add_watch(app, symbol: str) -> None:
-    """사용자가 보거나 분석을 요청한 국내 종목 → 매일 AI 판단 대상에 포함 (최근 20개)."""
+    """사용자가 보거나 분석을 요청한 종목 → 매일 AI 판단·알림 대상 (최근 20개). 해외 티커는 미국 사이클이 판단."""
     syms = [x for x in watch_symbols(app) if x != symbol] + [symbol]
     ops.set_state(app.engine, "watch_symbols", {"symbols": syms[-WATCH_MAX:]})
 
@@ -360,6 +360,64 @@ def analyze_symbol(app, symbol: str, say=None) -> dict:
             "confidence": d.signal.confidence, "consensus_id": d.consensus_id}
 
 
+EVENT_COOLDOWN = timedelta(hours=3)
+EVENT_DAILY_CAP = 20
+
+
+def event_reanalyze(app, now: datetime | None = None, max_symbols: int = 3) -> dict:
+    """새 공시·중요 뉴스가 뜬 보유·관심·코어 국내 종목을 그 자리에서 다시 판단 (주문 없음).
+
+    무료 한도 보호: 종목당 3시간에 한 번, 하루 20회, 한 번에 3종목. 같은 일봉의 판단이 여러 번이어도
+    예측 성적표는 마지막 하나만 센다 (표본 부풀리기 없음)."""
+    from sqlalchemy import func, select
+
+    from .alerts import focus_symbols, push
+    from .data.models import ConsensusRecord, Disclosure, NewsArticle
+    now = now or datetime.now(UTC)
+    cur = ops.get_state(app.engine, "event_cursor")
+    with session_scope(app.engine) as s:
+        max_n = s.scalar(select(func.max(NewsArticle.id))) or 0
+        max_d = s.scalar(select(func.max(Disclosure.id))) or 0
+        if not cur:  # 처음: 지금까지의 것은 건너뛴다
+            ops.set_state(app.engine, "event_cursor", {"n": max_n, "d": max_d, "day": now.date().isoformat(), "count": 0})
+            return {"reanalyzed": [], "first_run": True}
+        focus = {k for k in focus_symbols(app) if k.isdigit()}
+        triggers: dict[str, str] = {}
+        for d in s.scalars(select(Disclosure).where(Disclosure.id > cur.get("d", 0)).order_by(Disclosure.id)):
+            if d.symbol in focus:
+                triggers.setdefault(d.symbol, f"공시: {d.title}"[:160])
+        for n in s.scalars(select(NewsArticle).where(NewsArticle.id > cur.get("n", 0)).order_by(NewsArticle.id).limit(500)):
+            if (n.importance or 0) >= 0.7 or n.events:
+                for sym in n.symbols or []:
+                    if sym in focus:
+                        triggers.setdefault(sym, f"뉴스: {n.title}"[:160])
+    last = ops.get_state(app.engine, "event_last")
+    count = cur.get("count", 0) if cur.get("day") == now.date().isoformat() else 0
+    todo = [sym for sym in triggers
+            if not last.get(sym) or now - datetime.fromisoformat(last[sym]) >= EVENT_COOLDOWN][:max(0, min(max_symbols, EVENT_DAILY_CAP - count))]
+    done = []
+    if todo:
+        decisions = app.decide(symbols=todo, scenarios=False)
+        names = {}
+        with session_scope(app.engine) as s:
+            from .data.models import Instrument
+            names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_(todo)))}
+            for d in decisions:
+                rec = s.get(ConsensusRecord, d.consensus_id) if d.consensus_id else None
+                if rec is not None:
+                    rec.payload = {**(rec.payload or {}), "trigger": triggers[d.symbol]}
+        for d in decisions:
+            last[d.symbol] = now.isoformat()
+            done.append(d.symbol)
+            push(app.engine, "event", f"이벤트 분석: {names.get(d.symbol, d.symbol)} → {d.signal.action}",
+                 f"{triggers[d.symbol]} · 상승 확률 {d.signal.prob_up:.0%}", level="info", symbol=d.symbol,
+                 link=f"#analysis/{d.symbol}", dedupe=f"evt:{d.consensus_id}", now=now)
+        ops.set_state(app.engine, "event_last", last)
+    ops.set_state(app.engine, "event_cursor", {"n": max_n, "d": max_d, "day": now.date().isoformat(),
+                                               "count": count + len(done)})
+    return {"reanalyzed": done, "triggers": len(triggers)}
+
+
 def start_action(app, name: str, params: dict | None = None) -> dict:
     """버튼 → 백그라운드 스레드 (같은 동작은 동시에 하나만)."""
     params = params or {}
@@ -372,10 +430,17 @@ def start_action(app, name: str, params: dict | None = None) -> dict:
     from .global_market import sync as us_sync
     fns = {"us_cycle": lambda say: (say("미국 일봉 받는 중…"), {"sync": us_sync(app), "cycle": us_cycle(app)})[1],"warmup": lambda say: warmup(app, say), "db_clean": lambda say: db_maintenance(app, dry_run=False),
            "guardian": lambda say: {"state": app.guardian()["state"]}, "ai_snapshot": lambda say: ai_snapshot(app),
-           "event_reactions": lambda say: {"types": len(event_reactions(app, refresh=True)["types"])}}
+           "event_reactions": lambda say: {"types": len(event_reactions(app, refresh=True)["types"])},
+           "ladder": lambda say: {k: v for k, v in app.ladder().items() if k in ("stage", "changed", "reasons", "ready")},
+           "price_watch": lambda say: _price_watch_now(app)}
     if name not in fns:
         raise ValueError(f"알 수 없는 동작: {name}")
     return _run(name, fns[name])
+
+
+def _price_watch_now(app) -> dict:
+    from .alerts import price_watch
+    return price_watch(app, markets={"KR", "US"})  # 버튼: 장이 닫혀 있어도 지금 시세 한 번 받기
 
 
 def _run(name: str, fn) -> dict:

@@ -110,6 +110,16 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.analytics(url.path.rsplit("/", 1)[-1], arg("mode")))
                     if url.path == "/api/search":
                         return self._json(api.search(arg("q", "")[:60]))
+                    if url.path == "/api/alerts":
+                        return self._json(api.alerts(int(arg("after", "0") or 0)))
+                    if url.path == "/api/quotes":
+                        return self._json(api.quotes())
+                    if url.path == "/api/ladder":
+                        return self._json(api.ladder())
+                    if url.path == "/api/control":
+                        return self._json(api.control())
+                    if url.path == "/api/scorecard":
+                        return self._json(api.scorecard(arg("market"), int(arg("n", "100") or 100)))
                     if url.path == "/api/profile":
                         return self._json(api.profile(arg("symbol", "")[:12], refresh=arg("refresh", "") == "1"))
                     if url.path == "/api/ensure":

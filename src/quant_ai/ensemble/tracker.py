@@ -40,14 +40,21 @@ def evidence_snapshot(ctx) -> dict:
         "macro": ctx.macro, "cross_asset": (ctx.cross_asset or [])[:4],
         "events": [{k: e.get(k) for k in ("ts", "name", "importance")} for e in (ctx.upcoming_events or [])[:5]],
         "data_quality": ctx.data_quality,
+        **({"community": {k: ctx.community.get(k) for k in ("source", "posts", "bullish", "bearish", "mood", "label")}}
+           if getattr(ctx, "community", None) else {}),
     }
 
 
 def save_consensus(session: Session, sig: ConsensusSignal, opinions: list[Opinion], as_of: datetime,
                    horizon: int, regime: str | None, evidence: dict | None = None) -> ConsensusRecord:
+    from ..review.scorecard import expected_move
+    sigma = ((evidence or {}).get("price") or {}).get("vol_20")
+    exp_h, exp_1d = expected_move(sig.prob_up, sigma, horizon)  # 확률 → 크기 (예측 성적표에서 실제와 비교)
     rec = ConsensusRecord(symbol=sig.symbol, as_of=as_of, action=sig.action, prob_up=sig.prob_up,
                           confidence=sig.confidence, conflict=sig.conflict,
                           payload={**sig.to_dict(), "regime": regime, "horizon": horizon,
+                                   **({"expected_return": round(exp_h, 5), "expected_1d": round(exp_1d, 5)}
+                                      if exp_h is not None else {}),
                                    **({"evidence": _json_safe(evidence)} if evidence else {})})
     session.add(rec)
     session.flush()

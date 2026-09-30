@@ -337,6 +337,9 @@ class QuantAI:
                                     memory=self.memory, events=events, macro=macro, market=mstate,
                                     cross=cross_asset(bars[sym]["close"], {k: v for k, v in factors.items()
                                                                            if k != sym}, lag_us=market == "KR"))
+                if as_of is None:  # 과거 재생에는 넣지 않는다 (그때의 커뮤니티 기록이 없으므로)
+                    from .data.collectors.community import for_context
+                    ctx.community = for_context(self.engine, sym)
                 jobs.append((sym, t, frow, rrow, ctx))
 
         # 2) AI 의견 — 공급자마다 동시에 (공급자별 분당 한도는 클라이언트가 지킨다). 서로의 의견은 모른다.
@@ -465,6 +468,93 @@ class QuantAI:
         """소액 상한(QUANT_LIVE_MAX_CAPITAL)은 실제 돈에만 적용. 모의투자(KIS_ENV=demo)는 계좌 전체로 운용."""
         return not (self.settings.broker == "kis" and self.settings.kis_env == "demo")
 
+    # ================================================================ 검증 사다리
+    def ladder_stage(self) -> str:
+        return ops.get_state(self.engine, "ladder").get("stage") or "backtest"
+
+    def _real_money(self, mode: Mode) -> bool:
+        return mode is Mode.LIVE and self._live_capital_capped()
+
+    def ai_enabled(self, mode: Mode) -> bool:
+        """이 장부의 주문에 AI 를 쓰나.
+
+        실제 돈: 검증 사다리 '소액 Live' 이상일 때만 (설정과 무관한 안전장치).
+        가상/모의: 설정(QUANT_CORE_ONLY=false) 또는 자동 승격(QUANT_AUTO_PROMOTE)으로 사다리 'Paper' 이상."""
+        from .review.ladder import rank
+        st, r = self.settings, rank(self.ladder_stage())
+        if self._real_money(mode):
+            return r >= rank("live_small") and (st.auto_promote or not st.core_only)
+        return (not st.core_only) or (st.auto_promote and r >= rank("paper"))
+
+    def live_cap(self) -> float:
+        """실전 운용 상한: 사다리 '소액 Live' 단계면 QUANT_LIVE_SMALL_CAPITAL(기본 20만원)까지."""
+        cap = self.settings.live_max_capital
+        if self.ladder_stage() == "live_small":
+            cap = min(cap, self.settings.live_small_capital)
+        return cap
+
+    def ladder_evidence(self) -> dict:
+        from .analytics import book_equity
+        from .review.promotion import _stats
+        from .review.scorecard import scorecard
+        with session_scope(self.engine) as s:
+            sc = scorecard(s, "KR", 300)
+            roll = scorecard(s, "KR", 50)["summary"]
+            models = s.scalars(select(ModelRecord.status)).all()
+        champ = self.registry.champion()
+        bt = champ.metrics.get("strategy", {}) if champ and champ.metrics else {}
+        ev = {"summary": sc["summary"], "last_30d": sc["last_30d"], "by_regime": sc["by_regime"],
+              "days_tracked": sc["days_tracked"], "rolling50": roll, "halted": ops.halted(self.engine),
+              "live_consent": self.settings.live_consent,
+              "backtest_ok": champ is not None or any(m in ("shadow", "champion", "retired") for m in models),
+              "backtest_note": (f"퀀트 모델 과거 검증 통과 (Sharpe {bt.get('sharpe', 0):.2f})" if champ and bt
+                                else "퀀트 모델 과거 검증 통과" if champ else ""),
+              "backtest": {k: bt.get(k) for k in ("sharpe", "total_return", "max_drawdown", "psr")} if bt else None}
+        core, full = book_equity(self, "attr-core"), book_equity(self, "attr-full")
+        if len(core) >= 2 and len(full) >= 2:
+            c = _stats(core.groupby(core.index.date).last())
+            f = _stats(full.groupby(full.index.date).last())
+            ev["paper"] = {"days": f["days"], "return": f["return"], "excess": f["return"] - c["return"],
+                           "max_drawdown": f["max_drawdown"], "dd_diff": f["max_drawdown"] - c["max_drawdown"]}
+        live = book_equity(self, "live")
+        if self._live_capital_capped() and len(live) >= 2:
+            ev["live"] = _stats(live.groupby(live.index.date).last())
+        return ev
+
+    def ladder(self, act: bool = True, now: datetime | None = None) -> dict:
+        """검증 사다리 평가 → 단계 변경(승격·강등)은 기록·알림. act=False 면 판정만."""
+        from .review import ladder as L
+        now = now or datetime.now(UTC)
+        ev = self.ladder_evidence()
+        state = ops.get_state(self.engine, "ladder")
+        new, res = L.step(state, ev, now)
+        if act:
+            ops.set_state(self.engine, "ladder", new)
+            if res["changed"]:
+                frm, to = L.STAGE_LABELS[state.get("stage") or "backtest"], L.STAGE_LABELS[res["stage"]]
+                verb = "승격" if res["changed"] == "promote" else "강등"
+                msg = f"AI 검증 사다리 {verb}: {frm} → {to}\n" + "\n".join(f"· {x}" for x in res.get("reasons", []))
+                self.notifier.send(msg, "warn" if res["changed"] == "demote" else "info")
+                from .alerts import push
+                push(self.engine, "ladder", f"AI {verb}: {frm} → {to}", "; ".join(res.get("reasons", []))[:300],
+                     level="warn" if res["changed"] == "demote" else "good", link="#control")
+            elif res.get("ready") and res.get("ready") != state.get("ready"):
+                from .alerts import push
+                push(self.engine, "ladder", f"다음 단계 준비됨: {L.STAGE_LABELS[res['ready']]}",
+                     "; ".join(res.get("reasons", []))[:300], level="info", link="#control")
+        if not act:  # 미리보기: 저장된 단계를 보여주고, 다음 평가 때 바뀔 단계는 따로 알린다
+            res = {**res, "stage": state.get("stage") or "backtest", "changed": None,
+                   "would": res["stage"] if res["changed"] else None, "would_kind": res["changed"]}
+            new = {**state, "stage": res["stage"], "reasons": res.get("reasons", [])}
+        return {**res, "state": new, "evidence": {k: v for k, v in ev.items()
+                                                                               if k not in ("summary",)},
+                "summary": ev["summary"], "stages": [{"key": k, "label": L.STAGE_LABELS[k], "desc": L.STAGE_DESC[k]}
+                                                     for k in L.STAGES],
+                "effects": {"paper_ai": self.ai_enabled(Mode.PAPER), "live_ai": self.ai_enabled(Mode.LIVE)
+                            if self._live_capital_capped() else None, "live_cap": self.live_cap(),
+                            "auto_promote": self.settings.auto_promote, "core_only": self.settings.core_only,
+                            "real_money_broker": self._live_capital_capped() and self.settings.broker == "kis"}}
+
     def _live_broker(self, pf: Portfolio):
         st = self.settings
         if st.broker != "kis":
@@ -532,7 +622,7 @@ class QuantAI:
             broker = PaperBroker(pf, costs) if mode is Mode.PAPER else ShadowBroker(pf, costs)
         budget_ratio = 1.0
         if mode is Mode.LIVE and equity > 0 and self._live_capital_capped():
-            budget_ratio = min(1.0, st.live_max_capital / equity)  # 실전 계좌: 소액 상한만큼만 운용
+            budget_ratio = min(1.0, self.live_cap() / equity)  # 실전 계좌: 소액 상한만큼만 운용
 
         try:
             risk = RiskEngine(st.risk)
@@ -727,7 +817,7 @@ class QuantAI:
         같은 입력으로 가상 장부 3개도 굴린다 → AI 가 실제로 가치를 더했는지 측정:
           attr-core: AI 없음 / attr-veto: 코어+AI 거부권 / attr-full: 코어+거부권+위성
         """
-        cfg = cfg or CoreSatelliteConfig(use_ai=not self.settings.core_only)
+        cfg = cfg or CoreSatelliteConfig(use_ai=self.ai_enabled(mode))
         ts = ts or datetime.now(UTC)
         # 코어 전용이면 실제 장부는 AI 를 보지 않는다. 대신 AI 섀도: 하루 한 번(새 일봉마다) AI 가 판단·채점되고
         # 가상 장부 3개로 "AI 를 켰다면" 을 측정 → AI 를 켜도 될지 증거가 쌓인다 (무료 한도 보호).
@@ -786,7 +876,7 @@ class QuantAI:
         equity_est = self.load_portfolio(mode.value).equity(
             {s: float(b["close"].iloc[-1]) for s, b in bars.items() if len(b)})
         if mode is Mode.LIVE and self._live_capital_capped():
-            equity_est = min(equity_est, self.settings.live_max_capital)  # 실제로 운용할 금액 기준
+            equity_est = min(equity_est, self.live_cap())  # 실제로 운용할 금액 기준
         unaffordable = self._unaffordable(scores, bars, equity_est, cfg)
 
         def scale_for(st: dict) -> float:
@@ -1104,6 +1194,14 @@ class QuantAI:
         bars, bench, _ = self.market_data()
         with session_scope(self.engine) as s:
             n = resolve(s, bars, bench)
+        try:  # 미국 예측도 채점 (미국 일봉 · SPY 기준)
+            from . import global_market
+            us_bars, us_bench, _ = global_market.market_data(self)
+            if us_bars:
+                with session_scope(self.engine) as s:
+                    n += resolve(s, us_bars, us_bench)
+        except Exception as e:  # noqa: BLE001 - 미국 데이터가 없어도 국내 복기는 계속
+            log.info("미국 예측 채점 건너뜀: %s", e)
         with session_scope(self.engine) as s:  # 채점이 끝난 의견으로 AI 별·합의 확률 보정 다시 적합
             fitted = fit_calibrators(s)
         ops.set_state(self.engine, "calibration", fitted)

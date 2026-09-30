@@ -81,6 +81,8 @@ class Settings:
     live_enabled: bool = False
     live_confirm: str = ""
     live_max_capital: float = 1_000_000  # 소액 Live 상한
+    live_small_capital: float = 200_000  # 검증 사다리 '소액 Live' 단계의 실전 운용 상한
+    auto_promote: bool = True  # 검증 사다리 통과 시 AI 를 자동으로 가상 장부(Paper)·소액 Live 에 쓴다
     # 외부 API 키 (없으면 해당 수집기는 건너뜀)
     dart_api_key: str | None = field(default=None, repr=False)
     fred_api_key: str | None = field(default=None, repr=False)
@@ -151,6 +153,8 @@ class Settings:
             live_enabled=e.get("QUANT_LIVE_ENABLED", "").lower() == "true",
             live_confirm=e.get("QUANT_LIVE_CONFIRM", ""),
             live_max_capital=f("QUANT_LIVE_MAX_CAPITAL", cls.live_max_capital),
+            live_small_capital=f("QUANT_LIVE_SMALL_CAPITAL", cls.live_small_capital),
+            auto_promote=e.get("QUANT_AUTO_PROMOTE", "true").lower() != "false",
             dart_api_key=e.get("DART_API_KEY") or None,
             fred_api_key=e.get("FRED_API_KEY") or None,
             news_feeds=feeds,
@@ -181,6 +185,11 @@ class Settings:
     def has_llm(self) -> bool:
         """LLM 공급자(무료 포함)가 하나라도 설정됐나 — 없으면 AI 는 휴리스틱만 쓴다."""
         return bool(self.llm_providers or self.anthropic_enabled or self.nvidia_api_key)
+
+    @property
+    def live_consent(self) -> bool:
+        """실제 돈 사용에 대한 사람의 사전 동의 (.env 두 줄)."""
+        return self.live_enabled and self.live_confirm == LIVE_CONFIRM_PHRASE
 
     def assert_live_allowed(self, champion_ready: bool) -> None:
         """실매매 진입 전 반드시 호출. 하나라도 실패하면 예외."""

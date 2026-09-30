@@ -325,3 +325,20 @@ class LLMCall(Base):
     cost_usd: Mapped[float | None] = mapped_column(Float)
     response: Mapped[dict | None] = mapped_column(JSONType)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class AlertRecord(Base):
+    """사이트 알림 (토스트·알림센터·데스크톱 알림): 급등락 · AI 신호 · 공시 · 실적 D-1 · 킬스위치 · 승격/강등."""
+
+    __tablename__ = "alerts"
+    id: Mapped[int] = mapped_column(BigId, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    kind: Mapped[str] = mapped_column(String(32))  # price / signal / disclosure / news / earnings / guardian / ladder / job / result / market
+    level: Mapped[str] = mapped_column(String(8))  # info / good / warn / bad
+    title: Mapped[str] = mapped_column(Text)
+    body: Mapped[str | None] = mapped_column(Text)
+    symbol: Mapped[str | None] = mapped_column(String(32))
+    link: Mapped[str | None] = mapped_column(String(256))
+    dedupe: Mapped[str | None] = mapped_column(String(160), unique=True)  # 같은 알림 두 번 안 보내기
+    data: Mapped[dict | None] = mapped_column(JSONType)
+    __table_args__ = (Index("ix_alerts_ts", "ts"),)

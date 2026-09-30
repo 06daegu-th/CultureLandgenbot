@@ -38,7 +38,7 @@ def test_llm_analyst_parses_and_clips():
     op = LLMAnalyst("nvidia", llm).analyze(ctx())
     assert op.prob_up == 1.0 and op.sub_scores["news"] == -1.0 and op.backend == "fake-model"
     system, user = llm.calls[0]
-    assert "독립 검증" in system and "005930" in user
+    assert "경제·시장 AI" in system and "독립적으로" in system and "005930" in user
 
 
 def test_llm_failure_becomes_abstain():

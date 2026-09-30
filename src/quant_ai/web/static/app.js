@@ -188,7 +188,7 @@ function consensusBlock(c, labels, compact = false) {
 }
 
 // ------------------------------------------------------------ 공통 (새 UI)
-const ROLE_LABEL = { primary: "Primary AI", nvidia: "Second AI", panel: "Panel AI", quant: "Quant Model", regime: "Market Regime", risk: "Risk AI", challenger: "Challenger" };
+const ROLE_LABEL = { primary: "뉴스 AI", nvidia: "경제·시장 AI", panel: "공시·실적 AI", quant: "차트·Quant AI", regime: "시장 국면", risk: "Risk AI", challenger: "도전자 모델" };
 const NT_LABEL = { veto: "리스크 거부권", few_responders: "의견 부족", high_conflict: "AI 충돌", weak_signal: "신호 약함" };
 const CAT_LABEL = { direction: "단기 방향", news: "뉴스 해석", macro: "거시경제", trend: "추세", risk: "위험 경고" };
 function homeMode(d) {
@@ -240,7 +240,7 @@ function viewDashboard(d) {
   const wl = d.watchlist.filter((w) => S.watchTab === "held" ? held.has(w.symbol) : S.watchTab === "buy" ? w.action === "BUY" : true);
   const watch = wl.length ? `<div class="scroll" style="max-height:430px"><table class="tight watch-table"><thead><tr><th>종목명</th><th class="r">현재가</th><th class="r">등락률</th><th class="r">AI 신호</th></tr></thead><tbody>
     ${wl.map((w) => `<tr class="click" data-sym="${esc(w.symbol)}"><td><b>${esc(w.name)}</b>${held.has(w.symbol) ? ' <span class="chip ok">보유</span>' : w.tier === "core" ? ' <span class="chip">코어</span>' : w.tier === "watched" ? ' <span class="chip">관심</span>' : ""}${w.market === "GLOBAL" ? ' <span class="chip xs">해외</span>' : ""}</td>
-      <td class="r num">${price(w.last, w.symbol)}</td><td class="r">${pct(w.chg_pct)}</td><td class="r">${badge(w.action)}</td></tr>`).join("")}</tbody></table></div>` : empty();
+      <td class="r num" data-live-sym="${esc(w.symbol)}">${price(w.last, w.symbol)}</td><td class="r">${pct(w.chg_pct)}</td><td class="r">${badge(w.action)}</td></tr>`).join("")}</tbody></table></div>` : empty();
   // 5) 포트폴리오
   const pf = d.portfolios[mode] || {};
   const curve = pf.curve || [];
@@ -271,6 +271,7 @@ function viewDashboard(d) {
   const tabs = (id, obj, cur) => `<div class="tabs" id="${id}">${Object.entries(obj).map(([k, v]) => `<button data-k="${k}" class="${cur === k ? "on" : ""}">${v}</button>`).join("")}</div>`;
   const lessons = (d.lessons || []).slice(0, 5);
   return `
+  <div id="live-strip"></div>
   <div id="setup-box"></div>
   <div class="grid h0">
     <div id="alpha-box">${card("Net Alpha", empty("계산 중…"))}</div>
@@ -311,6 +312,7 @@ async function fillHome(d) {
   if (chartSym) candleChart($("#main-chart"), chartSym, S.chartN);
   if (S.homeSym) fillAI(d, S.homeSym);
   api("/api/ops").then((o) => { const b = $("#pipe-box"); if (b) b.innerHTML = pipeline(d, o); }).catch(() => {});
+  fillLiveStrip();
   api("/api/setup").then((st) => {
     const b = $("#setup-box"); if (b) { b.innerHTML = setupBanner(st); bindSetup(); }
     // 화면을 연 뒤에 뉴스·판단이 쌓였으면(시작 직후 채우기) 기다리지 말고 바로 다시 그린다
@@ -614,10 +616,13 @@ async function viewAnalysis(el) {
   const head = `<div class="card stock-head">
     <div class="sh-top"><div style="min-width:0">
       <div class="sh-name">${esc(a.name || sym)} <span class="dim small">${esc(sym)}</span> <span class="chip xs">${isGlobal ? "해외" : "국내"}</span></div>
-      <div class="sh-price"><span class="num">${a.last == null ? "-" : esc(priceCur(a.last, cur))}</span>
+      <div class="sh-price"><span class="num" data-live-sym="${esc(sym)}">${a.last == null ? "-" : esc(priceCur(a.last, cur))}</span>
         <span class="${chgCls} num">${a.chg == null ? "" : `${a.chg >= 0 ? "▲" : "▼"} ${esc(priceCur(Math.abs(a.chg), cur))} (${pct(a.chg_pct)})`}</span>
         <span class="xs dim">${a.last_ts ? date(a.last_ts) + " 종가" : ""}</span></div></div>
       <div class="sh-act">${sel}<button class="btn-sm primary" onclick="askAI('${esc((a.name || sym).replace(/'/g, ""))} 지금 사도 될까? 일정·지표·뉴스 보고 판단 근거 알려줘')">${ICONS.chat} AI 에게 묻기</button></div></div>
+    ${c ? `<div class="sh-pred"><span class="xs muted">AI 예상 (${esc(date(c.as_of))})</span> <b>${c.horizon || 5}거래일 상승 확률 ${(c.prob_up * 100).toFixed(0)}%</b>
+      ${c.expected_return != null ? ` · 예상 <b class="${c.expected_return >= 0 ? "up" : "down"}">${c.expected_return >= 0 ? "+" : ""}${(c.expected_return * 100).toFixed(1)}%</b>` : ""} ${badge(c.action)}
+      ${c.trigger ? `<span class="chip xs" title="${esc(c.trigger)}">⚡ 이벤트 재분석</span>` : ""}</div>` : ""}
     <div class="small muted" style="margin:12px 0 6px"><b style="color:var(--text)">다가오는 일정</b> · 실적 발표 · 배당 · 공시</div>
     <div id="pf-events"><div class="ev-none small dim">일정 불러오는 중…</div></div>${globalNote}${anCard}</div>`;
   const aiSections = c || scen.includes("scen") || hist ? `
@@ -997,7 +1002,7 @@ function viewSettings(d) {
 
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
-  ["메인", [["dashboard", "home", "홈"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
+  ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
   ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
   ["검증 · 학습", [["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
   ["시스템", [["safety", "shield", "안전 센터"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
@@ -1012,13 +1017,13 @@ async function render() {
   // 화면마다 새 컨테이너: 느린 이전 화면의 응답이 늦게 도착해도 지금 화면을 덮어쓰지 않는다
   const el = document.createElement("div");
   el.className = "view-inner";
-  el.innerHTML = `<div class="card">${empty("불러오는 중…")}</div>`;
+  el.innerHTML = skeleton();
   $("#view").replaceChildren(el);
   clearCharts();
   const navView = S.view === "evidence" ? "journal" : S.view;
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === navView));
   const d = S.data;
-  if (!d) { el.innerHTML = empty("불러오는 중…"); return; }
+  if (!d) { el.innerHTML = skeleton(); return; }
   try {
     if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); }
     else if (S.view === "analysis") await viewAnalysis(el);
@@ -1046,7 +1051,8 @@ async function render() {
     else if (S.view === "risk") await viewRisk(el);
     else if (S.view === "journal") await viewJournal(el);
     else if (S.view === "evidence") await viewEvidence(el, S.param);
-    else if (S.view === "settings") el.innerHTML = viewSettings(d);
+    else if (S.view === "settings") { el.innerHTML = alertSettingsCard() + viewSettings(d); bindAlertSettings(); }
+    else if (S.view === "control") await viewControl(el);
     else if (S.view === "alpha") await viewAlpha(el);
     else if (S.view === "safety") await viewSafety(el);
     else if (S.view === "lab") await viewLab(el);
@@ -1057,6 +1063,7 @@ async function render() {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
   }
   bindCommon();
+  animateView(el);
 }
 
 function bindCommon() {
@@ -1158,16 +1165,6 @@ $("#kill-btn").onclick = async () => {
   await api("/api/killswitch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on, reason }) });
   await refresh(); render();
 };
-$("#bell-btn").onclick = async () => {
-  const p = $("#bell-panel");
-  p.classList.toggle("open");
-  if (!p.classList.contains("open")) return;
-  p.innerHTML = empty("불러오는 중…");
-  try {
-    const o = await api("/api/ops");
-    p.innerHTML = o.notifications.length ? o.notifications.map((n) => `<div class="lesson" style="border-left-color:${n.level === "critical" ? "var(--bad)" : n.level === "warn" ? "var(--warn)" : "var(--accent)"}">${esc(n.message)}</div>`).join("") : empty(o.notifier_enabled ? "새 알림 없음" : "알림 채널 미설정 (Discord/Slack/Telegram)");
-  } catch { p.innerHTML = empty("불러오기 실패"); }
-};
 function setTheme(t) {
   document.documentElement.dataset.theme = t; safeSet("qa_theme", t);
   $("#theme-btn").innerHTML = t === "light" ? ICONS.moon : ICONS.sun;
@@ -1182,6 +1179,7 @@ $("#bell-btn").innerHTML = ICONS.bell;
 setTheme(safeGet("qa_theme") || "dark");
 buildNav();
 initChatWidget();
+initLive();
 tickClock(); setInterval(tickClock, 1000);
 
 window.addEventListener("hashchange", route);

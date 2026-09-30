@@ -12,12 +12,11 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..analysts.analysts import ROLE_TITLES as ROLE_LABELS
 from ..data.models import AnalystOpinionRecord, ConsensusRecord, FillRecord, Instrument, OrderRecord
 from ..ensemble.tracker import CATEGORY_LABELS, provider_of
 from .review import classify_miss
 
-ROLE_LABELS = {"primary": "Primary AI", "nvidia": "Second AI", "panel": "Panel AI", "quant": "Quant Model",
-               "regime": "Market Regime", "risk": "Risk AI", "challenger": "Challenger"}
 NO_TRADE_LABELS = {"veto": "리스크 거부권", "few_responders": "의견 낸 AI 부족", "high_conflict": "AI 간 충돌 높음",
                    "weak_signal": "신호 약함 (확률·신뢰도 미달)", "unknown": "사유 기록 이전 판단"}
 

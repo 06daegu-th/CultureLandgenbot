@@ -42,6 +42,7 @@ class MarketContext:
     data_quality: dict = field(default_factory=dict)  # stale, gap, jump 등
     market_state: dict = field(default_factory=dict)  # 시장 상태 {label: RISK ON/OFF, score, type}
     cross_asset: list[dict] = field(default_factory=list)  # [{name, corr, beta, chg_5d}] NASDAQ·VIX·달러·금리·유가
+    community: dict = field(default_factory=dict)  # 커뮤니티·SNS 분위기 요약 (참고용, 실시간 판단에만)
 
     def to_prompt(self) -> str:
         d = asdict(self)

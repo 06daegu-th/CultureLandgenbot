@@ -1,10 +1,13 @@
 """24시간 스케줄러: 장중/장외에 따라 다른 작업을 돌린다.
 
 장중 (어느 시장이든 OPEN)
-    실시간 가격 · 호가 · 체결 수집 / 뉴스 / 시장 상태 / (Paper·Shadow·Live) 판단→매매
+    실시간 가격 · 호가 · 체결 수집 / 뉴스 / 시장 상태 / (Paper·Shadow·Live) 판단→매매 / 급등락 알림
+항상
+    알림 스캔(새 AI 신호·공시·중요 뉴스·채점 결과·실적 D-1) / 시장 흐름(매시간) / 새 공시·뉴스 → 해당 종목 즉시 재분석
 장외
     뉴스 · 공시 · 경제지표 · 글로벌 시장 · 실적 수집 / 결과 채점 / 복기 /
-    모델 평가 · 백테스트 · 학습 데이터 생성 · 후보 모델 학습 / Shadow 평가 / 다음 날 시나리오 생성
+    모델 평가 · 백테스트 · 학습 데이터 생성 · 후보 모델 학습 / Shadow 평가 / 다음 날 시나리오 생성 /
+    검증 사다리(승격·강등) — 모델 자체는 장중에 바꾸지 않고, 검증된 것만 다음 사이클부터 쓴다
 """
 
 from __future__ import annotations
@@ -85,6 +88,13 @@ class Scheduler:
                 if self.notifier is not None and job.failures in (1, 3, 10):
                     self.notifier.send(f"작업 '{job.name}' 실패 {job.failures}회 연속: {exc}",
                                        "critical" if job.failures >= 3 else "warn")
+                if self.engine is not None and job.failures in (3, 10):
+                    try:
+                        from .alerts import push
+                        push(self.engine, "job", f"작업 '{job.name}' {job.failures}회 연속 실패", str(exc)[:300],
+                             level="bad", link="#server", dedupe=f"job:{job.name}:{job.failures}:{now.date()}")
+                    except Exception:  # noqa: BLE001, S110 - 알림 실패가 루프를 멈추면 안 됨
+                        pass
         return ran
 
     def run_forever(self, poll_s: float = 5.0) -> None:  # pragma: no cover - 무한 루프
@@ -209,6 +219,20 @@ def build_default_scheduler(app, mode) -> Scheduler:
             from .analytics import event_reactions
             event_reactions(app, refresh=True)
         sch.add("event_reactions", event_db, 24 * 3600, "closed")
+    if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE, Mode.RESEARCH, Mode.PREDICT) and hasattr(app, "ladder"):
+        # 24시간 관찰: 급등락 감시(장중) · 알림 스캔 · 시장 흐름(매시간) · 새 공시/중요 뉴스 즉시 재분석
+        from .actions import event_reanalyze
+        from .alerts import alert_scan, market_pulse, price_watch
+        sch.add("price_watch", lambda now: price_watch(app, now), 150, "open")
+        sch.add("alert_scan", lambda now: alert_scan(app, now), 120, "always")
+        sch.add("market_pulse", lambda now: market_pulse(app, now), 3600, "always")
+        sch.add("event_reanalyze", lambda now: event_reanalyze(app, now), 600, "always")
+        if os.environ.get("QUANT_COMMUNITY", "true").lower() != "false":
+            from .alerts import focus_symbols
+            from .data.collectors.community import collect as community
+            sch.add("community", lambda now: community(app.engine, list(focus_symbols(app))), 1800, "always")
+        # 야간: 검증 사다리 평가 (승격은 한 칸씩 · 강등은 즉시 Shadow 로) → 다음 사이클부터 적용
+        sch.add("ladder", lambda now: app.ladder(), 6 * 3600, "closed")
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "ai_verdict"):
         sch.add("ai_verdict", lambda now: app.ai_verdict(), 12 * 3600, "closed")  # 추천 단계가 바뀌면 알림
     sch.add("shadow_eval", lambda now: app.evaluate_shadow_models(), 12 * 3600, "closed")

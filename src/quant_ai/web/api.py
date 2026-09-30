@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 
 import numpy as np
@@ -38,9 +39,10 @@ MACRO_LABELS = {"VIXCLS": "VIX", "DGS10": "美 10년", "DGS2": "美 2년", "DEXK
                 "DCOILWTICO": "WTI", "DFF": "기준금리"}
 REGIME_LABELS = {"bull_quiet": "안정적 상승", "bull_volatile": "변동성 상승", "sideways": "횡보",
                  "bear_quiet": "완만한 하락", "bear_volatile": "변동성 하락", "crisis": "위기"}
-ANALYST_LABELS = {"primary": "Primary AI", "nvidia": "Second AI", "panel": "Panel AI", "quant": "Quant Model",
-                  "regime": "Market Regime", "risk": "Risk AI", "challenger": "Challenger"}
-ROLE_DESC = {"primary": "종합 판단", "nvidia": "독립 검증 (두 번째 의견)", "risk": "리스크 · 거부권", "panel": "교차검증 패널"}
+from ..analysts.analysts import ROLE_TITLES as ANALYST_LABELS  # noqa: E402
+
+ROLE_DESC = {"primary": "뉴스 · 이벤트 · 선반영", "nvidia": "거시 · 시장 상태 · 해외 연동", "risk": "사지 말아야 할 이유 · 거부권",
+             "panel": "공시 · 실적 · 기업 이벤트"}
 
 
 def ai_roles_info(settings) -> list[dict]:
@@ -406,9 +408,9 @@ class DashboardAPI:
     # ------------------------------------------------------------------ 종목 분석
     def analysis(self, symbol: str) -> dict:
         fetched = self.ensure_symbol(symbol)
-        if symbol.isdigit():
+        if re.fullmatch(r"\d{6}|[A-Z][A-Z.\-]{0,9}", symbol or ""):
             from ..actions import add_watch
-            add_watch(self.app, symbol)  # 본 종목은 매일 AI 판단 대상에 포함
+            add_watch(self.app, symbol)  # 본 종목은 매일 AI 판단·알림 대상에 포함 (해외는 미국 사이클에서)
         with session_scope(self.engine) as s:
             inst = self._instruments(s)
             c = s.scalar(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol)
@@ -653,6 +655,35 @@ class DashboardAPI:
             r["action"] = c.action if c else None
         return {"results": res}
 
+    def alerts(self, after: int = 0) -> dict:
+        from ..alerts import recent
+        return recent(self.engine, after=max(0, int(after or 0)), limit=60)
+
+    def quotes(self) -> dict:
+        """최근 실시간 시세 (급등락 감시가 받아 둔 값 · 화면 가격 깜빡임용)."""
+        st = _ops.get_state(self.engine, "live_quotes")
+        return {"at": st.get("_at"), "quotes": {k: {kk: vv for kk, vv in v.items() if kk != "hist"}
+                                                 for k, v in st.items() if not k.startswith("_") and isinstance(v, dict)}}
+
+    def ladder(self) -> dict:
+        return self._cached("ladder", 30, lambda: self.app.ladder(act=False))
+
+    def control(self) -> dict:
+        from ..control import control
+        return self._cached("control", 15, lambda: control(self.app))
+
+    def scorecard(self, market: str | None = None, n: int = 100) -> dict:
+        """예측 성적표 (최근 n 회): 적중률 · 기대/실제 수익 · 비용 후 · MDD · 보정 · 국면별 · 틀린 이유."""
+        from ..review.scorecard import scorecard
+        market = market if market in ("KR", "US") else None
+        n = max(10, min(int(n or 100), 1000))
+
+        def build():
+            with session_scope(self.engine) as s:
+                names = {i.symbol: i.name or i.symbol for i in s.scalars(select(Instrument))}
+                return scorecard(s, market, n, names=names)
+        return self._cached(f"scorecard:{market}:{n}", 30, build)
+
     def profile(self, symbol: str, refresh: bool = False) -> dict:
         """종목 상세 (토스식): 다가오는 일정 D-day · 핵심 지표 · 애널리스트 · 실적 · 기업 정보 · 뉴스."""
         import re as _re
@@ -683,8 +714,11 @@ class DashboardAPI:
         a = dict(p.get("analyst") or {})
         if a.get("target_mean") and st.get("price"):
             a["upside"] = a["target_mean"] / st["price"] - 1
+        com = _ops.get_state(self.engine, f"community:{symbol}")
         return {**p, "stats": st, "analyst": a, "name": inst.name if inst else symbol,
-                "market": inst.market if inst else ""}
+                "market": inst.market if inst else "",
+                "community": {**{k: com.get(k) for k in ("at", "source", "n", "bull", "bear", "mood", "label")},
+                              "posts": (com.get("posts") or [])[:6]} if com.get("at") else None}
 
     def ensure_symbol(self, symbol: str) -> dict:
         """해외 종목이면 무료 일봉을 받아 캐시 (처음 한 번 · 12시간마다 갱신)."""

@@ -85,8 +85,7 @@ def daily_review(session: Session, review_date: date, lookback_days: int = 30,
         if summary.get("no_trade_avoided_loss_rate", 0) >= 0.55:
             lessons.append(f"NO_TRADE 판정의 {summary['no_trade_avoided_loss_rate']:.0%} 가 실제 하락을 피함 → Risk AI 유효")
 
-    names = {"primary": "Primary AI", "nvidia": "Second AI", "panel": "Panel AI", "quant": "Quant Model",
-             "regime": "Market Regime", "risk": "Risk AI", "challenger": "Challenger"}
+    from ..analysts.analysts import ROLE_TITLES as names
     board = scoreboard(session, since=start)
     summary["scoreboard"] = scoreboard_table(board)
     for row in summary["scoreboard"]:
