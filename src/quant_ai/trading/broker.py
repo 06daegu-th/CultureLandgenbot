@@ -62,12 +62,33 @@ class PaperBroker(Broker):
 class ShadowBroker(PaperBroker):
     mode = "shadow"
 
-    def __init__(self, portfolio: Portfolio, costs: CostModel | None = None):
+    def __init__(self, portfolio: Portfolio, costs: CostModel | None = None, book_fn=None):
         super().__init__(portfolio, costs)
         self.would_have_sent: list[tuple[datetime, Order, MarketQuote]] = []
+        self.book_fn = book_fn  # (종목) -> 10단계 호가 dict | None · 기본: KIS 웹소켓 최신 호가
+        self.last_sim: dict | None = None
+
+    def _book(self, symbol: str) -> dict | None:
+        if self.book_fn is not None:
+            return self.book_fn(symbol)
+        from .kis_ws import latest_book
+        return latest_book(symbol)
 
     def submit(self, order: Order, quote: MarketQuote, ts: datetime) -> Fill | None:
         self.would_have_sent.append((ts, order, quote))
+        book = self._book(order.symbol)
+        if book is not None:  # 10단계 호가가 있으면 실제 잔량을 먹어 들어가는 체결가 (체결 시뮬레이터)
+            from .exec_sim import simulate
+            sim = simulate(order.side.value, order.qty, quote.last, book=book, sigma=quote.sigma,
+                           limit=order.limit_price if order.order_type == "limit" else None)
+            if sim.qty <= 0 or sim.avg_price is None:
+                return None
+            if sim.qty < order.qty:
+                order = replace(order, qty=sim.qty, reason=order.reason + f" (호가 {sim.levels}단계까지: 부분체결)")
+            fill = Fill(order, ts, sim.qty, sim.avg_price, self.costs.fee(order.side, sim.avg_price, sim.qty))
+            self.portfolio.apply(fill)
+            self.last_sim = sim.as_dict()
+            return fill
         ref = quote.ask if order.side is Side.BUY else quote.bid
         if ref is None:
             ref = quote.last

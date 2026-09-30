@@ -1,7 +1,10 @@
 """시장 세션 판단 (장중 / 장외).
 
 국내(KRX)와 미국(US) 정규장 시간을 기준으로 현재 시점이 어느 단계인지 알려준다.
-휴장일은 ``holidays`` 로 주입한다 (거래소 휴장일 캘린더를 DB/파일에서 불러와 넣으면 된다).
+휴장일: ``holidays`` 패키지의 거래소 캘린더(XKRX · XNYS, 대체공휴일·임시공휴일 규칙 포함)를 기본으로 쓰고,
+``artifacts/holidays.json`` 으로 추가·보정한다 (선거일·임시휴장 등 공지로 바뀌는 날).
+특수 시간: KRX 새해 첫 거래일 10:00 개장 · 미국 조기 폐장(추수감사절 다음 날 · 7/3 · 12/24 → 13:00).
+패키지가 없으면 주말만 휴장으로 본다 (그 사실을 calendar_source 로 알린다).
 """
 
 from __future__ import annotations
@@ -16,6 +19,9 @@ class Phase(str, Enum):
     PRE_OPEN = "pre_open"  # 장 시작 전 준비 구간
     OPEN = "open"  # 장중
     CLOSED = "closed"  # 장외
+
+
+HOLIDAY_NAMES: dict[str, dict[date, str]] = {"KRX": {}, "US": {}}
 
 
 @dataclass(frozen=True)
@@ -35,12 +41,34 @@ class MarketCalendar:
     def is_trading_day(self, d: date) -> bool:
         return d.weekday() < 5 and d not in self.holidays
 
+    def holiday_name(self, d: date) -> str | None:
+        if d.weekday() >= 5:
+            return None
+        return HOLIDAY_NAMES.get(self.name, {}).get(d) or ("휴장" if d in self.holidays else None)
+
+    def session(self, d: date) -> tuple[time, time, str | None]:
+        """그날의 (개장, 폐장, 특이사항). 휴장일이어도 정규 시간을 돌려준다 (is_trading_day 로 먼저 확인)."""
+        if self.name == "KRX":
+            first = date(d.year, 1, 1)
+            while not self.is_trading_day(first):
+                first += timedelta(days=1)
+            if d == first:
+                return time(10, 0), self.close_time, "새해 첫 거래일 10:00 개장"
+        if self.name == "US":
+            thanks = _nth_weekday(d.year, 11, 3, 4)
+            early = {thanks + timedelta(days=1): "추수감사절 다음 날 조기 폐장",
+                     date(d.year, 7, 3): "독립기념일 전날 조기 폐장", date(d.year, 12, 24): "크리스마스 이브 조기 폐장"}
+            if d in early and self.is_trading_day(d):
+                return self.open_time, time(13, 0), early[d]
+        return self.open_time, self.close_time, None
+
     def phase(self, now: datetime) -> Phase:
         t = self.local(now)
         if not self.is_trading_day(t.date()):
             return Phase.CLOSED
-        open_dt = datetime.combine(t.date(), self.open_time, self.tz)
-        close_dt = datetime.combine(t.date(), self.close_time, self.tz)
+        o, c, _ = self.session(t.date())
+        open_dt = datetime.combine(t.date(), o, self.tz)
+        close_dt = datetime.combine(t.date(), c, self.tz)
         if open_dt <= t < close_dt:
             return Phase.OPEN
         if open_dt - timedelta(minutes=self.pre_open_minutes) <= t < open_dt:
@@ -53,9 +81,52 @@ class MarketCalendar:
             d += timedelta(days=1)
         return d
 
+    def prev_trading_day(self, d: date) -> date:
+        d = d - timedelta(days=1)
+        while not self.is_trading_day(d):
+            d -= timedelta(days=1)
+        return d
 
-KRX = MarketCalendar("KRX", ZoneInfo("Asia/Seoul"), time(9, 0), time(15, 30))
-US = MarketCalendar("US", ZoneInfo("America/New_York"), time(9, 30), time(16, 0))
+    def trading_days_between(self, a: date, b: date) -> int:
+        """a 다음 날부터 b 까지의 거래일 수 (a<b). b<=a 면 0 이하."""
+        if b <= a:
+            return -self.trading_days_between(b, a) if b < a else 0
+        n, d = 0, a
+        while d < b:
+            d += timedelta(days=1)
+            n += self.is_trading_day(d)
+        return n
+
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """month 의 n 번째 weekday (월=0 … 금=4)."""
+    d = date(year, month, 1)
+    d += timedelta(days=(weekday - d.weekday()) % 7)
+    return d + timedelta(weeks=n - 1)
+
+
+def _exchange_holidays(code: str, years) -> dict[date, str]:
+    try:
+        import holidays as _h
+        return dict(_h.financial_holidays(code, years=list(years), language="ko" if code == "XKRX" else "en_US"))
+    except Exception:  # noqa: BLE001 - 패키지 없음/미지원 → 주말만
+        try:
+            import holidays as _h
+            return dict(_h.financial_holidays(code, years=list(years)))
+        except Exception:  # noqa: BLE001
+            return {}
+
+
+def _build(name, code, tz, o, c) -> MarketCalendar:
+    y = date.today().year
+    hs = _exchange_holidays(code, range(y - 16, y + 3))
+    HOLIDAY_NAMES[name] = hs
+    return MarketCalendar(name, ZoneInfo(tz), o, c, holidays=frozenset(hs))
+
+
+KRX = _build("KRX", "XKRX", "Asia/Seoul", time(9, 0), time(15, 30))
+US = _build("US", "XNYS", "America/New_York", time(9, 30), time(16, 0))
+CALENDAR_SOURCE = "holidays 패키지 (XKRX · XNYS)" if HOLIDAY_NAMES["KRX"] else "주말만 (holidays 패키지 없음)"
 
 MARKETS = {"KRX": KRX, "US": US}
 

@@ -7,6 +7,8 @@ PSI (Population Stability Index) 로 기준 구간과 최근 구간의 분포를
       기준 = 최근 60거래일 이전 250거래일, 최근 = 마지막 20거래일
   · 예측 드리프트: AI 합의 상승확률 분포 (최근 20일 vs 그 전 120일) — 갑자기 한쪽으로 쏠리면 이상
   · 라벨 드리프트: 5일 뒤 상승 비율 (기준율) 변화 — 시장 성격 변화
+v13: PSI 옆에 KS 검정(두 분포가 같다는 가정의 p값)과 결측·무한값 비율을 같이 본다.
+     PSI 는 '얼마나', KS 는 '우연인가' — 둘 다 넘을 때만 확실한 변화로 본다. 이력은 최근 30회 보관.
 """
 
 from __future__ import annotations
@@ -33,6 +35,21 @@ def psi(ref: np.ndarray, cur: np.ndarray, bins: int = 10) -> float | None:
     c = np.histogram(cur, edges)[0] / len(cur)
     r, c = np.clip(r, 1e-4, None), np.clip(c, 1e-4, None)
     return float(np.sum((c - r) * np.log(c / r)))
+
+
+def ks(ref: np.ndarray, cur: np.ndarray) -> tuple[float | None, float | None]:
+    """두 표본 Kolmogorov–Smirnov: (D, 근사 p값). scipy 없이 점근식."""
+    ref, cur = np.asarray(ref, float), np.asarray(cur, float)
+    ref, cur = np.sort(ref[np.isfinite(ref)]), np.sort(cur[np.isfinite(cur)])
+    n, m = len(ref), len(cur)
+    if n < 30 or m < 20:
+        return None, None
+    allv = np.concatenate([ref, cur])
+    d = float(np.max(np.abs(np.searchsorted(ref, allv, "right") / n - np.searchsorted(cur, allv, "right") / m)))
+    en = np.sqrt(n * m / (n + m))
+    lam = (en + 0.12 + 0.11 / en) * d
+    p = 2 * sum((-1) ** (k - 1) * np.exp(-2 * k * k * lam * lam) for k in range(1, 101))
+    return round(d, 4), float(min(max(p, 0.0), 1.0))
 
 
 def status_of(v: float | None) -> str:
@@ -71,7 +88,13 @@ def feature_drift(bars: dict[str, pd.DataFrame]) -> list[dict]:
     out = []
     for k, label in LABELS.items():
         v = psi(ref[k].to_numpy(), cur[k].to_numpy())
-        out.append({"feature": k, "label": label, "psi": None if v is None else round(v, 4), "status": status_of(v),
+        d, pv = ks(ref[k].to_numpy(), cur[k].to_numpy())
+        st = status_of(v)
+        if st == "drift" and pv is not None and pv > 0.01:  # PSI 는 크지만 우연일 수 있음 → 주의로 낮춤
+            st = "warn"
+        bad = float((~np.isfinite(cur[k].to_numpy(dtype=float))).mean()) if len(cur) else 0.0
+        out.append({"feature": k, "label": label, "psi": None if v is None else round(v, 4), "status": st,
+                    "ks": d, "ks_p": None if pv is None else round(pv, 5), "missing_cur": round(bad, 4),
                     "ref_mean": _m(ref[k]), "cur_mean": _m(cur[k])})
     return out
 
@@ -119,4 +142,4 @@ def report(bars: dict[str, pd.DataFrame], session=None, now: datetime | None = N
             "worst": worst, "at": (now or datetime.now(UTC)).isoformat(), "thresholds": {"stable": STABLE, "drift": WARN}}
 
 
-__all__ = ["psi", "report", "feature_drift", "prediction_drift", "status_of"]
+__all__ = ["psi", "ks", "report", "feature_drift", "prediction_drift", "status_of"]

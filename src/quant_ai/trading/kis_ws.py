@@ -5,6 +5,8 @@
       체결이 들어오면 메모리에 모았다가 3초마다 alerts.ingest_quotes 로 한 번에 넘긴다 (DB 부담 제한).
 장이 닫히면 연결을 끊고, 끊기면 지수 백오프(5초 → 최대 5분)로 다시 붙는다.
 표시·알림 전용이다 — 주문은 이 값을 쓰지 않는다 (주문 직전 REST 시세로 다시 확인).
+v13: 보유 상위 종목은 H0STASP0(10단계 호가)도 구독한다 (최대 10종목 · 체결 구독과 합쳐 40 이내).
+     최신 호가는 메모리 + ops 'orderbook' 에 두고, 섀도 체결 시뮬레이터가 '실제 호가 잔량을 먹어 들어가는' 체결가를 계산한다.
 """
 
 from __future__ import annotations
@@ -20,7 +22,9 @@ from datetime import UTC, datetime
 log = logging.getLogger(__name__)
 WS_URL = {"real": "ws://ops.koreainvestment.com:21000", "demo": "ws://ops.koreainvestment.com:31000"}
 TR_TRADE = "H0STCNT0"
+TR_BOOK = "H0STASP0"
 MAX_SUBS = 40
+MAX_BOOKS = 10
 FLUSH_S = 3.0
 SIGN_DOWN = {"4", "5"}  # 하한 · 하락
 
@@ -54,6 +58,28 @@ def parse_trade(msg: str) -> list[dict]:
     return out
 
 
+def parse_book(msg: str) -> dict | None:
+    """'0|H0STASP0|001|코드^시간^구분^매도호가1..10^매수호가1..10^매도잔량1..10^매수잔량1..10^총매도잔량^총매수잔량…'"""
+    parts = msg.split("|", 3)
+    if len(parts) < 4 or parts[1] != TR_BOOK:
+        return None
+    f = parts[3].split("^")
+    if len(f) < 45:
+        return None
+    try:
+        num = lambda i: float(f[i] or 0)  # noqa: E731
+        asks = [(num(3 + i), num(23 + i)) for i in range(10)]
+        bids = [(num(13 + i), num(33 + i)) for i in range(10)]
+    except ValueError:
+        return None
+    asks = [(p, q) for p, q in asks if p > 0]
+    bids = [(p, q) for p, q in bids if p > 0]
+    if not asks or not bids:
+        return None
+    return {"symbol": f[0], "time": f[1], "asks": asks, "bids": bids, "ask_total": float(f[43] or 0),
+            "bid_total": float(f[44] or 0), "src": "kis_ws"}
+
+
 def approval_key(base: str, app_key: str, app_secret: str, timeout: float = 10.0) -> str:
     body = json.dumps({"grant_type": "client_credentials", "appkey": app_key, "secretkey": app_secret}).encode()
     req = urllib.request.Request(f"{base}/oauth2/Approval", data=body, method="POST",  # noqa: S310 - KIS https 고정
@@ -65,18 +91,29 @@ def approval_key(base: str, app_key: str, app_secret: str, timeout: float = 10.0
     return key
 
 
-def subscribe_msg(key: str, code: str, subscribe: bool = True) -> str:
+def subscribe_msg(key: str, code: str, subscribe: bool = True, tr: str = TR_TRADE) -> str:
     return json.dumps({"header": {"approval_key": key, "custtype": "P", "tr_type": "1" if subscribe else "2",
                                   "content-type": "utf-8"},
-                       "body": {"input": {"tr_id": TR_TRADE, "tr_key": code}}})
+                       "body": {"input": {"tr_id": tr, "tr_key": code}}})
+
+
+BOOKS: dict[str, dict] = {}  # 최신 호가 (프로세스 메모리) — 섀도 체결 시뮬레이터가 읽는다
+
+
+def latest_book(symbol: str, max_age_s: float = 15.0, now: float | None = None) -> dict | None:
+    b = BOOKS.get(symbol.split(".")[0])
+    if b is None or (now or time.time()) - b.get("_t", 0) > max_age_s:
+        return None
+    return b
 
 
 class KISRealtime:
     """백그라운드 스레드 하나. ensure()를 주기적으로 부르면 필요할 때만 켜고 끈다."""
 
-    def __init__(self, app, symbols_fn, on_quotes=None, url: str | None = None, key_fn=None):
+    def __init__(self, app, symbols_fn, on_quotes=None, url: str | None = None, key_fn=None, books_fn=None):
         self.app = app
         self.symbols_fn = symbols_fn  # () -> list[str]  (국내 6자리만 쓴다)
+        self.books_fn = books_fn  # () -> list[str] 호가 구독 종목 (보유 상위)
         self.on_quotes = on_quotes  # (quotes: dict) -> None · 기본: alerts.ingest_quotes
         self.url = url
         self.key_fn = key_fn
@@ -84,7 +121,8 @@ class KISRealtime:
         self._stop = threading.Event()
         self._buf: dict[str, dict] = {}
         self._lock = threading.Lock()
-        self.status = {"state": "off", "subs": 0, "ticks": 0, "last_tick": None, "error": None, "reconnects": 0}
+        self.status = {"state": "off", "subs": 0, "book_subs": 0, "ticks": 0, "books": 0, "last_tick": None, "error": None,
+                       "reconnects": 0}
 
     # ---- 제어
     def ensure(self, market_open: bool) -> dict:
@@ -129,12 +167,17 @@ class KISRealtime:
         import websockets
         key = self._key()
         url = self.url or WS_URL.get(self.app.settings.kis_env, WS_URL["demo"])
-        codes = [s for s in self.symbols_fn() if s.isdigit()][:MAX_SUBS]
+        books = [s for s in (self.books_fn() if self.books_fn else []) if s.isdigit()][:MAX_BOOKS]
+        codes = [s for s in self.symbols_fn() if s.isdigit()][:MAX_SUBS - len(books)]
         async with websockets.connect(url, ping_interval=None, open_timeout=15, close_timeout=5) as ws:
             for c in codes:
                 await ws.send(subscribe_msg(key, c))
                 await asyncio.sleep(0.05)
-            self.status.update(state="on", subs=len(codes), error=None, since=datetime.now(UTC).isoformat())
+            for c in books:
+                await ws.send(subscribe_msg(key, c, tr=TR_BOOK))
+                await asyncio.sleep(0.05)
+            self.status.update(state="on", subs=len(codes), book_subs=len(books), error=None,
+                               since=datetime.now(UTC).isoformat())
             last_flush = time.monotonic()
             while not self._stop.is_set():
                 try:
@@ -144,7 +187,12 @@ class KISRealtime:
                 if isinstance(msg, bytes):
                     msg = msg.decode("utf-8", "replace")
                 if msg:
-                    if msg[:1] in ("0", "1"):
+                    if msg[:1] in ("0", "1") and f"|{TR_BOOK}|" in msg[:16]:
+                        bk = parse_book(msg)
+                        if bk:
+                            BOOKS[bk["symbol"]] = bk | {"_t": time.time(), "at": datetime.now(UTC).isoformat()}
+                            self.status["books"] += 1
+                    elif msg[:1] in ("0", "1"):
                         for t in parse_trade(msg):
                             with self._lock:
                                 self._buf[t["symbol"]] = t
@@ -167,6 +215,13 @@ class KISRealtime:
     def flush(self) -> int:
         with self._lock:
             buf, self._buf = self._buf, {}
+        if BOOKS and self.status.get("books"):
+            try:
+                from .. import ops
+                ops.set_state(self.app.engine, "orderbook", {k: {x: v for x, v in b.items() if x != "_t"}
+                                                             for k, b in list(BOOKS.items())})
+            except Exception as e:  # noqa: BLE001
+                log.warning("호가 저장 실패: %s", e)
         if not buf:
             return 0
         try:
@@ -194,11 +249,20 @@ def ensure_running(app, market_open: bool) -> dict:
         return {"state": "off", "reason": "websockets 미설치 (./run.sh 가 설치)"}
     if _RUNNER is None:
         from ..alerts import watch_list
-        _RUNNER = KISRealtime(app, lambda: watch_list(app, {"KR"})[1])
+
+        def top_holdings():
+            try:
+                pf = app.load_portfolio("live")
+                vals = sorted(((p.qty * p.avg_price, s) for s, p in pf.positions.items() if p.qty), reverse=True)
+                return [s.split(".")[0] for _, s in vals][:MAX_BOOKS]
+            except Exception:  # noqa: BLE001
+                return []
+        _RUNNER = KISRealtime(app, lambda: watch_list(app, {"KR"})[1], books_fn=top_holdings)
     st = _RUNNER.ensure(market_open)
     from .. import ops
     ops.set_state(app.engine, "kis_ws", {**st, "at": datetime.now(UTC).isoformat()})
     return st
 
 
-__all__ = ["parse_trade", "subscribe_msg", "approval_key", "KISRealtime", "ensure_running"]
+__all__ = ["parse_trade", "parse_book", "latest_book", "subscribe_msg", "approval_key", "KISRealtime", "ensure_running",
+           "BOOKS"]

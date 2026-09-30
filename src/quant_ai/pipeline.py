@@ -404,14 +404,25 @@ class QuantAI:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai") as pool:
             # 종목 × AI 자리마다 (future, 묶음 안 위치). LLM 은 공급자 설정에 따라 여러 종목을 한 요청에 묶는다
             slots: list[list] = [[None] * len(analysts) for _ in jobs]
+            from .review.batch_ab import batch_size_for, is_single_arm
             for ai_i, a in enumerate(analysts):
                 b = int(getattr(a, "batch_size", 1) or 1) if hasattr(a, "analyze_batch") else 1
+                if b > 1:
+                    b = batch_size_for(self.engine, a, b)  # A/B 결과로 조정된 묶음 크기
                 if b > 1 and len(jobs) > 1:
-                    for k in range(0, len(jobs), b):
-                        idx = list(range(k, min(k + b, len(jobs))))
+                    # A/B: 약 20% 는 하나씩 물어 묶음 품질을 비교한다 (종목·날짜로 정해져 재현 가능)
+                    single = [j for j in range(len(jobs)) if is_single_arm(jobs[j][0], jobs[j][1])]
+                    grouped = [j for j in range(len(jobs)) if j not in set(single)]
+                    for k in range(0, len(grouped), b):
+                        idx = grouped[k:k + b]
+                        if len(idx) == 1:
+                            slots[idx[0]][ai_i] = (pool.submit(opinion, a, jobs[idx[0]][4]), None)
+                            continue
                         fut = pool.submit(batch_opinions, a, [jobs[j][4] for j in idx])
                         for pos, j in enumerate(idx):
                             slots[j][ai_i] = (fut, pos)
+                    for j in single:
+                        slots[j][ai_i] = (pool.submit(opinion, a, jobs[j][4]), None)
                 else:
                     for j, job in enumerate(jobs):
                         slots[j][ai_i] = (pool.submit(opinion, a, job[4]), None)
@@ -432,7 +443,9 @@ class QuantAI:
     def _persist_decision(self, s, sym, t, frow, rrow, ctx, sig, opinions, bars, challenger, challenger_rec,
                           scenarios: bool, versions: dict | None = None) -> int:
         rec = save_consensus(s, sig, opinions, ctx.as_of, self.horizon, ctx.regime.get("regime"),
-                             evidence=evidence_snapshot(ctx), versions=versions)
+                             evidence=evidence_snapshot(ctx), versions=versions,
+                             plan=self._trade_plan(sym, bars.get(sym), t, sig.prob_up, live=versions is None or
+                                                   not (versions or {}).get("replay")))
         cid = rec.id
         if challenger is not None:  # 앙상블 미참여, 채점만
             ch = QuantAnalyst(challenger, challenger_rec.version, name="challenger").analyze(ctx)
@@ -456,6 +469,29 @@ class QuantAI:
                         f"충돌 {sig.conflict}. 뉴스: {news_titles}", ts=ctx.as_of, symbol=sym,
                         meta={"consensus_id": cid, "action": sig.action})
         return cid
+
+    def _trade_plan(self, sym: str, b, t, prob_up: float, live: bool = True) -> dict | None:
+        """사이징 · 진입 구간 · 무효화 조건 — 예측과 함께 봉인된다. 과거 재생에는 그때의 이벤트·준비 상태가 없어 배수 1."""
+        from .trading.trade_plan import plan
+        if b is None:
+            return None
+        try:
+            c = self.settings.costs
+            cost = 2 * (c.commission_bps + c.slippage_bps) + (c.sell_tax_bps if sym[:1].isdigit() else 0)
+            em, why, rm, earn = 1.0, None, 1.0, False
+            if live:
+                cal = ops.get_state(self.engine, "event_calendar")
+                r = next((x for x in cal.get("risk") or [] if x["symbol"] == sym), None)
+                if r:
+                    em, why = r.get("buy_multiplier", 1.0), r.get("reason")
+                    earn = bool(r.get("earnings") and r["earnings"].get("trading_days", 99) <= self.horizon)
+                rd = ops.get_state(self.engine, "readiness").get("status")
+                rm = {"NOT_READY": 0.0, "CAUTION": 0.75}.get(rd, 1.0)
+            return plan(sym, b.loc[:t], prob_up, self.horizon, cost, self.settings.risk.max_position_weight,
+                        event_mult=em, event_reason=why, readiness_mult=rm, earnings_in_horizon=earn)
+        except Exception as e:  # noqa: BLE001 - 계획 실패가 판단 저장을 막으면 안 됨
+            log.warning("매매 계획 실패 %s: %s", sym, e)
+            return None
 
     # ================================================================ 매매
     def kill_switch_on(self) -> bool:
@@ -677,7 +713,9 @@ class QuantAI:
             rep = report(bars, s)
         if act:
             prev = ops.get_state(self.engine, "drift")
-            ops.set_state(self.engine, "drift", _json_ready(rep))
+            hist = (prev.get("history") or [])[-29:] + [{"at": rep["at"], "status": rep["status"],
+                                                       "psi": {f["feature"]: f["psi"] for f in rep["features"]}}]
+            ops.set_state(self.engine, "drift", _json_ready(rep | {"history": hist}))
             if rep["status"] == "drift" and prev.get("status") != "drift":
                 from .alerts import push
                 w = rep.get("worst") or {}
@@ -810,9 +848,11 @@ class QuantAI:
             quotes.setdefault(sym, MarketQuote(last=prices[sym]))
         equity = pf.equity(prices)
 
+        from .desk import cost_config
         from .global_market import COSTS as US_COSTS
         from .global_market import is_us_book
-        costs = CostModel(US_COSTS if is_us_book(name) else st.costs)  # 해외 장부: 해외주식 수수료, 매도세 없음
+        # 해외 장부: 해외주식 수수료, 매도세 없음 · 국내: 실측 슬리피지 50건 이상이면 보정된 비용
+        costs = CostModel(US_COSTS if is_us_book(name) else cost_config(self, st.costs))
         if broker is None:
             broker = PaperBroker(pf, costs) if mode is Mode.PAPER else ShadowBroker(pf, costs)
         budget_ratio = 1.0
@@ -829,7 +869,20 @@ class QuantAI:
         except Exception as e:
             ops.record_health(self.engine, "risk_engine", False, f"{type(e).__name__}: {e}")
             raise
-        risk.sectors = ops.get_state(self.engine, "sector_map").get("map", {})  # 업종 한도 (섹터 엔진)
+        from .engines.sector import sector_map
+        risk.sectors = sector_map(self.engine)  # 업종 한도 (섹터 엔진 · 국내는 WICS 우선)
+        if book is None:  # v13 게이트 — 성과 귀속용 장부(book)에는 적용하지 않는다 (비교가 공정해야 함)
+            from . import readiness as _rd
+            from .desk import event_caps_for, portfolio_gate
+            risk.buy_block = _rd.buy_block(self, name)
+            want = {x.symbol for x in signals_override} if signals_override is not None else {d.symbol for d in decisions}
+            risk.event_caps = event_caps_for(self, want)
+            try:
+                gate_bars, _, _ = self.market_data(ts) if not is_us_book(name) else (None, None, None)
+                if gate_bars:
+                    risk.portfolio_gate = portfolio_gate(self, gate_bars)
+            except Exception as e:  # noqa: BLE001 - 게이트 계산 실패는 기존 한도로 진행 (로그)
+                log.warning("포트폴리오 사전 게이트 준비 실패: %s", e)
         from dataclasses import replace as _dc_replace
         for sym, q in list(quotes.items()):  # 시장 충격: 평균 거래대금을 알면 큰 주문일수록 비싸게 체결
             if risk.adv.get(sym) and q.adv is None:
@@ -943,7 +996,7 @@ class QuantAI:
             plan.notes.append(f"VaR 예산: 계획 1일 VaR95 {var:.1%} > 한도 {self.settings.risk.max_var95:.0%} "
                               f"→ 전체 비중 ×{scale:.2f}")
 
-    def portfolio_risk(self, mode: str | None = None) -> dict:
+    def portfolio_risk(self, mode: str | None = None, with_ruin: bool = False) -> dict:
         """현재 장부(또는 증권사 잔고와 동기화된 live 장부)의 포트폴리오 리스크."""
         from .trading.portfolio_risk import PortfolioRiskLimits, portfolio_risk
         mode = mode or (self.settings.mode.value if self.settings.mode.value in ("paper", "shadow", "live") else "paper")
@@ -957,11 +1010,23 @@ class QuantAI:
         weights = {s: v / equity for s, v in values.items()} if equity > 0 else {}
         with session_scope(self.engine) as s:
             inst = {i.symbol: i for i in s.scalars(select(Instrument))}
+        from .engines.sector import sector_map
         res = portfolio_risk(weights, bars, bench, names={k: v.name for k, v in inst.items()},
                              currencies={k: v.currency for k, v in inst.items()}, values=values,
-                             limits=PortfolioRiskLimits(max_var95=self.settings.risk.max_var95))
-        return res | {"mode": mode, "equity": equity, "cash_weight": round(pf.cash / equity, 4) if equity else 1.0,
-                      "var95_krw": round(res.get("var95", 0) * equity), "es95_krw": round(res.get("es95", 0) * equity)}
+                             limits=PortfolioRiskLimits(max_var95=self.settings.risk.max_var95,
+                                                        max_sector_weight=self.settings.risk.max_sector_weight,
+                                                        max_name_weight=max(self.settings.risk.max_position_weight * 1.5, 0.15)),
+                             sectors=sector_map(self.engine), impact_coef=self.settings.costs.impact_coef)
+        out = res | {"mode": mode, "equity": equity, "cash_weight": round(pf.cash / equity, 4) if equity else 1.0,
+                     "var95_krw": round(res.get("var95", 0) * equity), "es95_krw": round(res.get("es95", 0) * equity),
+                     "lvar95_krw": round(res.get("lvar95", 0) * equity)}
+        if with_ruin and weights:
+            try:
+                from .desk import risk_of_ruin
+                out["ruin"] = risk_of_ruin(self, mode)
+            except Exception as e:  # noqa: BLE001
+                out["ruin"] = {"insufficient": True, "message": f"{type(e).__name__}"}
+        return out
 
     def order_sheet(self, holdings: dict[str, int], cash: float, use_ai: bool = True,
                     cfg: CoreSatelliteConfig | None = None, prices: dict[str, float] | None = None):

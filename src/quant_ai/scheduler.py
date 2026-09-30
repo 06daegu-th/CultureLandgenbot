@@ -263,6 +263,24 @@ def build_default_scheduler(app, mode) -> Scheduler:
         # DB 자동 백업 (하루 1개 · 7개 보관 · 무결성 확인)
         from .data.backup import backup
         sch.add("backup", lambda now: backup(st.database_url, st.artifacts_dir), 24 * 3600, "closed")
+        # v13 — 심장박동 · 이벤트 캘린더 · 매매 준비 점검 · 노후 · 예측력 · 슬리피지 보정 · 이벤트 영향 · 공증 …
+        from . import desk
+        from .recovery import heartbeat
+        sch.add("heartbeat", lambda now: heartbeat(app.engine, now), 60, "always")
+        sch.add("event_calendar", lambda now: desk.event_calendar(app, now=now), 3600, "always")
+        sch.add("readiness", lambda now: desk.readiness(app), 900, "open")
+        sch.add("readiness_offhours", lambda now: desk.readiness(app), 3600, "closed")
+        sch.add("model_decay", lambda now: desk.model_decay(app), 12 * 3600, "closed")
+        sch.add("prediction_power", lambda now: desk.prediction_power(app), 6 * 3600, "always")
+        sch.add("slippage_cal", lambda now: desk.slippage_calibrate(app), 24 * 3600, "closed")
+        sch.add("event_impact", lambda now: desk.event_impact(app), 24 * 3600, "closed")
+        sch.add("event_extract", lambda now: desk.extract_events(app), 6 * 3600, "always")
+        sch.add("wics", lambda now: desk.wics(app), 24 * 3600, "closed")
+        sch.add("altdata", lambda now: desk.alt_collect(app), 24 * 3600, "closed")
+        sch.add("batch_ab", lambda now: desk.batch_ab(app), 24 * 3600, "closed")
+        sch.add("my_journal", lambda now: desk.my_journal(app), 6 * 3600, "closed")
+        if st.notary != "off":
+            sch.add("notary", lambda now: desk.notarize(app), 24 * 3600, "always")
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "ai_verdict"):
         sch.add("ai_verdict", lambda now: app.ai_verdict(), 12 * 3600, "closed")  # 추천 단계가 바뀌면 알림
     sch.add("shadow_eval", lambda now: app.evaluate_shadow_models(), 12 * 3600, "closed")

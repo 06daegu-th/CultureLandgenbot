@@ -6,6 +6,8 @@
 업종 통계: 같은 업종 종목을 같은 비중으로 묶어 5·20일 수익률, 폭(20일선 위 비율), 지수 대비 상대강도(RS), 순위.
 판단 재료: 종목마다 "업종 · 순위 · 상대강도 · 폭 · 같은 업종 상위 종목 움직임" 을 AI 에게 준다.
 업종 한도: 리스크 엔진이 한 업종에 40% 넘게 쏠리지 않게 막는다.
+v13: 국내 종목은 공식 WICS 분류(와이즈인덱스, 키 불필요)를 먼저 쓴다 → Yahoo 는 해외·미분류 보충.
+     섹터 로테이션(RRG): 업종마다 상대강도 비율(RS-Ratio)과 그 모멘텀(RS-Momentum) → 주도·약화·침체·개선 4분면 + 최근 8주 궤적.
 """
 
 from __future__ import annotations
@@ -68,7 +70,47 @@ def fetch_sector(symbol: str) -> dict:
 
 
 def sector_map(engine) -> dict[str, str]:
-    return ops.get_state(engine, "sector_map").get("map", {})
+    """국내는 WICS(공식) 우선, 나머지는 Yahoo 기반 한국어 업종."""
+    mp = dict(ops.get_state(engine, "sector_map").get("map", {}))
+    mp.update(ops.get_state(engine, "wics_map").get("map", {}))
+    return mp
+
+
+QUADRANTS = {("up", "up"): "주도 (Leading)", ("up", "down"): "약화 (Weakening)",
+             ("down", "down"): "침체 (Lagging)", ("down", "up"): "개선 (Improving)"}
+
+
+def rotation(bars: dict[str, pd.DataFrame], mp: dict[str, str], bench: pd.DataFrame | None, trail: int = 8,
+             step: int = 5, min_n: int = 1) -> list[dict]:
+    """RRG: 업종 지수(동일가중) ÷ 벤치마크 = RS. RS-Ratio = 100·RS/RS 20일 평균, RS-Mom = 100·Ratio/Ratio 5일 전.
+    둘 다 100 위 = 주도, Ratio 위·Mom 아래 = 약화, 둘 다 아래 = 침체, Ratio 아래·Mom 위 = 개선 (시계 방향으로 돈다)."""
+    if bench is None or len(bench) < 60:
+        return []
+    groups: dict[str, list[str]] = {}
+    for sym, sec in mp.items():
+        if sym in bars and len(bars[sym]) >= 60:
+            groups.setdefault(sec, []).append(sym)
+    bret = bench["close"].astype(float).pct_change()
+    out = []
+    for sec, syms in groups.items():
+        if len(syms) < min_n:
+            continue
+        r = pd.DataFrame({s: bars[s]["close"].astype(float).pct_change() for s in syms}).mean(axis=1)
+        idx = (1 + r.fillna(0)).cumprod()
+        b = (1 + bret.reindex(idx.index).fillna(0)).cumprod()
+        rs = idx / b
+        ratio = 100 * rs / rs.rolling(20).mean()
+        mom = 100 * ratio / ratio.shift(step)
+        pts = pd.DataFrame({"x": ratio, "y": mom}).dropna()
+        if len(pts) < step * trail:
+            continue
+        tr = pts.iloc[::-step].iloc[:trail].iloc[::-1]
+        x, y = float(pts["x"].iloc[-1]), float(pts["y"].iloc[-1])
+        q = QUADRANTS[("up" if x >= 100 else "down", "up" if y >= 100 else "down")]
+        out.append({"sector": sec, "n": len(syms), "rs_ratio": round(x, 3), "rs_mom": round(y, 3), "quadrant": q,
+                    "trail": [{"x": round(float(a), 3), "y": round(float(c), 3), "date": str(t.date())}
+                              for t, a, c in zip(tr.index, tr["x"], tr["y"])]})
+    return sorted(out, key=lambda r: (-r["rs_ratio"]))
 
 
 def fill_map(engine, symbols: list[str], fetch=None, limit: int = 8, pause: float = 2.0,
@@ -147,4 +189,4 @@ def for_context(symbol: str, mp: dict[str, str], stats: list[dict]) -> dict:
             "peers_5d": [{"name": m["name"], "ret_5": round(m["ret_5"], 4)} for m in row["leaders"] if m["symbol"] != symbol][:3]}
 
 
-__all__ = ["to_korean", "fetch_sector", "fill_map", "sector_map", "sector_stats", "for_context"]
+__all__ = ["to_korean", "fetch_sector", "fill_map", "sector_map", "sector_stats", "for_context", "rotation", "QUADRANTS"]

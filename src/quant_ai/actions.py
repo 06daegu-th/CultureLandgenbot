@@ -425,6 +425,7 @@ def start_action(app, name: str, params: dict | None = None) -> dict:
         sym = str(params.get("symbol", ""))[:12]
         key = f"analyze:{sym}"
         return _run(key, lambda say: analyze_symbol(app, sym, say))
+    from . import desk
     from .analytics import event_reactions
     from .global_market import run_cycle as us_cycle
     from .global_market import sync as us_sync
@@ -440,10 +441,29 @@ def start_action(app, name: str, params: dict | None = None) -> dict:
            "graph": lambda say: {**app.build_graph(), "sectors": app.sector_fill(limit=12)},
            "morning_brief": lambda say: _report(app, "morning"),
            "daily_report": lambda say: _report(app, "daily"),
-           "backup": lambda say: _backup(app)}
+           "backup": lambda say: _backup(app),
+           # v13
+           "readiness": lambda say: _brief(desk.readiness(app), ("status", "blockers")),
+           "event_calendar": lambda say: {"events": len(desk.event_calendar(app)["events"])},
+           "event_impact": lambda say: {"stock_events": desk.event_impact(app)["n_stock_events"]},
+           "kis_validate": lambda say: _brief(desk.kis_validate(app), ("ok", "failed", "env")),
+           "slippage_cal": lambda say: _brief(desk.slippage_calibrate(app)["model"], ("n", "fixed_bps", "impact_coef", "verdict")),
+           "model_decay": lambda say: _brief(desk.model_decay(app), ("status", "message")),
+           "prediction_power": lambda say: {"bottom_line": desk.prediction_power(app)["bottom_line"]},
+           "wics": lambda say: desk.wics(app, force=True),
+           "altdata": lambda say: desk.alt_collect(app),
+           "event_extract": lambda say: {"n": desk.extract_events(app)["n"]},
+           "batch_ab": lambda say: {"rows": len(desk.batch_ab(app)["rows"])},
+           "notary": lambda say: {k: v for k, v in desk.notarize(app).items() if k in ("ok", "skipped", "upto_id", "results")},
+           "prereg": lambda say: _prereg_new(app)}
     if name not in fns:
         raise ValueError(f"알 수 없는 동작: {name}")
     return _run(name, fns[name])
+
+
+def _prereg_new(app) -> dict:
+    from .review.power import preregister
+    return {k: v for k, v in preregister(app, force=True).items() if k in ("version", "h1", "hash")}
 
 
 def _brief(d: dict, keys) -> dict:

@@ -151,6 +151,24 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.action(arg("name", "")))
                     if url.path == "/api/chat":
                         return self._json(api.chat_history(arg("sid", "")))
+                    if url.path == "/api/freshness":
+                        return self._json(api.freshness())
+                    if url.path == "/api/readiness":
+                        return self._json(api.readiness(arg("mode")))
+                    if url.path == "/api/calendar":
+                        return self._json(api.calendar())
+                    if url.path == "/api/power":
+                        return self._json(api.power())
+                    if url.path == "/api/execution":
+                        return self._json(api.execution())
+                    if url.path == "/api/desk":
+                        return self._json(api.desk(arg("symbol", "")[:12]))
+                    if url.path == "/api/rotation":
+                        return self._json(api.rotation())
+                    if url.path == "/api/pipeline":
+                        return self._json(api.pipeline_status())
+                    if url.path == "/api/myjournal":
+                        return self._json(api.my_journal())
                 except Exception as exc:  # noqa: BLE001
                     log.exception("API 오류")
                     return self._json({"error": str(exc)}, 500)
@@ -207,6 +225,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     return self._json(api.push_write(url.path, body))
                 if url.path == "/api/notify/test":
                     return self._json(api.notify_test())
+                if url.path == "/api/myjournal":
+                    return self._json(api.my_journal_write(body))
                 if url.path == "/api/chat/clear":
                     from ..assistant import clear
                     clear(api.engine, str(body.get("sid", ""))[:40])

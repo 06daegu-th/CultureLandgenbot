@@ -373,3 +373,22 @@ class AlertRule(Base):
     repeat: Mapped[bool] = mapped_column(Boolean, default=False)  # 하루 한 번씩 계속 (기본: 한 번 울리면 끔)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserJournal(Base):
+    """내 투자 판단 기록 (AI 판단과 같은 방식으로 봉인·채점) — '내가 AI 보다 나은가'를 데이터로."""
+
+    __tablename__ = "user_journal"
+    id: Mapped[int] = mapped_column(BigId, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    symbol: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(8))  # BUY / SELL / HOLD
+    conviction: Mapped[int] = mapped_column(Integer)  # 1~5
+    horizon: Mapped[int] = mapped_column(Integer)  # 거래일
+    ref_price: Mapped[float | None] = mapped_column(Float)
+    reason: Mapped[str | None] = mapped_column(Text)
+    tags: Mapped[dict | None] = mapped_column(JSONType)
+    row_hash: Mapped[str | None] = mapped_column(String(64))
+    realized_return: Mapped[float | None] = mapped_column(Float)
+    correct: Mapped[bool | None] = mapped_column(Boolean)
+    __table_args__ = (Index("ix_user_journal_symbol", "symbol", "created_at"),)

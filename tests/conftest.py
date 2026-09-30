@@ -22,3 +22,12 @@ def _no_profile_network(monkeypatch):
     monkeypatch.setattr(investor_flow, "fetch_naver", _offline)
     monkeypatch.setattr(dart_docs, "fetch_document", _offline)
     monkeypatch.setattr(sector, "fetch_sector", _offline)
+    # v13 외부 소스
+    from quant_ai.data.collectors import altdata, options, wics
+    from quant_ai.engines import earnings
+    from quant_ai.review import notary
+    monkeypatch.setattr(options, "fetch_yahoo", _offline)
+    monkeypatch.setattr(earnings, "fetch_yahoo", _offline)
+    monkeypatch.setattr(altdata, "_get", _offline)
+    monkeypatch.setattr(wics, "_get", _offline)
+    monkeypatch.setattr(notary, "_post", _offline)

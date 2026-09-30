@@ -28,6 +28,10 @@ class RiskEngine:
         self._orders_today = 0
         self.adv: dict[str, float] = {}  # 종목별 20일 평균 거래대금 (없으면 유동성 한도 생략)
         self.sectors: dict[str, str] = {}  # 종목 → 업종 (없으면 업종 한도 생략)
+        # v13 — 매수만 막거나 줄인다 (매도는 항상 허용)
+        self.buy_block: str | None = None  # Trading Readiness 가 NOT READY 면 사유
+        self.event_caps: dict[str, tuple[float, str]] = {}  # 종목 → (수량 배수 0~1, 사유) · 실적 발표 직전 등
+        self.portfolio_gate = None  # (종목, 수량, 가격, 포트폴리오, 가격들) → (최대 수량, 사유|None) · 업종/묶음/VaR
 
     def start_day(self, day: date, equity: float, orders_so_far: int = 0) -> None:
         """orders_so_far: 오늘 이미 낸 주문 수 (프로세스 재시작/여러 사이클에 걸쳐 한도 유지)."""
@@ -64,6 +68,8 @@ class RiskEngine:
         # ---- 이하 매수
         if self.kill_switch:
             return RiskDecision(False, None, ["킬스위치 ON"])
+        if self.buy_block:
+            return RiskDecision(False, None, [f"매매 준비 상태: {self.buy_block}"])
         if self._orders_today >= L.max_orders_per_day:
             return RiskDecision(False, None, [f"일 주문 한도 {L.max_orders_per_day} 초과"])
         if self.daily_pnl_pct(equity) <= -L.max_daily_loss_pct:
@@ -94,6 +100,18 @@ class RiskEngine:
             if qty > max_qty:
                 qty = max_qty
                 reasons.append(f"{label} → {max_qty}주로 축소")
+        cap = self.event_caps.get(order.symbol)
+        if cap and qty > 0:
+            m, why = cap
+            new = int(qty * max(0.0, min(1.0, m)))
+            if new < qty:
+                reasons.append(f"이벤트 위험: {why} → {new}주" if new else f"이벤트 위험: {why} → 매수 보류")
+                qty = new
+        if self.portfolio_gate is not None and qty > 0:
+            max_qty, why = self.portfolio_gate(order.symbol, qty, price, portfolio, prices)
+            if max_qty < qty:
+                qty = max(int(max_qty), 0)
+                reasons.append(f"포트폴리오 한도: {why} → {qty}주")
 
         if qty <= 0:
             return RiskDecision(False, None, reasons or ["한도 소진"])

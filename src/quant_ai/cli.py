@@ -121,6 +121,13 @@ def cmd_run(args):
         else:
             champ = app.registry.champion()
             st.assert_live_allowed(champ is not None and champ.shadow_metrics is not None)
+    from .recovery import startup
+    try:
+        r = startup(app)  # 꺼져 있던 동안 놓친 일 따라잡기 · 멈춘 작업 정리 · DB 점검
+        if r.get("downtime_s"):
+            print(f"재시작 복구: 꺼져 있던 시간 {r['downtime_s'] / 60:.0f}분 · 정리 {r['stale_jobs']}건 · DB {'정상' if r['db']['ok'] else '점검 필요'}")
+    except Exception as e:  # noqa: BLE001 - 복구 실패가 시작을 막으면 안 됨
+        print(f"재시작 복구 건너뜀: {e}")
     build_default_scheduler(app, mode).run_forever()
 
 
@@ -129,8 +136,36 @@ def cmd_review(args):
     print(json.dumps({"summary": r.summary, "lessons": r.lessons}, ensure_ascii=False, indent=1, default=str))
 
 
+def cmd_power_study(args):
+    from .desk import run_signal_study
+    r = run_signal_study(_app(args), args.marcap_dir, args.start, top=args.top)
+    print(r["verdict"])
+    for k in ("dev", "holdout"):
+        x = r[k]
+        print(f"  {k:<8} IC {x.get('ic_mean')} (t={x.get('ic_t')}) · 무작위 대조 IC {x.get('placebo_ic_mean')} · "
+              f"상위5분위 적중 {x.get('top_quintile_hit')} · 비용 후 상위20 초과 {x.get('top20_excess_net')} (t={x.get('top20_excess_net_t')})")
+    print(r["caveat"])
+
+
+def cmd_readiness(args):
+    from .desk import readiness
+    r = readiness(_app(args), args.mode)
+    icon = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
+    print(f"{r['status']} ({r['mode']}) · {r['as_of']}")
+    for c in r["checks"]:
+        print(f"  {icon.get(c['status'], '·')} {c['key']:<11} {c['detail']}")
+
+
 def cmd_kis_check(args):
-    """KIS 연결 점검: 토큰 → 잔고 → 현재가/호가 (주문은 내지 않음)."""
+    """KIS 연결 점검: 토큰 → 잔고 → 현재가/호가 (주문은 내지 않음). --suite 는 8단계 검증을 기록한다."""
+    if getattr(args, "suite", False):
+        from .desk import kis_validate
+        r = kis_validate(_app(args), fill=args.fill)
+        for st in r.get("steps", []):
+            mark = "✅" if st["ok"] else "⏭" if st["ok"] is None else "❌"
+            print(f"{mark} {st['title']:<14} {st['detail']}  ({st['ms']}ms)")
+        print("결과:", "통과" if r["ok"] else f"실패 — {r.get('failed') or r.get('message')}")
+        return
     from .trading.kis import KISClient
     st = Settings.from_env()
     c = KISClient.from_env(st.artifacts_dir)
@@ -633,7 +668,17 @@ def main(argv: list[str] | None = None) -> None:
     kc = sub.add_parser("kis-check", help="한국투자증권 API 연결 점검 (기본: 주문 없음)")
     kc.add_argument("--symbol", default="005930")
     kc.add_argument("--test-order", action="store_true", help="모의투자 전용: 1주 비체결 주문 후 즉시 취소")
+    kc.add_argument("--suite", action="store_true", help="검증 스위트 8단계 실행 · 결과 저장 (Readiness BROKER 관문)")
+    kc.add_argument("--fill", action="store_true", help="--suite 와 함께: 모의투자에서 1주 실제 체결 → 되팔기 (슬리피지 실측)")
     kc.set_defaults(fn=cmd_kis_check)
+    ps = sub.add_parser("power-study", help="실제 KRX 데이터로 코어 점수의 예측력 사후 검증 (IC · 분위 · 비용 후 초과)")
+    ps.add_argument("--marcap-dir", required=True)
+    ps.add_argument("--start", type=int, default=2010)
+    ps.add_argument("--top", type=int, default=100)
+    ps.set_defaults(fn=cmd_power_study)
+    rd = sub.add_parser("readiness", help="매매 준비 점검 7관문 (DATA·BROKER·MODEL·RISK·EVENT·DRIFT·CALIBRATION)")
+    rd.add_argument("--mode", default=None)
+    rd.set_defaults(fn=cmd_readiness)
     sub.add_parser("health").set_defaults(fn=cmd_health)
     sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
     od = sub.add_parser("orders", help="리밸런싱 주문표 (다른 증권사·ISA·수동 매매용, 주문은 내지 않음)")

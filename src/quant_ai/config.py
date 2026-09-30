@@ -122,6 +122,12 @@ class Settings:
     ai_shadow: bool = True
     ai_overlay: str = "full"  # AI 를 켰을 때: full(거부권+긴급청산+위성) / veto(거부권·긴급청산만, 위성 없음)
     kis_env: str = "demo"  # demo(모의투자) / real
+    # v13 — 매매 준비 게이트 · 이벤트 게이트 · 슬리피지 자동 보정 · 장부 외부 공증
+    readiness_gate: str = "live"  # live(live·shadow 장부) / all / off — NOT READY 면 신규 매수 차단
+    event_gate: str = "reduce"  # reduce(실적 D-1 이내 ×0.5, D-3 이내 ×0.75) / block / off
+    slippage_autocal: bool = True  # 실측 슬리피지 50건 이상이면 비용·충격 계수를 실측에 맞춘다
+    notary: str = "ots"  # ots(OpenTimestamps, 무료·키 없음) / gist / both / off — 장부 봉인 해시 외부 공증
+    gist_token: str | None = field(default=None, repr=False)  # QUANT_GIST_TOKEN (gist 권한만) — 선택
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -188,6 +194,11 @@ class Settings:
             ai_shadow=e.get("QUANT_AI_SHADOW", "true").lower() != "false",
             ai_overlay="veto" if e.get("QUANT_AI_OVERLAY", "").lower() == "veto" else "full",
             max_data_age_days=int(f("QUANT_MAX_DATA_AGE_DAYS", cls.max_data_age_days)),
+            readiness_gate=e.get("QUANT_READINESS_GATE", cls.readiness_gate).lower(),
+            event_gate=e.get("QUANT_EVENT_GATE", cls.event_gate).lower(),
+            slippage_autocal=e.get("QUANT_SLIPPAGE_AUTOCAL", "true").lower() != "false",
+            notary=e.get("QUANT_NOTARY", cls.notary).lower(),
+            gist_token=e.get("QUANT_GIST_TOKEN") or None,
         )
 
     @property

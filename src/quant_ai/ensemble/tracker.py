@@ -52,7 +52,7 @@ def evidence_snapshot(ctx) -> dict:
 
 def save_consensus(session: Session, sig: ConsensusSignal, opinions: list[Opinion], as_of: datetime,
                    horizon: int, regime: str | None, evidence: dict | None = None,
-                   versions: dict | None = None) -> ConsensusRecord:
+                   versions: dict | None = None, plan: dict | None = None) -> ConsensusRecord:
     from ..review.scorecard import expected_move
     sigma = ((evidence or {}).get("price") or {}).get("vol_20")
     exp_h, exp_1d = expected_move(sig.prob_up, sigma, horizon)  # 확률 → 크기 (예측 성적표에서 실제와 비교)
@@ -62,6 +62,7 @@ def save_consensus(session: Session, sig: ConsensusSignal, opinions: list[Opinio
                                    **({"expected_return": round(exp_h, 5), "expected_1d": round(exp_1d, 5)}
                                       if exp_h is not None else {}),
                                    **({"versions": versions} if versions else {}),
+                                   **({"plan": _json_safe(plan)} if plan else {}),
                                    **({"evidence": _json_safe(evidence)} if evidence else {})})
     from ..review.ledger import seal
     seal(rec)  # 예측 장부: 저장 시각 + 내용 해시

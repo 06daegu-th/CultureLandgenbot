@@ -299,7 +299,14 @@ class DashboardAPI:
             last_bar = s.scalar(select(func.max(PriceBar.ts)))
 
         st = app.settings
+        from ..asof import label as _label
+        rd = _ops.get_state(self.engine, "readiness")
         return {
+            "asof": {"now": _label(now), "last_bar": _label(last_bar, with_time=False),
+                     "summary": _label(recent[0].as_of) if recent else None},
+            "readiness": {"status": rd.get("status"), "at": rd.get("at"), "as_of": rd.get("as_of"),
+                          "checks": [{k: c.get(k) for k in ("key", "title", "status", "detail")} for c in rd.get("checks") or []],
+                          "blockers": rd.get("blockers") or []},
             "demo": demo, "now": now.isoformat(), "mode": st.mode.value, "kill_switch": app.kill_switch_on(),
             "halted": _ops.halted(self.engine), "kill_info": _ops.get_state(self.engine, "kill_switch"),
             "markets": {k: m.phase(now).value for k, m in MARKETS.items()},
@@ -551,7 +558,7 @@ class DashboardAPI:
         if hit and time.monotonic() - hit[0] < 60:
             return hit[1]
         try:
-            out = self.app.portfolio_risk(mode)
+            out = self.app.portfolio_risk(mode, with_ruin=True)
         except Exception as e:  # noqa: BLE001 - 대시보드는 계속 떠야 한다
             return {"error": str(e)}
         self._risk_cache[key] = (time.monotonic(), out)
@@ -977,6 +984,73 @@ class DashboardAPI:
             return {}
         import json
         return json.loads(files[-1].read_text(encoding="utf-8"))
+
+    # ------------------------------------------------------------------ v13
+    def freshness(self) -> dict:
+        from ..asof import freshness
+        return self._cached("freshness", 20, lambda: freshness(self.app))
+
+    def readiness(self, mode: str | None = None) -> dict:
+        from .. import desk
+        st = _ops.get_state(self.engine, "readiness")
+        if st.get("at") and (datetime.now(UTC) - datetime.fromisoformat(st["at"])).total_seconds() < 300 and not mode:
+            from ..asof import freshness
+            return st | {"freshness": freshness(self.app), "cached": True}
+        return desk.readiness(self.app, mode)
+
+    def calendar(self) -> dict:
+        from .. import desk
+        st = _ops.get_state(self.engine, "event_calendar")
+        if not st.get("at") or (datetime.now(UTC) - datetime.fromisoformat(st["at"])).total_seconds() > 3600:
+            st = desk.event_calendar(self.app)
+        from ..clock import CALENDAR_SOURCE
+        return st | {"impact": _ops.get_state(self.engine, "event_impact"), "calendar_source": CALENDAR_SOURCE}
+
+    def power(self) -> dict:
+        from .. import desk
+        return self._cached("power", 60, lambda: desk.prediction_power(self.app, store=False)
+                            | {"decay": _ops.get_state(self.engine, "model_decay"),
+                               "drift": {k: v for k, v in _ops.get_state(self.engine, "drift").items() if k != "features"}
+                               | {"features": _ops.get_state(self.engine, "drift").get("features")},
+                               "batch_ab": _ops.get_state(self.engine, "batch_ab")})
+
+    def execution(self) -> dict:
+        from ..trading.kis_ws import BOOKS
+        return {"kis": _ops.get_state(self.engine, "kis_validation"), "slippage": _ops.get_state(self.engine, "slippage_model"),
+                "parity": _ops.get_state(self.engine, "execution_parity"), "ws": _ops.get_state(self.engine, "kis_ws"),
+                "books": {k: {x: v for x, v in b.items() if x != "_t"} for k, b in list(BOOKS.items())[:10]}
+                or _ops.get_state(self.engine, "orderbook"),
+                "costs": {"assumed": self.app.settings.costs.__dict__}, "broker": self.app.settings.broker,
+                "kis_env": self.app.settings.kis_env}
+
+    def desk(self, symbol: str) -> dict:
+        from .. import desk
+        return self._cached(f"desk:{symbol}", 30, lambda: desk.stock_desk(self.app, symbol))
+
+    def rotation(self) -> dict:
+        from .. import desk
+        from ..engines.sector import QUADRANTS
+        wm = _ops.get_state(self.engine, "wics_map")
+        return self._cached("rotation", 300, lambda: {"rows": desk.rotation(self.app), "quadrants": list(QUADRANTS.values()),
+                                                       "wics": {"n": len(wm.get("map") or {}), "at": wm.get("at"), "day": wm.get("day"),
+                                                                "error": wm.get("error")},
+                                                       "extract": {k: v for k, v in _ops.get_state(self.engine, "event_extract").items()
+                                                                   if k != "events"} | {"events": (_ops.get_state(self.engine, "event_extract").get("events") or [])[:60]}})
+
+    def pipeline_status(self) -> dict:
+        from .. import desk
+        from ..recovery import source_health
+        return {"sources": source_health(self.app), "recovery": _ops.get_state(self.engine, "recovery"),
+                "heartbeat": _ops.get_state(self.engine, "heartbeat"), "notary": _ops.get_state(self.engine, "notary"),
+                "fx": self._cached("fx", 300, lambda: desk.fx(self.app))}
+
+    def my_journal(self) -> dict:
+        from .. import desk
+        return desk.my_journal(self.app)
+
+    def my_journal_write(self, body: dict) -> dict:
+        from .. import desk
+        return desk.my_journal_add(self.app, body)
 
     def reviews(self, limit: int = 10) -> list[dict]:
         with session_scope(self.engine) as s:

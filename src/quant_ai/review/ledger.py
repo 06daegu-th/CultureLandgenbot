@@ -44,7 +44,9 @@ def row_content(rec: ConsensusRecord) -> dict:
     return {"symbol": rec.symbol, "as_of": _iso(rec.as_of), "action": rec.action, "prob_up": _num(rec.prob_up, 6),
             "confidence": _num(rec.confidence, 4), "conflict": rec.conflict, "horizon": p.get("horizon"),
             "expected_return": _num(p.get("expected_return"), 6), "created_at": _iso(rec.created_at),
-            "versions": p.get("versions")}
+            "versions": p.get("versions"),
+            # 매매 계획(진입 구간·무효화·사이징)은 v13 부터 — 없던 기록의 해시는 그대로
+            **({"plan": p["plan"]} if p.get("plan") else {})}
 
 
 def row_hash(rec: ConsensusRecord) -> str:
@@ -78,7 +80,13 @@ def anchor(session, now: datetime | None = None) -> dict | None:
     a = LedgerAnchor(ts=now or datetime.now(UTC), upto_id=rows[-1][0], n=len(rows), digest=digest, prev_digest=prev)
     session.add(a)
     session.flush()
-    return {"id": a.id, "upto_id": a.upto_id, "n": a.n, "digest": digest}
+    return {"id": a.id, "upto_id": a.upto_id, "n": a.n, "digest": digest, "prev_digest": prev, "ts": a.ts.isoformat()}
+
+
+def latest_anchor(session) -> dict | None:
+    a = session.scalar(select(LedgerAnchor).order_by(LedgerAnchor.id.desc()))
+    return None if a is None else {"id": a.id, "upto_id": a.upto_id, "n": a.n, "digest": a.digest,
+                                   "prev_digest": a.prev_digest, "ts": a.ts.isoformat()}
 
 
 def verify(session, sample_limit: int = 50) -> dict:
@@ -130,4 +138,4 @@ def entries(session, limit: int = 50, before_id: int | None = None, names: dict 
     return out
 
 
-__all__ = ["seal", "row_hash", "anchor", "verify", "entries", "GENESIS"]
+__all__ = ["seal", "row_hash", "anchor", "latest_anchor", "verify", "entries", "GENESIS"]
