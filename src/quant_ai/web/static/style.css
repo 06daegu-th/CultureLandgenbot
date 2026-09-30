@@ -958,3 +958,28 @@ kbd { font: 600 11px "JetBrains Mono", monospace; padding: 1px 6px; border-radiu
   #market-badges .pill.mktc .mono { display: none; }
   .ck-table td:nth-child(4), .ck-table th:nth-child(4) { display: none; }
 }
+
+/* ---------- v15: 올인원 종목 · 홈 편집 · AI Health · 알림 설정 ---------- */
+.home-edit { margin-left: 8px; }
+.asof-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.he-list { display: grid; gap: 6px; }
+.he-it { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--panel-2); }
+.he-it .btn-sm { padding: 2px 8px; margin-left: 4px; }
+.pf-nav { position: sticky; top: 64px; z-index: 20; display: flex; gap: 6px; overflow-x: auto; padding: 8px 2px; margin: -4px 0 10px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); scrollbar-width: none; }
+.pf-nav::-webkit-scrollbar { display: none; }
+.pf-nav .chip { cursor: pointer; white-space: nowrap; background: var(--panel-2); color: var(--text); border: 1px solid var(--line-2); }
+.pf-nav .chip:hover { border-color: var(--accent); }
+.pf-trust .trust summary { cursor: pointer; font-size: 13px; list-style: none; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.pf-trust .trust { padding: 8px 10px; border-radius: 10px; background: var(--panel-2); margin-top: 10px; border-left: 3px solid var(--good); }
+.pf-trust .trust.warn { border-left-color: var(--warn); } .pf-trust .trust.bad { border-left-color: var(--bad); }
+.dday { display: flex; gap: 6px; flex-wrap: wrap; }
+.dd { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--panel-3); border: 1px solid var(--line-2); }
+.dd b { color: var(--accent-3); } .dd.hot { border-color: rgba(245,158,11,.6); background: rgba(245,158,11,.1); } .dd.past { opacity: .55; }
+.pt-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.pt-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pt-form select, .pt-form input { background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text); border-radius: 8px; padding: 5px 8px; }
+.pt-form input[type=number] { width: 90px; }
+.star-on { color: #fbbf24; }
+#notify-card input[type=checkbox] { width: 16px; height: 16px; }
+@media (max-width: 900px) { .pf-nav { top: 104px; } }

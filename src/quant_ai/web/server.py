@@ -187,6 +187,16 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.compare(arg("symbols", "")[:60]))
                     if url.path == "/api/star":
                         return self._json(api.starred())
+                    if url.path == "/api/stock":
+                        return self._json(api.stock(arg("symbol", "")[:12], arg("mode", "paper")[:8]))
+                    if url.path == "/api/pretrade":
+                        return self._json(api.pretrade(arg("symbol", "")[:12], arg("weight", "")[:6], arg("mode", "paper")[:8]))
+                    if url.path == "/api/health/ai":
+                        return self._json(api.ai_health())
+                    if url.path == "/api/prefs":
+                        return self._json(api.prefs())
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
                 except Exception as exc:  # noqa: BLE001
                     log.exception("API 오류")
                     return self._json({"error": str(exc)}, 500)
@@ -249,6 +259,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     return self._json(api.accounts_write(body))
                 if url.path == "/api/star":
                     return self._json(api.star(body))
+                if url.path == "/api/prefs":
+                    return self._json(api.prefs_write(body))
                 if url.path == "/api/chat/clear":
                     from ..assistant import clear
                     clear(api.engine, str(body.get("sid", ""))[:40])

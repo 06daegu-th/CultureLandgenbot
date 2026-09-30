@@ -337,9 +337,13 @@ def model_decay(app, store: bool = True) -> dict:
     if store:
         prev = ops.get_state(app.engine, "model_decay")
         ops.set_state(app.engine, "model_decay", _json(r))
+        from .alerts import push
         if r["status"] == "decaying" and prev.get("status") != "decaying":
-            from .alerts import push
-            push(app.engine, "market", "모델 노후 신호", r.get("message") or "", level="warn", link="#power")
+            push(app.engine, "market", "모델 노후 신호", r.get("message") or "", level="warn", link="#aihealth")
+        for an in set(r.get("decaying_ais") or []) - set(prev.get("decaying_ais") or []):
+            from .explain import LABELS
+            push(app.engine, "market", f"AI 성능 저하: {LABELS.get(an, an)}", (r["analysts"][an].get("message") or "")[:200],
+                 level="warn", link="#aihealth", dedupe=f"ai-decay:{an}:{r['at'][:10]}")
     return r
 
 

@@ -202,11 +202,15 @@ class DashboardAPI:
                     prio.setdefault(x["symbol"], 0)
                 for sym in plan.get("core", []):
                     prio.setdefault(sym, 1)
+            starred = set(get_state(self.engine, "starred").get("symbols", []))
+            for sym in starred:
+                prio[sym] = min(prio.get(sym, 0), 0)  # 별표 관심종목은 보유와 같은 맨 앞
             for sym in reversed(get_state(self.engine, "watch_symbols").get("symbols", [])):
                 prio.setdefault(sym, 2)
-            watch.sort(key=lambda w: (prio.get(w["symbol"], 3 if w["action"] else 4), -w["_liq"], w["name"] or ""))
+            watch.sort(key=lambda w: (prio.get(w["symbol"], 3 if w["action"] else 4), w["symbol"] not in starred, -w["_liq"], w["name"] or ""))
             for w in watch:
                 w["tier"] = {0: "held", 1: "core", 2: "watched"}.get(prio.get(w["symbol"]), "signal" if w["action"] else None)
+                w["starred"] = w["symbol"] in starred
                 w.pop("_liq")
             all_symbols = [{"symbol": w["symbol"], "name": w["name"], "action": w["action"]} for w in watch]
             watch = watch[:40]
@@ -1059,6 +1063,39 @@ class DashboardAPI:
     def checklist(self) -> dict:
         from ..checklist import evaluate
         return self._cached("checklist", 60, lambda: evaluate(self.app))
+
+    def stock(self, symbol: str, mode: str = "paper") -> dict:
+        from .. import stock
+        if mode not in ("paper", "shadow", "live"):
+            raise ValueError("장부는 paper/shadow/live")
+        return self._cached(f"stock:{symbol}:{mode}", 30, lambda: stock.page(self.app, symbol, mode))
+
+    def pretrade(self, symbol: str, weight: str = "", mode: str = "paper") -> dict:
+        from .. import stock
+        try:
+            w = float(weight) / 100 if weight else None
+        except ValueError:
+            raise ValueError("비중은 숫자(%)로") from None
+        if w is not None and not 0 < w <= 1:
+            raise ValueError("비중은 0~100% 사이")
+        if mode not in ("paper", "shadow", "live"):
+            raise ValueError("장부는 paper/shadow/live")
+        return stock.pretrade(self.app, symbol, w, mode)
+
+    def ai_health(self) -> dict:
+        from ..health import ai_health
+        return self._cached("ai_health", 60, lambda: ai_health(self.app))
+
+    def prefs(self) -> dict:
+        from .. import prefs
+        from ..alerts import ROUTE
+        return prefs.get(self.engine) | {"kinds": list(prefs.KINDS), "home_cards": list(prefs.HOME_CARDS),
+                                         "channels": {"external": ROUTE.get("notifier") is not None, "push": ROUTE.get("push") is not None},
+                                         "defaults": {"external": sorted(ROUTE["kinds"]), "push": sorted(ROUTE["push_kinds"])}}
+
+    def prefs_write(self, body: dict) -> dict:
+        from .. import prefs
+        return {"ok": True, **prefs.save(self.engine, body)}
 
     def today(self) -> dict:
         from .. import ux

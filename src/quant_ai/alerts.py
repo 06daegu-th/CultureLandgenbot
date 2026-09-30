@@ -48,15 +48,25 @@ def configure(notifier=None, kinds: set[str] | None = None, push_sender=None, pu
         ROUTE["push_kinds"] = set(push_kinds)
 
 
-def _route(kind: str, level: str, title: str, body: str | None, link: str | None) -> None:
+def _route(kind: str, level: str, title: str, body: str | None, link: str | None, engine=None) -> None:
+    from .prefs import channel_on, get, in_quiet
+    notify = {}
+    if engine is not None:
+        try:
+            notify = get(engine)["notify"]
+        except Exception as e:  # noqa: BLE001 - 설정을 못 읽으면 .env 기본값
+            log.warning("알림 설정 읽기 실패: %s", e)
+    urgent = level in ("bad", "critical")
+    if in_quiet(notify.get("quiet") or {}) and not urgent:
+        return  # 조용한 시간: 외부로는 보내지 않는다 (사이트 알림센터에는 이미 저장됨) · 긴급은 예외
     n = ROUTE.get("notifier")
-    if n is not None and kind in ROUTE["kinds"]:
+    if n is not None and channel_on(notify, "external", kind, kind in ROUTE["kinds"]):
         try:
             n.send(f"{title}\n{body}" if body else title, {"bad": "critical", "warn": "warn"}.get(level, "info"))
         except Exception as e:  # noqa: BLE001 - 외부 알림 실패가 알림 저장을 막으면 안 됨
             log.warning("외부 알림 실패: %s", e)
     sender = ROUTE.get("push")
-    if sender is not None and (kind in ROUTE["push_kinds"] or level == "bad"):
+    if sender is not None and (channel_on(notify, "push", kind, kind in ROUTE["push_kinds"]) or urgent):
         try:
             sender(title, body or "", link or "#control")
         except Exception as e:  # noqa: BLE001
@@ -69,7 +79,7 @@ def push(engine, kind: str, title: str, body: str | None = None, level: str = "i
     """알림 하나 추가. 같은 dedupe 가 이미 있으면 None. 설정된 종류는 텔레그램·웹 푸시로도 보낸다."""
     rid = _store(engine, kind, title, body, level, symbol, link, dedupe, data, now)
     if rid is not None and route:
-        _route(kind, level, title, body, link)
+        _route(kind, level, title, body, link, engine)
     return rid
 
 

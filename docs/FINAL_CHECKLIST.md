@@ -13,6 +13,7 @@
 | ✓ data quality | 급변·0값·결측·정지 검사 (수집 때 + Truth Center 재검사) | `data/quality.py · truth.py` | `test_truth_center_sections` |
 | ✓ corporate actions | KRX 전일대비로 수정주가 복원 · 미설명 ±45% 급변 탐지 | `data/collectors/marcap.py · truth.py` | `test_split_is_adjusted_away` |
 | ✓ PIT | 월말 시총 상위 유니버스 (상장폐지 포함) · 누수 감사 L6 | `pipeline.universe_at · review/leakage.py` | `test_leakage_audit_catches_future_news_and_feature_lookahead` |
+| ✓ Per-stock trust | 종목별 데이터 신뢰도: 기준일(거래일 밀림) · 1차/2차 출처 · 품질 · 거래정지 의심 · AI 판단 나이 | `stock.trust` | `test_trust_flags_stale_secondary_and_halt` |
 
 ## MARKET
 
@@ -54,6 +55,7 @@
 | ✓ Ensemble | 성적 가중 합의 · 충돌도 | `ensemble/engine.py` | `test_track_record_shifts_weight` |
 | ✓ Calibration | Platt 보정 · 신뢰도 곡선 · Readiness 관문 | `ensemble/calibration.py` | `test_calibration` |
 | ✓ Drift | PSI + KS · 이력 | `engines/drift.py` | `test_drift_ks_confirms_psi` |
+| ✓ Per-AI decay | AI 별 성능 저하 자동 감지 (같은 날 판단은 일별로 묶어 검정) → 알림 · AI Health | `review/decay.py · health.py` | `test_per_ai_decay_alert_and_health` |
 | ✓ Forward evaluation | 사전 등록 + SPRT 전진 검증 · 독립 평가기 | `review/power.py · evaluator.py` | `test_preregistration_is_sealed_and_forward_test_counts_only_after` |
 
 ## MODEL
@@ -105,6 +107,7 @@
 | ✓ Readiness | 7관문 + Truth Center 연결 | `readiness.py` | `test_readiness_seven_gates_and_buy_block` |
 | ✓ Fail closed | 점검 없음·실패·캘린더 없음 → 신규 매수 차단 | `readiness.buy_block` | `test_fail_closed_when_readiness_or_calendar_missing` |
 | ✓ Pre-trade gate | 업종·묶음·VaR 사전 게이트 · 이벤트 배수 | `trading/risk.py` | `test_risk_engine_gates_block_and_shrink_buys_only` |
+| ✓ Pre-trade simulator | 종목 페이지에서 실제 매매와 같은 게이트로 '지금 사면?' 시험 (주문 없음) | `stock.pretrade` | `test_pretrade_mirrors_trading_gates` |
 | ✓ Daily loss | 일 손실 한도 · 1.5배면 자동 정지 | `trading/risk.py · pipeline` | `test_risk_blocks_buys_after_daily_loss_but_allows_sells` |
 | ✓ Broker failure | 연속 실패 → HALTED · BROKER 관문 | `guardian · readiness` | `test_guardian_conditions_volatility_loss_broker` |
 | ✓ Calendar failure | 휴장일 캘린더 없으면 EVENT 빨강 | `truth.market_clock` | `test_fail_closed_when_readiness_or_calendar_missing` |
@@ -135,8 +138,11 @@
 | ✓ Why BUY | 찬성·반대(영향 순)·기준·무효화 가격 | `explain.py` | `test_explain_why_actions` |
 | ✓ Why SELL | 찬성·반대·기준·BUY 가 되려면 | `explain.py` | `test_explain_why_actions` |
 | ✓ Why NO TRADE | 막은 것(거부권·충돌·관문·이벤트) · 무엇이 바뀌면 | `explain.py` | `test_explain_why_actions` |
+| ✓ Why bought / not bought | 코어 순위·점수 · 거부 · 매수 불가 · 주문·차단 기록으로 실제 매매 설명 | `stock.story` | `test_story_explains_bought_and_not_bought` |
+| ✓ News digest | 뉴스·공시 자동 요약 (7일 톤 · 중요 헤드라인 · 공시 원문 요약 · 추출 이벤트) | `stock.digest` | `test_digest_and_events` |
 | ✓ Portfolio risk | 리스크 2.0 화면 · 종목 비교의 상관 행렬 | `web/static/desk.js · ux.compare` | `test_portfolio_risk_v2_has_every_lens` |
 | ✓ System status | Truth Center · 완성 기준 · 매매 준비 · 관제실 | `truth.py · checklist.py` | `test_truth_center_sections` |
 | ✓ Watchlist · holdings | 관심종목 별표(매일 AI 판단) · 종목 페이지에 내 보유(장부+계좌) · 종목별 과거 AI 적중률 | `ux.py` | `test_star_holdings_track_today_compare` |
 | ✓ Today · compare | 오늘 할 일 · 시장 한눈에 · 종목 비교(2~4개) | `ux.py · web/static/truth.js` | `test_star_holdings_track_today_compare` |
+| ✓ Customization | 홈 편집(숨기기·순서) · 외부 알림 종류별 채널 · 조용한 시간 (서버 저장) | `prefs.py · alerts._route` | `test_prefs_validate_and_route_notifications` |
 | ✓ Convenience | 모바일 · 다크/라이트 · 키보드 단축키(?) · 최근 검색 | `web/static` | `e2e 스크린샷` |

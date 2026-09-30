@@ -238,9 +238,9 @@ function viewDashboard(d) {
     <span class="t" title="${esc(n.title)}">${esc(n.title)}</span><span class="dim xs mono">${n.n_articles > 1 ? `<span class="cnt-chip">${n.n_articles}건</span> ` : ""}${time(n.ts)}</span></div>`).join("");
   // 4) 관심 종목
   const held = new Set((d.portfolios[mode]?.positions || []).map((p) => p.symbol));
-  const wl = d.watchlist.filter((w) => S.watchTab === "held" ? held.has(w.symbol) : S.watchTab === "buy" ? w.action === "BUY" : true);
+  const wl = d.watchlist.filter((w) => S.watchTab === "held" ? held.has(w.symbol) : S.watchTab === "buy" ? w.action === "BUY" : S.watchTab === "star" ? w.starred : true);
   const watch = wl.length ? `<div class="scroll" style="max-height:430px"><table class="tight watch-table"><thead><tr><th>종목명</th><th class="r">현재가</th><th class="r">등락률</th><th class="r">AI 신호</th></tr></thead><tbody>
-    ${wl.map((w) => `<tr class="click" data-sym="${esc(w.symbol)}"><td><b>${esc(w.name)}</b>${held.has(w.symbol) ? ' <span class="chip ok">보유</span>' : w.tier === "core" ? ' <span class="chip">코어</span>' : w.tier === "watched" ? ' <span class="chip">관심</span>' : ""}${w.market === "GLOBAL" ? ' <span class="chip xs">해외</span>' : ""}</td>
+    ${wl.map((w) => `<tr class="click" data-sym="${esc(w.symbol)}"><td>${w.starred ? '<span class="star-on" title="관심종목">★</span> ' : ""}<b>${esc(w.name)}</b>${held.has(w.symbol) ? ' <span class="chip ok">보유</span>' : w.tier === "core" ? ' <span class="chip">코어</span>' : w.tier === "watched" ? ' <span class="chip">관심</span>' : ""}${w.market === "GLOBAL" ? ' <span class="chip xs">해외</span>' : ""}</td>
       <td class="r num" data-live-sym="${esc(w.symbol)}">${price(w.last, w.symbol)}</td><td class="r">${pct(w.chg_pct)}</td><td class="r">${badge(w.action)}</td></tr>`).join("")}</tbody></table></div>` : empty();
   // 5) 포트폴리오
   const pf = d.portfolios[mode] || {};
@@ -288,7 +288,7 @@ function viewDashboard(d) {
   <div class="grid h2">
     ${card(`<span id="chart-title">${esc(chartSym === "KOSPI" ? "KOSPI (시총가중 대용)" : nameOf(chartSym))}</span>`, `<div id="main-chart" class="chart tall"></div>`,
       tabs("range-tabs", { 60: "3M", 130: "6M", 260: "1Y", 750: "3Y" }, String(S.chartN)) + (chartSym !== "KOSPI" && d.indices[0] ? ` <button class="btn-sm" id="chart-kospi">KOSPI</button>` : ""))}
-    ${card("관심 종목", watch, tabs("watch-tabs", { all: "전체", held: "보유", buy: "BUY" }, S.watchTab))}
+    ${card("관심 종목", watch, tabs("watch-tabs", { all: "전체", star: "★", held: "보유", buy: "BUY" }, S.watchTab))}
     ${card("AI 종합 분석", `<div id="ai-box">${empty("불러오는 중…")}</div>`)}
   </div>
   <div class="grid h3">
@@ -627,6 +627,8 @@ async function viewAnalysis(el) {
     ${c ? `<div class="sh-pred"><span class="xs muted">AI 예상 (${esc(date(c.as_of))})</span> <b>${c.horizon || 5}거래일 상승 확률 ${(c.prob_up * 100).toFixed(0)}%</b>
       ${c.expected_return != null ? ` · 예상 <b class="${c.expected_return >= 0 ? "up" : "down"}">${c.expected_return >= 0 ? "+" : ""}${(c.expected_return * 100).toFixed(1)}%</b>` : ""} ${badge(c.action)}
       ${c.trigger ? `<span class="chip xs" title="${esc(c.trigger)}">⚡ 이벤트 재분석</span>` : ""}</div>` : ""}
+    <div id="pf-trust" class="pf-trust"></div>
+    <div id="pf-dday" style="margin-top:8px"></div>
     <div class="small muted" style="margin:12px 0 6px"><b style="color:var(--text)">다가오는 일정</b> · 실적 발표 · 배당 · 공시</div>
     <div id="pf-events"><div class="ev-none small dim">일정 불러오는 중…</div></div>${globalNote}${anCard}</div>`;
   const aiSections = c || scen.includes("scen") || hist ? `
@@ -637,21 +639,24 @@ async function viewAnalysis(el) {
   ${ops ? card("AI 별 독립 의견 <span class='small dim'>서로의 의견을 모른 채 판단 · Risk AI 거부권은 희석되지 않음</span>", `<div class="op-grid">${ops}</div>`) : ""}
   ${hist ? card("판단 이력 · 채점", `<div class="scroll" style="max-height:360px"><table><thead><tr><th>일자</th><th>신호</th><th class="r">P(상승)</th><th class="r">신뢰도</th><th class="r">실제</th><th class="r"></th></tr></thead><tbody>${hist}</tbody></table></div>`) : ""}` : "";
   el.innerHTML = `${head}
+  <div id="pf-nav" class="pf-nav"></div>
   <div class="grid g-21">
     ${card("차트", `<div id="an-chart" class="chart"></div>`)}
     ${card("투자 전 체크 <span class='small dim'>핵심 지표</span>", `<div id="pf-stats"><div class="ev-none small dim">불러오는 중…</div></div>`)}
   </div>
   <div id="pf-why"></div>
   <div id="pf-hold"></div>
-  <div id="pf-sections"></div>
+  <div class="grid g-2"><div id="pf-story"></div><div id="pf-pretrade"></div></div>
   <div id="pf-desk"></div>
+  <div id="pf-digest"></div>
+  <div id="pf-sections"></div>
   <div id="pf-extra"></div>
   ${aiSections}
   ${sim ? card("과거 유사 사례 (RAG 메모리)", `<div class="scroll"><table><tbody>${sim}</tbody></table></div>`) : ""}`;
   $("#sym-select").onchange = (e) => { location.hash = `#analysis/${e.target.value}`; };
   if (anCard) bindAnalyze(sym, autoAn, () => render());
   candleChart($("#an-chart"), sym);
-  whyCard(sym); holdCard(sym);  // 왜 BUY/SELL/NO TRADE · 내 보유 · 과거 적중률 (truth.js)
+  whyCard(sym); holdCard(sym); stockPage(sym, a);  // 왜 BUY/SELL/NO TRADE · 내 보유 · 과거 적중률 (truth.js)
   if (typeof stockDesk === "function") stockDesk(sym);  // 매매 계획 · 이벤트 · 옵션 · 실적 모델 · 관계 — 종목 정보와 따로 (desk.js)
   loadProfile(sym, a.name || sym, a);
 }
@@ -1012,7 +1017,7 @@ function viewSettings(d) {
 
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
-  ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["readiness", "check", "매매 준비 · 데이터"], ["truth", "shield", "Truth Center · 완성 기준"], ["power", "learn", "실제 예측력"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["graph", "models", "지식 그래프 · 업종"], ["analysis", "ai", "AI 분석"], ["compare", "compare", "종목 비교"], ["ai", "score", "AI 성적 · 보정"]]],
+  ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["readiness", "check", "매매 준비 · 데이터"], ["truth", "shield", "Truth Center · 완성 기준"], ["power", "learn", "실제 예측력"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["graph", "models", "지식 그래프 · 업종"], ["analysis", "ai", "AI 분석"], ["compare", "compare", "종목 비교"], ["ai", "score", "AI 성적 · 보정"], ["aihealth", "pulse", "AI · 모델 Health"]]],
   ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["calendar", "bell", "이벤트 캘린더"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["execution", "engine", "체결 · 증권사 검증"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
   ["검증 · 학습", [["reports", "review", "리포트 · 브리핑"], ["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["myjournal", "journal", "내 저널 vs AI"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
   ["시스템", [["safety", "shield", "안전 센터"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
@@ -1035,7 +1040,7 @@ async function render() {
   const d = S.data;
   if (!d) { el.innerHTML = skeleton(); return; }
   try {
-    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); todayCard(el); }
+    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); todayCard(el); applyHomeLayout(el); }
     else if (S.view === "analysis") await viewAnalysis(el);
     else if (S.view === "market") {
       el.innerHTML = viewMarket(d);
@@ -1061,11 +1066,12 @@ async function render() {
     else if (S.view === "risk") await viewRisk(el);
     else if (S.view === "journal") await viewJournal(el);
     else if (S.view === "evidence") await viewEvidence(el, S.param);
-    else if (S.view === "settings") { el.innerHTML = alertSettingsCard() + extraSettingsCard() + viewSettings(d); bindAlertSettings(); bindExtraSettings(); }
+    else if (S.view === "settings") { el.innerHTML = alertSettingsCard() + extraSettingsCard() + viewSettings(d); bindAlertSettings(); bindExtraSettings(); notifyCard(el); }
     else if (S.view === "verify") { await viewVerify(el); if (typeof notaryCard === "function") notaryCard(el); }
     else if (S.view === "readiness") await viewReadiness(el);
     else if (S.view === "truth") await viewTruth(el);
     else if (S.view === "compare") await viewCompare(el);
+    else if (S.view === "aihealth") await viewAIHealth(el);
     else if (S.view === "power") await viewPower(el);
     else if (S.view === "calendar") await viewCalendar(el);
     else if (S.view === "execution") await viewExecution(el);

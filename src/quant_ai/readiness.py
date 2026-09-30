@@ -115,14 +115,16 @@ def check_risk(app, mode: str, prisk: dict | None) -> dict:
 def check_event(cal: dict | None, holdings: list[str]) -> dict:
     if not cal:
         return _chk("EVENT", "red", "이벤트 캘린더 없음 — 실적·FOMC 직전인지 알 수 없음 (fail-closed)")
-    today = [e for e in cal.get("events", []) if e.get("d_day") == 0 and e["kind"] in ("fomc", "cpi", "nfp", "quad_witching", "bok")]
+    from .engines.events import today_kst, with_dday
+    evs = with_dday([dict(e) for e in cal.get("events", []) if e.get("date")], today_kst())  # 저장된 D-day 는 만든 날 기준
+    today = [e for e in evs if e["d_day"] == 0 and e["kind"] in ("fomc", "cpi", "nfp", "quad_witching", "bok")]
     near = [r for r in (cal.get("risk") or []) if r["symbol"] in holdings and r.get("buy_multiplier", 1) < 1]
     vk = cal.get("vkospi") or {}
     fear = [f"VKOSPI {vk.get('level')} — 최근 1년 상위 {100 - vk.get('percentile_1y', 0) * 100:.0f}% (공포 구간)"] if vk.get("fear") else []
     if today or near or fear:
         parts = [e["title"] for e in today] + [f"{r.get('name') or r['symbol']} {r.get('reason')}" for r in near] + fear
         return _chk("EVENT", "yellow", " · ".join(parts[:3]), items=parts)
-    nxt = next((e for e in cal.get("events", []) if e.get("d_day", -1) >= 0 and e["importance"] >= 0.8), None)
+    nxt = next((e for e in evs if e["d_day"] >= 0 and e.get("importance", 0) >= 0.8), None)
     return _chk("EVENT", "green", "오늘 큰 이벤트 없음" + (f" · 다음: {nxt['title']} {nxt['d_label']}" if nxt else ""))
 
 

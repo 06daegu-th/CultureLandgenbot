@@ -73,9 +73,10 @@ def parse_amount(text: str) -> float | None:
 def extract(title: str, names: dict[str, str] | None = None, subject: str | None = None, market_cap: float | None = None) -> list[dict]:
     """제목 하나 → 이벤트 목록 (보통 0~2개)."""
     t = (title or "").lower()
+    t_ns = t.replace(" ", "")  # DART 보고서명은 띄어쓰기가 없다 ("자기주식취득결정")
     out = []
     for key, ko, pol, imp, kws in TYPES:
-        hit = next((w for w in kws if w in t), None)
+        hit = next((w for w in kws if w in t or (" " in w and w.replace(" ", "") in t_ns)), None)
         if not hit:
             continue
         if key == "earnings" and any(e["type"].startswith("earnings_") for e in out):

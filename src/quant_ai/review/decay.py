@@ -50,6 +50,11 @@ def analyze(rows: list[dict], trained_at: datetime | None = None, label: str = "
     n = len(rows)
     if n < 40:
         return {"label": label, "n": n, "status": "insufficient", "message": f"채점 {n}건 — 노후 판단은 40건부터"}
+    days = {}
+    for r in rows:
+        days.setdefault(r["as_of"].date() if hasattr(r["as_of"], "date") else r["as_of"], []).append(1.0 if r["hit"] else 0.0)
+    if n / len(days) > 1.5:
+        return _analyze_daily(days, n, label)
     y = np.array([1.0 if r["hit"] else 0.0 for r in rows])
     half = n // 2
     ref = float(y[:half].mean())
@@ -91,25 +96,78 @@ def analyze(rows: list[dict], trained_at: datetime | None = None, label: str = "
             "cusum": cs, "rolling": roll[-150:], "by_age": ages, "half_life_days": hl}
 
 
-def report(session, trained_at: datetime | None = None, window: int = 1000) -> dict:
+def _analyze_daily(days: dict, n: int, label: str, window_days: int = 20) -> dict:
+    """하루에 여러 종목을 판단하면 같은 날 판단들은 시장 방향을 함께 타서 독립이 아니다 (나쁜 하루 = 100건 동시 오답).
+    그래서 일별 적중률을 한 관측으로 보고, 표준편차도 일별 값에서 직접 추정해 검정한다."""
+    keys = sorted(days)
+    y = np.array([float(np.mean(days[k])) for k in keys])
+    m = len(y)
+    if m < 20:
+        return {"label": label, "n": n, "days": m, "status": "insufficient",
+                "message": f"채점 {n}건이지만 {m}거래일 — 같은 날 판단은 함께 움직여서 노후 판단은 20거래일부터"}
+    half = m // 2
+    ref, late = float(y[:half].mean()), float(y[half:].mean())
+    recent = float(y[-window_days:].mean())
+    sd = float(np.std(y, ddof=1)) or 1e-6
+    cs = cusum(y[half:], ref, k=CUSUM_K)  # 아래에서 sd 로 다시 표준화
+    s, alarm_at = 0.0, None
+    k = max(CUSUM_K, 0.5 * sd)  # 표준 CUSUM 여유 0.5σ (일별 적중률은 하루 시장 방향에 따라 크게 흔들린다)
+    for i, x in enumerate(y[half:]):
+        s = max(0.0, s + (ref - k - x) / sd)
+        if alarm_at is None and s > CUSUM_H:
+            alarm_at = i
+    cs.update(stat=round(s, 3), alarm=alarm_at is not None, alarm_index=alarm_at)
+    se = sd * np.sqrt(1 / half + 1 / (m - half))
+    z = (late - ref) / se if se > 0 else 0.0
+    b, t = _slope(y)
+    decaying = bool(z < -2.0 and (cs["alarm"] or (t is not None and t < -2.0)) and ref - late > 0.05)
+    watch = not decaying and ref - late > 0.02 and (z < -1.645 or cs["alarm"])
+    status = "decaying" if decaying else "watch" if watch else "stable"
+    msg = {"decaying": f"최근 {window_days}거래일 적중 {recent:.0%} < 초기 {ref:.0%} (일별 검정 z={z:.1f}) → 재학습·가중치 점검",
+           "watch": f"최근 {window_days}거래일 적중 {recent:.0%} vs 초기 {ref:.0%} — 지켜보는 단계",
+           "stable": f"최근 {window_days}거래일 적중 {recent:.0%} · 초기 {ref:.0%} — 저하 신호 없음"}[status]
+    return {"label": label, "n": n, "days": m, "status": status, "message": msg, "reference": round(ref, 4), "recent": round(recent, 4),
+            "drop": round(ref - recent, 4), "z_halves": round(float(z), 2), "slope_per_100": round(b * 100, 4),
+            "t": None if t is None else round(t, 2), "cusum": cs, "rolling": [round(float(v), 4) for v in y[-150:]], "by_age": [],
+            "half_life_days": None, "daily": True}
+
+
+def report(session, trained_at: datetime | None = None, window: int = 30000, days: int = 250) -> dict:
+    from datetime import timedelta
+
     from sqlalchemy import select
 
     from ..data.models import AnalystOpinionRecord, ConsensusRecord
+    since = datetime.now(UTC) - timedelta(days=days)  # 건수가 아니라 기간: 하루 수십~수백 건이라 건수 창은 며칠밖에 안 된다
     rows = session.execute(select(ConsensusRecord.as_of, ConsensusRecord.prob_up, ConsensusRecord.realized_return)
-                           .where(ConsensusRecord.realized_return.is_not(None))
+                           .where(ConsensusRecord.realized_return.is_not(None), ConsensusRecord.as_of >= since)
                            .order_by(ConsensusRecord.id.desc()).limit(window)).all()
     cons = [{"as_of": a, "prob": p, "hit": (p >= 0.5) == (r > 0)} for a, p, r in rows]
     q = session.execute(select(AnalystOpinionRecord.as_of, AnalystOpinionRecord.prob_up, AnalystOpinionRecord.realized_return)
                         .where(AnalystOpinionRecord.analyst == "quant", AnalystOpinionRecord.category == "direction",
-                               AnalystOpinionRecord.realized_return.is_not(None))
+                               AnalystOpinionRecord.realized_return.is_not(None), AnalystOpinionRecord.as_of >= since)
                         .order_by(AnalystOpinionRecord.id.desc()).limit(window)).all()
     quant = [{"as_of": a, "prob": p, "hit": (p >= 0.5) == (r > 0)} for a, p, r in q if p is not None]
     c = analyze(cons, trained_at, "AI 합의")
     m = analyze(quant, trained_at, "퀀트 모델")
     worst = max((c, m), key=lambda x: {"decaying": 2, "watch": 1}.get(x["status"], 0))
+    # AI 별 (뉴스·경제·공시 AI 등): 합의가 버텨도 한 AI 가 무너지면 그 AI 의 가중치만 문제 — 따로 감지해 알린다
+    by_ai = {}
+    rows_ai = session.execute(select(AnalystOpinionRecord.analyst, AnalystOpinionRecord.as_of, AnalystOpinionRecord.prob_up,
+                                     AnalystOpinionRecord.realized_return)
+                              .where(AnalystOpinionRecord.analyst.notin_(("quant", "risk")), AnalystOpinionRecord.category == "direction",
+                                     AnalystOpinionRecord.realized_return.is_not(None), AnalystOpinionRecord.prob_up.is_not(None),
+                                     AnalystOpinionRecord.as_of >= since)
+                              .order_by(AnalystOpinionRecord.id.desc()).limit(window * 4)).all()
+    for an, a, p, r in rows_ai:
+        by_ai.setdefault(an, []).append({"as_of": a, "prob": p, "hit": (p >= 0.5) == (r > 0)})
+    analysts = {an: {k: v for k, v in analyze(rs, None, an).items() if k not in ("rolling", "cusum", "by_age")}
+                for an, rs in by_ai.items()}
     return {"status": worst["status"] if worst["status"] != "insufficient" else
             ("insufficient" if c["status"] == m["status"] == "insufficient" else "stable"),
-            "message": worst.get("message"), "consensus": c, "quant": m, "at": datetime.now(UTC).isoformat()}
+            "message": worst.get("message"), "consensus": c, "quant": m, "analysts": analysts,
+            "decaying_ais": sorted(a for a, v in analysts.items() if v["status"] == "decaying"),
+            "at": datetime.now(UTC).isoformat()}
 
 
 __all__ = ["analyze", "cusum", "report"]

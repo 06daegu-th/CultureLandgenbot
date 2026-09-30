@@ -214,7 +214,7 @@ def build_calendar(start: date, end: date, profiles=None, names=None, disclosure
 def with_dday(events: list[dict], today: date) -> list[dict]:
     for e in events:
         d = date.fromisoformat(e["date"])
-        cal = KRX if e["market"] == "KR" else US
+        cal = KRX if e.get("market", "KR") == "KR" else US
         e["d_day"] = (d - today).days
         e["d_label"] = "오늘" if d == today else f"D-{(d - today).days}" if d > today else f"D+{(today - d).days}"
         e["trading_days"] = cal.trading_days_between(today, d) if d >= today else -cal.trading_days_between(d, today)
@@ -270,6 +270,8 @@ def event_caps(symbols, events: list[dict], today: date, mode: str = "reduce") -
     """RiskEngine.event_caps 용. mode: reduce(기본 — 실적 D-1 이내 ×0.5) · block(×0) · off."""
     if mode == "off":
         return {}
+    # 저장된 캘린더의 D-day 는 만든 날 기준 — 자정이 지나면 하루씩 어긋나므로 주문하는 오늘 기준으로 다시 계산
+    events = with_dday([dict(e) for e in events if e.get("date")], today)
     out = {}
     for s in symbols:
         r = event_risk(s, events, today)
