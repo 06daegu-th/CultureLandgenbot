@@ -31,3 +31,8 @@ def _no_profile_network(monkeypatch):
     monkeypatch.setattr(altdata, "_get", _offline)
     monkeypatch.setattr(wics, "_get", _offline)
     monkeypatch.setattr(notary, "_post", _offline)
+    # 로드맵 (v14) 외부 소스
+    from quant_ai.data.collectors import bok, kr_consensus, vkospi
+    monkeypatch.setattr(kr_consensus, "fetch_naver", _offline)
+    monkeypatch.setattr(bok, "_get", _offline)
+    monkeypatch.setattr(vkospi, "_post", _offline)

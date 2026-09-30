@@ -281,6 +281,24 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("my_journal", lambda now: desk.my_journal(app), 6 * 3600, "closed")
         if st.notary != "off":
             sch.add("notary", lambda now: desk.notarize(app), 24 * 3600, "always")
+        # 국내 실적 컨센서스 스냅샷(서프라이즈 이력) · 한은 금통위 일정/기준금리 · VKOSPI
+        from .alerts import focus_symbols as _f13
+        from .data.collectors import bok as _bok
+        from .data.collectors import kr_consensus as _krc
+        from .data.collectors import vkospi as _vk
+        sch.add("kr_consensus", lambda now: _krc.collect(app.engine, list(_f13(app))), 24 * 3600, "closed")
+        sch.add("bok", lambda now: (_bok.schedule(app.engine), _bok.base_rate(app.engine, st.ecos_api_key)), 24 * 3600, "always")
+        sch.add("vkospi", lambda now: _vk.get(app.engine, app.market_data()[1]), 12 * 3600, "always")
+        if st.broker == "kis":
+            # 하루 한 번 장중: KIS 검증 스위트 (모의 = 주문·취소 경로까지 · QUANT_KIS_FILL_TEST=true 면 1주 실제 체결로 슬리피지 실측)
+            fill_test = os.environ.get("QUANT_KIS_FILL_TEST", "").lower() == "true" and st.kis_env == "demo"
+
+            def kis_validate(now):
+                krx = sch.markets.get("KRX", MARKETS["KRX"])
+                local = krx.local(now).time()
+                if krx.phase(now) is Phase.OPEN and KRX_TRADE_START <= local <= KRX_TRADE_END:
+                    desk.kis_validate(app, fill=fill_test, market_open=True)
+            sch.add("kis_validate", kis_validate, 24 * 3600, "open")
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "ai_verdict"):
         sch.add("ai_verdict", lambda now: app.ai_verdict(), 12 * 3600, "closed")  # 추천 단계가 바뀌면 알림
     sch.add("shadow_eval", lambda now: app.evaluate_shadow_models(), 12 * 3600, "closed")

@@ -855,6 +855,9 @@ class QuantAI:
         costs = CostModel(US_COSTS if is_us_book(name) else cost_config(self, st.costs))
         if broker is None:
             broker = PaperBroker(pf, costs) if mode is Mode.PAPER else ShadowBroker(pf, costs)
+            if isinstance(broker, ShadowBroker):
+                from .desk import sim_bias
+                broker.sim_bias_bps = sim_bias(self)  # 실측 parity 100건 이상이면 시뮬레이터 편향 보정
         budget_ratio = 1.0
         if mode is Mode.LIVE and equity > 0 and self._live_capital_capped():
             budget_ratio = min(1.0, self.live_cap() / equity)  # 실전 계좌: 소액 상한만큼만 운용
@@ -912,6 +915,13 @@ class QuantAI:
             s.add(PortfolioSnapshot(mode=name, ts=ts, **snap))
         if book is not None:
             return fills
+
+        if fills and mode is Mode.LIVE and st.broker == "kis":  # 체결 시뮬레이터 정확도 (parity) 실측
+            try:
+                from .desk import record_parity
+                record_parity(self, fills, quotes)
+            except Exception as e:  # noqa: BLE001 - 기록 실패가 매매를 막으면 안 됨
+                log.warning("parity 기록 실패: %s", e)
 
         # ---- 자동 킬스위치: 일 손실 한도의 1.5배를 넘으면 전체 정지 + 알림
         dd = risk.daily_pnl_pct(pf.equity(prices))

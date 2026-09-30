@@ -117,6 +117,7 @@ def morning_brief(app, now: datetime | None = None) -> dict:
         "news": {"summary": nd.get("summary"), "top": [{k: e.get(k) for k in ("title", "impact", "why")} for e in (nd.get("events") or [])[:4]]} if nd else None,
         "sectors": {k: sv.get(k) for k in ("view", "leaders", "laggards")} if sv else None,
         "ladder": lad.get("stage") or "backtest",
+        "power": _power_line(app), "readiness": ops.get_state(app.engine, "readiness").get("status"),
     }
     brief["text"] = brief_text(brief)
     return brief
@@ -142,7 +143,23 @@ def brief_text(b: dict) -> str:
     if b.get("sectors") and b["sectors"].get("leaders"):
         L.append("🏭 강한 업종: " + ", ".join(b["sectors"]["leaders"][:3]))
     L.append(f"🪜 검증 단계: {b['ladder']}")
+    if b.get("readiness"):
+        L.append(f"🚦 매매 준비: {b['readiness']}")
+    if b.get("power"):
+        L.append(f"🧪 {b['power']}")
     return "\n".join(L)
+
+
+def _power_line(app) -> str | None:
+    """예측력 전진 검증 진행 한 줄 (브리핑·리포트)."""
+    fw = ops.get_state(app.engine, "prediction_power").get("forward") or {}
+    if not fw:
+        return None
+    if fw.get("decision") in ("H1", "H0"):
+        return f"예측력 전진 검증: {fw.get('label')} ({fw.get('scored')}건)"
+    hr = "-" if fw.get("hit_rate") is None else f"{fw['hit_rate']:.0%}"
+    return (f"예측력 전진 검증: 등록 후 채점 {fw.get('scored', 0)}건 · 적중 {hr} · 약 {fw.get('more_needed') or '-'}건 더 필요"
+            + (f" · 예상 판정 {fw['eta']}" if fw.get("eta") else ""))
 
 
 # ------------------------------------------------------------------ 일일 리포트
@@ -183,6 +200,7 @@ def daily_report(app, now: datetime | None = None) -> dict:
         "ledger": {"digest": anchor.digest, "upto_id": anchor.upto_id, "at": anchor.ts.isoformat()} if anchor else None,
         "drift": {k: dr.get(k) for k in ("status", "message")} if dr else None,
         "ladder": {k: lad.get(k) for k in ("stage", "reasons")} if lad else None, "tomorrow": tomorrow,
+        "power": _power_line(app), "readiness": ops.get_state(app.engine, "readiness").get("status"),
     }
     rep["text"] = report_text(rep)
     return rep
@@ -207,6 +225,10 @@ def report_text(r: dict) -> str:
         L.append(f"📈 드리프트: {r['drift'].get('message')}")
     if r.get("ladder"):
         L.append(f"🪜 검증 단계: {r['ladder'].get('stage')}")
+    if r.get("readiness"):
+        L.append(f"🚦 매매 준비: {r['readiness']}")
+    if r.get("power"):
+        L.append(f"🧪 {r['power']}")
     if r.get("ledger"):
         L.append(f"🔒 장부 봉인 #{r['ledger']['upto_id']}: {r['ledger']['digest'][:16]}… (이 해시가 외부 증거입니다)")
     if r["tomorrow"]:

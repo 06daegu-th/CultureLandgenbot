@@ -128,6 +128,7 @@ class Settings:
     slippage_autocal: bool = True  # 실측 슬리피지 50건 이상이면 비용·충격 계수를 실측에 맞춘다
     notary: str = "ots"  # ots(OpenTimestamps, 무료·키 없음) / gist / both / off — 장부 봉인 해시 외부 공증
     gist_token: str | None = field(default=None, repr=False)  # QUANT_GIST_TOKEN (gist 권한만) — 선택
+    ecos_api_key: str | None = field(default=None, repr=False)  # ECOS_API_KEY (한국은행 · 무료) — 기준금리 이력
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
@@ -199,6 +200,7 @@ class Settings:
             slippage_autocal=e.get("QUANT_SLIPPAGE_AUTOCAL", "true").lower() != "false",
             notary=e.get("QUANT_NOTARY", cls.notary).lower(),
             gist_token=e.get("QUANT_GIST_TOKEN") or None,
+            ecos_api_key=e.get("ECOS_API_KEY") or None,
         )
 
     @property

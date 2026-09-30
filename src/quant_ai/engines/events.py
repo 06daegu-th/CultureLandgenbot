@@ -34,14 +34,14 @@ FOMC_DATES = [
 # FRED 발표 일정 id → (이름, 중요도)
 FRED_RELEASES = {10: ("미국 CPI (소비자물가)", 0.9), 50: ("미국 고용보고서 (비농업 고용)", 0.85),
                  53: ("미국 GDP", 0.7), 54: ("미국 PCE 물가 · 개인소득", 0.75), 9: ("미국 소매판매", 0.6)}
-IMPORTANCE = {"fomc": 1.0, "cpi": 0.9, "nfp": 0.85, "earnings": 0.9, "quad_witching": 0.7, "options_expiry": 0.45,
+IMPORTANCE = {"bok": 0.95, "fomc": 1.0, "cpi": 0.9, "nfp": 0.85, "earnings": 0.9, "quad_witching": 0.7, "options_expiry": 0.45,
               "index_rebalance": 0.6, "holiday": 0.3, "half_day": 0.3, "ex_div": 0.35, "div_pay": 0.1,
               "export": 0.5, "gdp": 0.7, "pce": 0.75, "retail": 0.6, "disclosure": 0.5, "custom": 0.6}
-KIND_LABEL = {"fomc": "FOMC", "cpi": "CPI", "nfp": "고용", "earnings": "실적", "quad_witching": "동시만기",
+KIND_LABEL = {"bok": "금통위", "fomc": "FOMC", "cpi": "CPI", "nfp": "고용", "earnings": "실적", "quad_witching": "동시만기",
               "options_expiry": "옵션만기", "index_rebalance": "지수 변경", "holiday": "휴장", "half_day": "조기폐장",
               "ex_div": "배당락", "div_pay": "배당지급", "export": "수출입", "gdp": "GDP", "pce": "PCE",
               "retail": "소매판매", "disclosure": "공시", "custom": "사용자", "econ": "경제지표"}
-MARKET_WIDE = {"fomc", "cpi", "nfp", "quad_witching", "options_expiry", "index_rebalance", "holiday", "half_day",
+MARKET_WIDE = {"bok", "fomc", "cpi", "nfp", "quad_witching", "options_expiry", "index_rebalance", "holiday", "half_day",
                "export", "gdp", "pce", "retail", "econ"}
 
 
@@ -110,8 +110,12 @@ def market_events(start: date, end: date) -> list[dict]:
     return out
 
 
-def econ_events(start: date, end: date, fred_dates: list[dict] | None = None) -> list[dict]:
+def econ_events(start: date, end: date, fred_dates: list[dict] | None = None, bok: dict | None = None) -> list[dict]:
     out = []
+    for s_ in (bok or {}).get("dates") or []:
+        d = date.fromisoformat(s_)
+        if start <= d <= end:
+            out.append(_ev(d, "bok", "한국은행 금통위 (기준금리 결정)", "KR", (bok or {}).get("source") or "한국은행", time_="10:00"))
     for s in FOMC_DATES:
         d = date.fromisoformat(s)
         if start <= d <= end:
@@ -195,8 +199,8 @@ def custom_events(items: list[dict], start: date, end: date) -> list[dict]:
 
 
 def build_calendar(start: date, end: date, profiles=None, names=None, disclosures=None, custom=None,
-                   fred_dates=None) -> list[dict]:
-    ev = market_events(start, end) + econ_events(start, end, fred_dates) + stock_events(profiles or {}, names or {}, start, end)
+                   fred_dates=None, bok=None) -> list[dict]:
+    ev = market_events(start, end) + econ_events(start, end, fred_dates, bok) + stock_events(profiles or {}, names or {}, start, end)
     ev += disclosure_events(disclosures or [], names or {}, start, end) + custom_events(custom or [], start, end)
     seen, out = set(), []
     for e in sorted(ev, key=lambda x: (x["date"], -x["importance"])):
@@ -251,7 +255,7 @@ def event_risk(symbol: str, events: list[dict], today: date, sigma: float | None
         mult, why = 0.5, f"실적 발표 {earn['d_label']}"
     elif earn and earn["trading_days"] <= 3:
         mult, why = 0.75, f"실적 발표 {earn['d_label']}"
-    big = [e for e in market if e["kind"] in ("fomc", "cpi") and e["trading_days"] <= 0]
+    big = [e for e in market if e["kind"] in ("fomc", "cpi", "bok") and e["trading_days"] <= 0]
     if big and b >= 1.2 and mult > 0.75:
         mult, why = 0.75, f"{big[0]['label']} 당일 · 고베타"
     level = "high" if score >= 0.7 else "medium" if score >= 0.35 else "low"

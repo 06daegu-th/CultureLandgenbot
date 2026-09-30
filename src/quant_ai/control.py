@@ -72,6 +72,10 @@ JOBS = {
     "batch_ab": ("score", "묶음 호출 A/B 비교", "하루 1회", 86400),
     "my_journal": ("compare", "내 저널 채점 · AI 비교", "장외 6시간", 6 * 3600),
     "notary": ("predict", "장부 외부 공증 (OpenTimestamps)", "하루 1회", 86400),
+    "kr_consensus": ("collect", "국내 실적 컨센서스 (네이버) · 서프라이즈 이력", "장외 하루 1회", 86400),
+    "bok": ("collect", "한은 금통위 일정 · 기준금리 (ECOS)", "하루 1회", 86400),
+    "vkospi": ("collect", "VKOSPI (국내 옵션 내재변동성)", "12시간", 12 * 3600),
+    "kis_validate": ("promote", "KIS 모의투자 검증 스위트 (주문·취소 · 선택: 1주 체결)", "장중 하루 1회", 86400),
 }
 STAGES = [("collect", "24H 데이터 수집"), ("organize", "AI 자동 정리"), ("analyze", "AI 독립 분석"),
           ("decide", "최종 판단"), ("predict", "예측 저장"), ("compare", "실제 결과 비교"),

@@ -1044,6 +1044,17 @@ class DashboardAPI:
                 "heartbeat": _ops.get_state(self.engine, "heartbeat"), "notary": _ops.get_state(self.engine, "notary"),
                 "fx": self._cached("fx", 300, lambda: desk.fx(self.app))}
 
+    def accounts(self) -> dict:
+        from .. import accounts
+        return self._cached("accounts", 15, lambda: accounts.summary(self.app))
+
+    def accounts_write(self, body: dict) -> dict:
+        from .. import accounts
+        self._risk_cache.pop("accounts", None)
+        if body.get("delete"):
+            return {"deleted": accounts.delete(self.engine, str(body["delete"])[:20])}
+        return accounts.upsert(self.engine, body)
+
     def my_journal(self) -> dict:
         from .. import desk
         return desk.my_journal(self.app)

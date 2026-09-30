@@ -136,13 +136,13 @@ function fxCard(fx) {
 }
 
 // ------------------------------------------------------------ 뷰: 이벤트 캘린더 2.0
-const CAL_ICON = { fomc: "🏦", cpi: "📈", nfp: "👷", gdp: "📊", pce: "🧾", retail: "🛒", earnings: "💼", ex_div: "💰", div_pay: "💵", options_expiry: "🎯", quad_witching: "🎯", index_rebalance: "⚖️", holiday: "🛑", half_day: "⏰", export: "🚢", disclosure: "📄", custom: "📌" };
+const CAL_ICON = { bok: "🇰🇷", fomc: "🏦", cpi: "📈", nfp: "👷", gdp: "📊", pce: "🧾", retail: "🛒", earnings: "💼", ex_div: "💰", div_pay: "💵", options_expiry: "🎯", quad_witching: "🎯", index_rebalance: "⚖️", holiday: "🛑", half_day: "⏰", export: "🚢", disclosure: "📄", custom: "📌" };
 async function viewCalendar(el) {
   const c = await api("/api/calendar");
   const f = S.calFilter || "all";
   const mk = S.calMarket || "all";
   const evs = (c.events || []).filter((e) => e.d_day >= (S.calPast ? -14 : 0))
-    .filter((e) => f === "all" || (f === "stock" ? !!e.symbol : f === "macro" ? ["fomc", "cpi", "nfp", "gdp", "pce", "retail", "export"].includes(e.kind) : f === "deriv" ? ["options_expiry", "quad_witching", "index_rebalance"].includes(e.kind) : ["holiday", "half_day"].includes(e.kind)))
+    .filter((e) => f === "all" || (f === "stock" ? !!e.symbol : f === "macro" ? ["bok", "fomc", "cpi", "nfp", "gdp", "pce", "retail", "export"].includes(e.kind) : f === "deriv" ? ["options_expiry", "quad_witching", "index_rebalance"].includes(e.kind) : ["holiday", "half_day"].includes(e.kind)))
     .filter((e) => mk === "all" || e.market === mk || e.market === "GLOBAL");
   const byDay = {};
   evs.forEach((e) => (byDay[e.date] = byDay[e.date] || []).push(e));
@@ -155,10 +155,10 @@ async function viewCalendar(el) {
     <td class="small">${r.next ? `${esc(r.next.title)} <span class="dim">${esc(r.next.d_label)}</span>` : (r.market_events || [])[0] ? `<span class="muted">시장: ${esc(r.market_events[0].title)} <span class="dim">${esc(r.market_events[0].d_label)}</span></span>` : "-"}</td><td class="r num">${r.expected_move ? "±" + R(r.expected_move) : "-"}</td>
     <td>${r.buy_multiplier < 1 ? `<span class="chip warn">매수 ×${r.buy_multiplier}</span> <span class="xs">${esc(r.reason)}</span>` : '<span class="xs dim">제한 없음</span>'}</td></tr>`).join("");
   const im = c.impact || {};
-  const mkRows = (im.market_kr || []).map((x) => `<tr><td>${CAL_ICON[x.kind] || ""} ${esc(({ fomc: "FOMC", options_expiry: "옵션 만기", quad_witching: "동시만기", nfp: "미국 고용" })[x.kind] || x.kind)}</td><td class="r num">${x.n}</td><td class="r num ${x.vs_normal > 1.2 ? "warn-t" : ""}">×${x.vs_normal ?? "-"}</td><td class="r">${P(x.mean, 2)}</td><td class="r">${P(x.worst, 2)}</td></tr>`).join("");
+  const mkRows = (im.market_kr || []).map((x) => `<tr><td>${CAL_ICON[x.kind] || ""} ${esc(({ bok_change: "기준금리 변경", fomc: "FOMC", options_expiry: "옵션 만기", quad_witching: "동시만기", nfp: "미국 고용" })[x.kind] || x.kind)}</td><td class="r num">${x.n}</td><td class="r num ${x.vs_normal > 1.2 ? "warn-t" : ""}">×${x.vs_normal ?? "-"}</td><td class="r">${P(x.mean, 2)}</td><td class="r">${P(x.worst, 2)}</td></tr>`).join("");
   const stRows = (im.stock || []).map((x) => `<tr><td>${esc(x.kind)}</td><td class="r num">${x.n}</td><td class="r ${(x.mean || 0) >= 0 ? "up" : "down"}">${P(x.mean, 2)}</td><td class="r num">${R(x.abs_mean, 2)}</td><td class="r num">${x.t ?? "-"}</td><td>${x.significant ? '<span class="chip ok">우연 아님</span>' : '<span class="chip">불확실</span>'}</td></tr>`).join("");
   const pa = im.prediction || {};
-  el.innerHTML = `
+  el.innerHTML = marketVolCard(c) + `
   ${card(`이벤트 캘린더 <span class="small dim">종목 · 시장 · 경제 · 실적 · 배당 · 공시 · 옵션 만기 · 휴장 — 출처와 '추정' 여부를 함께 표시</span>`,
     `<div class="cal-bar">${tabs("cal-f", f, { all: "전체", stock: "종목", macro: "경제", deriv: "만기·지수", mkt: "휴장" })}${tabs("cal-m", mk, { all: "전체 시장", KR: "한국", US: "미국" })}<label class="xs"><input type="checkbox" id="cal-past" ${S.calPast ? "checked" : ""}> 지난 2주 포함</label></div>
     <div class="cal-list">${list || empty("해당 이벤트 없음")}</div>
@@ -247,7 +247,7 @@ async function viewExecution(el) {
       <div class="small" style="margin-top:8px">${esc(m.verdict || "")}</div>
       <div class="xs dim" style="margin-top:6px">가정: 슬리피지 ${x.costs?.assumed?.slippage_bps}bp · 충격 계수 ${x.costs?.assumed?.impact_coef} · 50건부터 표본 가중(n/(n+50))으로 실측 쪽으로 옮깁니다. 실측 평균 ${m.mean_bps ?? "-"}bp · p90 ${m.p90_bps ?? "-"}bp</div>`,
       `${sl.at ? asOf(sl.at) : ""} <button class="btn-sm" data-run="slippage_cal">다시 계산</button>`)}
-    ${card("체결 시뮬레이터 vs 실제 (parity)", par.n ? `<div class="kv-grid">${kv("비교 건수", par.n)}${kv("편향 (실제−예측)", `${par.bias_bps}bp`)}${kv("평균 오차", `${par.mae_bps}bp`)}</div><div class="small" style="margin-top:8px">${esc(par.verdict)}</div>` : empty("KIS 검증에서 '실제 체결'을 실행하면 시뮬레이터 예측과 실제 체결가를 나란히 기록합니다"))}
+    ${card("체결 시뮬레이터 vs 실제 (parity)", par.n ? `<div class="kv-grid">${kv("비교 건수", `${par.n} / ${par.min_n ?? 100}`)}${kv("편향 (실제−예측)", `${par.bias_bps}bp`)}${kv("평균 오차", `${par.mae_bps}bp`)}${kv("섀도에 적용 중인 보정", par.applied_bias_bps ? `${par.applied_bias_bps}bp` : "아직 (100건부터)")}</div><div class="small" style="margin-top:8px">${esc(par.verdict)}</div>` : empty("KIS 실주문이 체결될 때마다 · 매일 장중 자동 검증(QUANT_KIS_FILL_TEST=true)마다 시뮬레이터 예측과 실제 체결가를 나란히 기록합니다. 100건부터 섀도 체결에 편향 보정 적용"))}
   </div>
   ${card(`실시간 호가 (KIS H0STASP0) <span class="small dim">보유 상위 10종목 · 섀도 체결은 이 잔량을 먹어 들어가며 계산</span>`, books ? `<div class="books">${books}</div>` : empty(x.broker === "kis" ? "장중에 웹소켓이 연결되면 표시됩니다" : "KIS 미설정 — 섀도 체결은 1단계 호가·모델 스프레드로 계산"), x.ws?.state ? `<span class="chip">${esc(x.ws.state)} · 체결 ${x.ws.subs ?? 0} · 호가 ${x.ws.book_subs ?? 0}</span>` : "")}`;
   bindRun(el);
@@ -344,9 +344,13 @@ async function stockDesk(sym) {
     <div class="ev-mini">${(d.events || []).map((e) => `<div><span>${CAL_ICON[e.kind] || "•"}</span> <b>${esc(e.title)}</b> <span class="xs dim">${esc(e.date)} · ${esc(e.d_label)}${e.estimated ? " · 추정" : ""}</span></div>`).join("") || '<span class="xs dim">예정된 종목 이벤트 없음</span>'}</div>
     ${(er?.market_events || []).length ? `<div class="xs muted" style="margin-top:6px">시장: ${er.market_events.map((m) => `${esc(m.title)} ${esc(m.d_label)}`).join(" · ")}</div>` : ""}`;
   const o = d.options || {};
-  const optBody = o.available ? `<div class="kv-grid">${kv("시장 예상 변동", o.implied_move ? "±" + R(o.implied_move) : "-")}${kv("ATM IV", R(o.atm_iv))}${kv("스큐 (풋−콜)", o.skew == null ? "-" : (o.skew * 100).toFixed(1) + "%p")}${kv("풋/콜 (미결제)", o.pc_oi ?? "-")}${kv("맥스 페인", o.max_pain ?? "-")}${o.earnings_implied_move ? kv("실적 내재 변동", "±" + R(o.earnings_implied_move)) : ""}</div><div class="small" style="margin-top:6px">${esc(o.read || "")}</div>` : empty(o.message || "옵션 데이터 없음");
+  const ki = d.kr_implied;
+  const optBody = ki ? `<div class="kv-grid">${kv(ki.proxy ? "시장 변동 (대용)" : "VKOSPI", `${ki.vkospi}${ki.percentile_1y != null ? ` <span class="xs dim">1년 ${R(ki.percentile_1y, 0)}</span>` : ""}`)}${kv("베타", ki.beta ?? "-")}${kv("예상 변동 1일", "±" + R(ki.move_1d, 2))}${kv("5일", "±" + R(ki.move_5d, 1))}${kv("20일", "±" + R(ki.move_20d, 1))}</div>
+    <div class="xs dim" style="margin-top:6px">국내 종목별 옵션은 무료 데이터가 없어 √((베타×VKOSPI)² + 고유 변동²) 으로 근사 · ${esc(ki.source || "")} · ${esc(ki.as_of || "")}</div>` : o.available ? `<div class="kv-grid">${kv("시장 예상 변동", o.implied_move ? "±" + R(o.implied_move) : "-")}${kv("ATM IV", R(o.atm_iv))}${kv("스큐 (풋−콜)", o.skew == null ? "-" : (o.skew * 100).toFixed(1) + "%p")}${kv("풋/콜 (미결제)", o.pc_oi ?? "-")}${kv("맥스 페인", o.max_pain ?? "-")}${o.earnings_implied_move ? kv("실적 내재 변동", "±" + R(o.earnings_implied_move)) : ""}</div><div class="small" style="margin-top:6px">${esc(o.read || "")}</div>` : empty(o.message || "옵션 데이터 없음");
   const em = d.earnings_model || {};
-  const emBody = em.error ? empty("실적 이력을 받지 못했습니다") : `<div class="kv-grid">${kv("P(예상 상회)", R(em.p_beat), em.p_beat >= 0.6 ? "good" : "")}${kv("상회 이력", `${em.beats ?? 0}/${em.n_history ?? 0}`)}${kv("상회 때 반응", P(em.reaction_on_beat, 1), "up")}${kv("하회 때 반응", P(em.reaction_on_miss, 1), "down")}${kv("기대 반응", P(em.expected_reaction, 1))}${kv("발표 후 표류", P(em.pead, 1))}</div><div class="xs dim" style="margin-top:6px">${esc(em.asymmetry || "")} · 신뢰 ${esc(em.confidence || "-")} · 사전 ${esc(em.prior || "")}${em.next_date ? ` · 다음 발표 ${esc(em.next_date)}` : ""}</div>`;
+  const cs = em.consensus;
+  const consLine = cs ? `<div class="small" style="margin-top:8px"><b>${esc(cs.label)} 컨센서스</b> 매출 ${num(cs.revenue)} · 영업이익 ${num(cs.op_income)}${cs.op_income_yoy != null ? ` (전년 대비 ${P(cs.op_income_yoy)})` : ""}${cs.eps != null ? ` · EPS ${num(cs.eps)}` : ""} <span class="xs dim">억원 · 네이버</span></div>` : "";
+  const emBody = em.error ? empty("실적 이력을 받지 못했습니다") : `<div class="kv-grid">${kv("P(예상 상회)", R(em.p_beat), em.p_beat >= 0.6 ? "good" : "")}${kv("상회 이력", `${em.beats ?? 0}/${em.n_history ?? 0}`)}${kv("상회 때 반응", P(em.reaction_on_beat, 1), "up")}${kv("하회 때 반응", P(em.reaction_on_miss, 1), "down")}${kv("기대 반응", P(em.expected_reaction, 1))}${kv("발표 후 표류", P(em.pead, 1))}</div><div class="xs dim" style="margin-top:6px">${esc(em.asymmetry || "")} · 신뢰 ${esc(em.confidence || "-")} · 사전 ${esc(em.prior || "")}${em.next_date ? ` · 다음 발표 ${esc(em.next_date)}` : ""} · 출처 ${esc(em.source || "-")}${em.kr_history != null && d.symbol && /^\d/.test(d.symbol) ? ` · 국내 서프라이즈 이력 ${em.kr_history}건` : ""}</div>${consLine}`;
   const alt = d.alt || {}, w = alt.raw?.wiki || {};
   const altBody = w.series ? `<div class="kv-grid">${kv("위키 관심 z", w.z ?? "-", w.spike ? "warn-t" : "")}${kv("최근 7일/평소", w.ratio ? w.ratio + "배" : "-")}${alt.search_attention_z != null ? kv("검색 관심 z", alt.search_attention_z) : ""}</div>${dLine([{ data: w.series, color: "var(--accent-3)" }], { h: 70, yfmt: (v) => v.toFixed(0) })}<div class="xs dim">관심도는 방향이 아닙니다 · 급증 + 가격 급등이 겹치면 과열 신호</div>` : empty("대체 데이터 수집 전 (하루 1회)");
   const g = d.graph || {};
@@ -361,7 +365,7 @@ async function stockDesk(sym) {
     ${card("이벤트 · 위험", evBody)}
   </div>
   <div class="grid g-3">
-    ${card("옵션 (시장이 매긴 변동)", optBody, o.at ? asOf(o.at) : "")}
+    ${card(ki ? "예상 변동 (VKOSPI 기반)" : "옵션 (시장이 매긴 변동)", optBody, o.at ? asOf(o.at) : "")}
     ${card("실적 서프라이즈 모델", emBody)}
     ${card("대체 데이터 · 관심도", altBody)}
   </div>
@@ -416,4 +420,75 @@ async function notaryCard(el) {
     `<button class="btn-sm" data-run="notary">지금 공증</button>`);
   el.appendChild(box.firstElementChild);
   bindRun(el);
+}
+
+// ------------------------------------------------------------ 뷰: 계좌 · 세금 · 배당
+async function viewAccounts(el) {
+  const a = await api("/api/accounts");
+  const t = a.total || {};
+  const acctCards = (a.accounts || []).map((r) => `
+    <div class="card acct">
+      <div class="card-h"><h3>${esc(r.name)} <span class="chip xs">${esc(r.type_label)}</span>${r.broker ? ` <span class="xs dim">${esc(r.broker)}</span>` : ""}</h3>
+        <div class="right">${r.readonly ? '<span class="xs dim">읽기 전용</span>' : `<button class="btn-sm" data-acct-edit="${esc(r.id)}">수정</button> <button class="btn-sm" data-acct-del="${esc(r.id)}">삭제</button>`}</div></div>
+      <div class="kv-grid">${kv("평가금액 (현금 포함)", krw(r.total))}${kv("평가손익", `${krw(r.gain)} <span class="xs">${r.ret == null ? "" : P(r.ret)}</span>`, r.gain >= 0 ? "up" : "down")}${kv("예상 배당 (12개월)", krw(r.div_12m))}${kv("지금 팔면 세금", r.type === "overseas" || r.type === "general" ? "아래 합산" : krw(r.tax_now))}</div>
+      <div class="xs dim" style="margin:6px 0">${esc(r.note)}</div>
+      ${r.holdings.length ? `<div class="scroll"><table class="tight"><thead><tr><th>종목</th><th class="r">수량</th><th class="r">평단</th><th class="r">현재가</th><th class="r">평가</th><th class="r">손익</th><th class="r">배당/년</th><th>배당락</th></tr></thead><tbody>${r.holdings.map((h) => `<tr><td><a href="#analysis/${esc(h.symbol)}"><b>${esc(h.name || h.symbol)}</b></a> <span class="xs dim">${esc(h.currency)}</span></td><td class="r num">${num(h.qty)}</td><td class="r num">${num(h.avg_price, h.currency === "USD" ? 2 : 0)}</td><td class="r num">${h.priced ? num(h.price, h.currency === "USD" ? 2 : 0) : '<span class="dim">가격 없음</span>'}</td><td class="r num">${krw(h.value)}</td><td class="r ${h.gain >= 0 ? "up" : "down"}">${h.ret == null ? "-" : P(h.ret)}</td><td class="r num">${h.div_12m ? krw(h.div_12m) : "-"}</td><td class="small">${esc(h.ex_date || "")}</td></tr>`).join("")}</tbody></table></div>` : empty("보유 종목 없음")}
+    </div>`).join("");
+  const types = Object.entries(a.types || {}).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
+  el.innerHTML = `
+  <div class="card vf-hero">
+    <div class="vf-top"><div><div class="xs muted">여러 증권사 · 계좌를 한 곳에서 · 세금은 '지금 전부 판다면' 기준 대략치 (신고용 아님 · ${a.rules?.year}년 규칙)</div>
+      <h2>${krw(t.value)}</h2><div class="small muted">평가손익 ${krw(t.gain)} · 예상 배당 12개월 ${krw(t.div_12m)} (세후 ${krw(t.div_12m - t.div_tax)}) · 환율 ${num(a.fx, 1)}원 (${esc(a.fx_source)})</div></div>
+      <div class="vf-act"><button class="btn-sm primary" id="acct-new">계좌 추가</button></div></div>
+    <div class="kv-grid" style="margin-top:12px">${kv("해외 양도차익 (올해 추정)", krw(a.overseas?.gain_ytd_est))}${kv("공제 후 과세 대상", krw(a.overseas?.taxable))}${kv("해외 양도세 (22%)", krw(a.overseas?.tax), a.overseas?.tax > 0 ? "warn-t" : "")}${kv("배당소득세 (15.4%)", krw(t.div_tax))}${kv("금융소득 추정", krw(a.financial_income_est), a.financial_income_est > 16e6 ? "warn-t" : "")}${kv("지금 전부 판다면 세금", krw(t.tax_now))}</div>
+    ${(a.tips || []).map((x) => `<div class="lesson" style="margin-top:8px">💡 ${esc(x)}</div>`).join("")}
+  </div>
+  <div id="acct-form-box"></div>
+  ${acctCards || card("계좌", empty("아직 계좌가 없습니다 — '계좌 추가'로 증권사 계좌를 입력하세요"))}
+  ${card("배당 일정 <span class='small dim'>보유 종목 배당락일 (종목 정보를 연 적이 있는 종목)</span>", (a.dividend_calendar || []).length ? `<table class="tight"><tbody>${a.dividend_calendar.map((d) => `<tr><td class="mono small">${esc(d.ex_date)}</td><td>${esc(d.symbol)}</td><td class="small dim">${esc(d.account)}</td><td class="r num">${krw(d.div)}</td></tr>`).join("")}</tbody></table>` : empty("다가오는 배당락 없음"))}
+  ${(a.no_div_info || []).length ? `<div class="xs dim" style="margin:0 2px 12px">배당 정보 없음 (종목 화면을 한 번 열면 채워짐): ${a.no_div_info.map(esc).join(", ")}</div>` : ""}`;
+  const form = (acct) => {
+    const hs = (acct?.holdings || []).map((h) => `${h.symbol},${h.qty},${h.avg_price}`).join("\n");
+    $("#acct-form-box").innerHTML = card(acct ? "계좌 수정" : "계좌 추가", `<form id="acct-form" class="acct-form">
+      <input name="name" placeholder="이름 (예: 키움 ISA)" value="${esc(acct?.name || "")}" required maxlength="40">
+      <select name="type">${types}</select><input name="broker" placeholder="증권사" value="${esc(acct?.broker || "")}" maxlength="30">
+      <input name="cash" type="number" step="any" placeholder="현금 (원)" value="${acct?.cash ?? ""}">
+      <input name="realized_ytd" type="number" step="any" placeholder="올해 실현손익 (원)" value="${acct?.realized_ytd ?? ""}">
+      <input name="dividends_ytd" type="number" step="any" placeholder="올해 받은 배당 (원)" value="${acct?.dividends_ytd ?? ""}">
+      <label class="xs"><input type="checkbox" name="low_income" ${acct?.low_income ? "checked" : ""}> ISA 서민형 (400만원 비과세)</label>
+      <textarea name="holdings" rows="5" placeholder="종목,수량,평균단가 (한 줄에 하나)&#10;005930,10,71000&#10;NVDA,3,120.5">${esc(hs)}</textarea>
+      <div><button class="btn-sm primary">저장</button> <button type="button" class="btn-sm" id="acct-cancel">취소</button></div></form>`);
+    const f = $("#acct-form");
+    if (acct) f.type.value = acct.type;
+    $("#acct-cancel").onclick = () => { $("#acct-form-box").innerHTML = ""; };
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(f).entries());
+      const holdings = (fd.holdings || "").split("\n").map((l) => l.split(",").map((x) => x.trim())).filter((x) => x[0]).map(([symbol, qty, avg]) => ({ symbol, qty: Number(qty), avg_price: Number(avg) }));
+      try {
+        await api("/api/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...fd, id: acct?.id, low_income: !!fd.low_income, holdings }) });
+        if (typeof toast === "function") toast({ title: "계좌 저장", body: fd.name, level: "good" });
+        render();
+      } catch (err) { if (typeof toast === "function") toast({ title: "저장 실패", body: err.message, level: "bad" }); }
+    };
+  };
+  $("#acct-new").onclick = () => form(null);
+  el.querySelectorAll("[data-acct-edit]").forEach((b) => b.onclick = () => form((a.accounts || []).find((x) => x.id === b.dataset.acctEdit)));
+  el.querySelectorAll("[data-acct-del]").forEach((b) => b.onclick = async () => {
+    if (!confirm("이 계좌를 삭제할까요?")) return;
+    await api("/api/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ delete: b.dataset.acctDel }) });
+    render();
+  });
+}
+
+// 이벤트 캘린더 화면 위: VKOSPI · 기준금리
+function marketVolCard(c) {
+  const vk = c.vkospi || {}, bk = c.bok || {}, rate = bk.rate || {}, sch = bk.schedule || {};
+  const next = (sch.dates || []).find((d) => d >= (c.today || ""));
+  return `<div class="grid g-2">
+    ${card(`${vk.proxy ? "국내 시장 변동성 (대용)" : "VKOSPI"} <span class="small dim">KOSPI200 옵션 내재변동성 · 앞으로 30일</span>`, vk.available ? `<div class="kv-grid">${kv("현재", vk.level, vk.fear ? "bad-t" : "")}${kv("1년 백분위", R(vk.percentile_1y, 0), vk.fear ? "bad-t" : "")}${kv("예상 변동 1일", "±" + R(vk.daily_move, 2))}${kv("5일", "±" + R(vk.move_5d, 1))}${kv("20일", "±" + R(vk.move_20d, 1))}</div>${dLine([{ data: vk.series || [], color: vk.fear ? "var(--bad)" : "var(--accent-3)" }], { h: 70, yfmt: (v) => v.toFixed(0) })}<div class="xs dim">${esc(vk.source || "")}${vk.fear ? " · 공포 구간 (상위 20%) → 매매 준비 EVENT 주의" : ""}</div>` : empty(vk.message || "없음"), vk.as_of ? asOf(vk.as_of, "fresh", "기준") : "")}
+    ${card("한국은행 금통위 · 기준금리", `<div class="kv-grid">${kv("기준금리", rate.current == null ? "-" : rate.current.toFixed(2) + "%")}${kv("다음 금통위", next || "일정 없음")}${kv("일정 출처", esc(sch.source || "-"))}</div>
+      ${(rate.changes || []).length ? `<div class="small" style="margin-top:8px">최근 변경: ${rate.changes.slice(-4).reverse().map((x) => `${esc(x.date)} ${x.bp > 0 ? "▲" : "▼"}${Math.abs(x.bp)}bp → ${x.to}%`).join(" · ")}</div>` : `<div class="xs dim" style="margin-top:8px">${esc(rate.message || "")}</div>`}
+      <div class="xs dim" style="margin-top:6px">일정: .env QUANT_BOK_DATES (한은 공지) → 한국은행 공개 일정 페이지 순 · 추측으로 날짜를 만들지 않습니다</div>`)}
+  </div>`;
 }

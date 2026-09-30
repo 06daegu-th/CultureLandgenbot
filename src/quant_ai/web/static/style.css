@@ -905,3 +905,8 @@ table.heat td { width: 38px; height: 26px; text-align: center; border: 1px solid
   .cal-day { grid-template-columns: 56px 1fr; }
   .asof-chip { display: none; }
 }
+
+.acct-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.acct-form input, .acct-form select, .acct-form textarea { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); font: inherit; }
+.acct-form textarea { grid-column: 1 / -1; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
+@media (max-width: 900px) { .acct-form { grid-template-columns: 1fr; } }

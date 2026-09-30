@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -68,12 +69,16 @@ def event_calendar(app, days_ahead: int = 60, days_back: int = 14, now: datetime
     today = E.today_kst(now)
     start, end = today - timedelta(days=days_back), today + timedelta(days=days_ahead)
     names = _names(app)
+    from .data.collectors import bok as BOK
+    from .data.collectors import vkospi as VK
+    bok_sched = BOK.schedule(app.engine)
     with session_scope(app.engine) as s:
         disc = s.scalars(select(Disclosure).where(Disclosure.filed_at >= now - timedelta(days=days_back))).all()
         ev = E.build_calendar(start, end, _profiles(app), names, disc, E.load_custom(app.settings.artifacts_dir),
-                              fred_release_dates(app, start, end))
+                              fred_release_dates(app, start, end), bok_sched)
     ev = E.with_dday(ev, today)
     bars, bench, _ = app.market_data()
+    vk = VK.get(app.engine, bench)
     risk = []
     focus = _focus(app)
     for sym in focus:
@@ -88,11 +93,20 @@ def event_calendar(app, days_ahead: int = 60, days_back: int = 14, now: datetime
                 if m.var() > 0:
                     beta = float(np.cov(rr.iloc[-120:], m.iloc[-120:])[0, 1] / m.iloc[-120:].var())
         opt = ops.get_state(app.engine, f"options:{sym}")
-        er = E.event_risk(sym, ev, today, sig, beta, opt.get("earnings_implied_move"))
+        implied = opt.get("earnings_implied_move")
+        if implied is None and sym[:1].isdigit() and sig:
+            # 국내: 옵션이 없어 VKOSPI 로 시장 몫을 재고 고유 변동을 더한 일간 변동 × 2.5 (실적일 경험칙)
+            sys_hist = abs(beta or 1.0) * float(bench["close"].pct_change().iloc[-20:].std()) if bench is not None and len(bench) > 21 else 0.0
+            idio = math.sqrt(max(sig * sig - sys_hist * sys_hist, 0.0))  # 과거 변동 중 시장 몫을 뺀 고유 변동
+            m1 = VK.stock_move(vk, beta, idio, 1)
+            implied = None if m1 is None else round(2.5 * m1, 4)
+        er = E.event_risk(sym, ev, today, sig, beta, implied)
         er["name"] = names.get(sym, sym)
         risk.append(er)
     risk.sort(key=lambda x: -x["score"])
     out = {"at": now.isoformat(), "as_of": label(now), "today": today.isoformat(), "events": ev, "risk": risk,
+           "vkospi": {k: v for k, v in vk.items() if k != "series"} | {"series": vk.get("series")},
+           "bok": {"schedule": bok_sched, "rate": BOK.base_rate(app.engine, app.settings.ecos_api_key)},
            "counts": {k: sum(1 for e in ev if e["kind"] == k and e["d_day"] >= 0) for k in {e["kind"] for e in ev}},
            "gate": app.settings.event_gate}
     if store:
@@ -134,6 +148,10 @@ def event_impact(app, store: bool = True) -> dict:
                     continue
                 if dd < today:
                     stock_ev.append({"symbol": sym, "date": dd, "kind": "실적 발표", "title": e.get("label")})
+    rate = ops.get_state(app.engine, "bok_rate")
+    bok_days = [{"date": _date.fromisoformat(c["date"]), "kind": "bok_change", "market": "KR"} for c in rate.get("changes") or []]
+    if bok_days:
+        mk = sorted(mk + market_impact(benches.get("KR"), bok_days, "KR"), key=lambda x: -(x["vs_normal"] or 0))
     si = stock_impact(bars, benches.get("KR"), stock_ev)
     # 예측 오차 귀속
     from .data.models import ConsensusRecord
@@ -248,6 +266,43 @@ def kis_validate(app, fill: bool = False, client=None, market_open: bool | None 
     return res
 
 
+def record_parity(app, fills, quotes: dict, book_fn=None) -> int:
+    """실제(KIS) 체결마다: 주문 순간의 호가로 체결 시뮬레이터가 예측한 슬리피지 vs 실제 체결가 → parity 기록.
+
+    중간가 기준(불리한 방향 +, bp). 100건이 쌓이면 시뮬레이터 편향이 보정 판단의 근거가 된다."""
+    from .trading.exec_sim import simulate
+    from .trading.kis_ws import latest_book
+    rows = []
+    for f in fills or []:
+        o = f.order
+        q = quotes.get(o.symbol)
+        if q is None or not f.price:
+            continue
+        book = (book_fn or latest_book)(o.symbol)
+        sim = simulate(o.side.value, int(f.qty), q.last, q.bid, q.ask, q.bid_qty, q.ask_qty, book=book,
+                       adv=q.adv, sigma=q.sigma, impact_coef=app.settings.costs.impact_coef)
+        mid = sim.mid or q.last
+        sgn = 1 if o.side.value == "buy" else -1
+        real = sgn * (f.price - mid) / mid * 1e4
+        rows.append({"at": f.ts.isoformat() if hasattr(f.ts, "isoformat") else str(f.ts), "symbol": o.symbol, "side": o.side.value,
+                     "qty": int(f.qty), "real_bps": round(real, 2), "sim_bps": None if sim.slippage_bps is None else round(sim.slippage_bps, 2),
+                     "method": sim.method, "source": "live"})
+    if rows:
+        par = ops.get_state(app.engine, "execution_parity")
+        ops.set_state(app.engine, "execution_parity", {"rows": ((par.get("rows") or []) + rows)[-500:]})
+    return len(rows)
+
+
+PARITY_MIN = 100
+
+
+def sim_bias(app) -> float:
+    """실제 체결 − 시뮬레이터 예측의 평균 (bp). 100건 미만이면 0 (보정 안 함)."""
+    from .trading.slippage import parity
+    p = parity(ops.get_state(app.engine, "execution_parity").get("rows") or [])
+    return float(p["bias_bps"]) if p.get("n", 0) >= PARITY_MIN else 0.0
+
+
 def slippage_calibrate(app, store: bool = True) -> dict:
     from .trading.slippage import fit, observations, parity
     bars, _ = app._all_bars()
@@ -257,7 +312,8 @@ def slippage_calibrate(app, store: bool = True) -> dict:
         shadow = observations(s, bars, "shadow")
     out = {"at": datetime.now(UTC).isoformat(), "live": fit(live, c.slippage_bps, c.impact_coef),
            "shadow_reference": fit(shadow, c.slippage_bps, c.impact_coef) | {"note": "섀도는 호가 기준 가상 체결 — 참고용 (보정에는 실제 체결만)"},
-           "parity": parity(ops.get_state(app.engine, "execution_parity").get("rows") or []),
+           "parity": parity(ops.get_state(app.engine, "execution_parity").get("rows") or [])
+           | {"applied_bias_bps": sim_bias(app), "min_n": PARITY_MIN},
            "autocal": app.settings.slippage_autocal}
     out["model"] = out["live"]
     if store:
@@ -319,8 +375,31 @@ def prediction_power(app, store: bool = True) -> dict:
                            "실제 시장 예측력: 없음으로 판정 — 실제 돈 금지" if fw["decision"] == "H0" else
                            "실제 시장 예측력: 아직 검증 전 — 실제 돈은 소액 한도 안에서만")}
     if store:
+        prev = ops.get_state(app.engine, "prediction_power")
         ops.set_state(app.engine, "prediction_power", _json({k: v for k, v in out.items() if k != "study"}))
+        power_alerts(app, prev.get("forward") or {}, fw)
     return _json(out)
+
+
+def power_alerts(app, prev: dict, fw: dict) -> list[str]:
+    """전진 검증 판정이 바뀌면(H1/H0) · 채점 100건마다 알림 (텔레그램·푸시로도)."""
+    from .alerts import push
+    sent = []
+    if fw.get("decision") != prev.get("decision") and fw.get("decision") in ("H1", "H0"):
+        good = fw["decision"] == "H1"
+        t = "실제 시장 예측력: 사전 등록 기준 통과" if good else "실제 시장 예측력: 없음으로 판정"
+        body = (f"등록 이후 봉인된 예측 {fw.get('scored')}건 · 적중 {(fw.get('hit_rate') or 0):.1%} · 순차 검정 판정. "
+                + ("소액 실전 검토 가능 (다른 관문도 확인)" if good else "실제 돈 사용 금지 — 모델·프롬프트를 바꾸면 새로 등록"))
+        push(app.engine, "power", t, body, level="good" if good else "critical", link="#power", dedupe=f"power:{fw['decision']}")
+        app.notifier.send(f"{t}\n{body}", "info" if good else "critical")
+        sent.append(t)
+    n0, n1 = int(prev.get("scored") or 0), int(fw.get("scored") or 0)
+    if n1 // 100 > n0 // 100 and fw.get("decision") == "continue":
+        t = f"예측력 전진 검증 {n1 // 100 * 100}건 돌파"
+        push(app.engine, "power", t, f"적중 {(fw.get('hit_rate') or 0):.1%} · {fw.get('label')} · 예상 판정일 {fw.get('eta') or '-'}",
+             link="#power", dedupe=f"power:n{n1 // 100}")
+        sent.append(t)
+    return sent
 
 
 def run_signal_study(app, marcap_dir: str, start: int = 2010, end: int | None = None, top: int = 100) -> dict:
@@ -435,6 +514,23 @@ def stock_desk(app, symbol: str) -> dict:
         em = earnings_get(app.engine, symbol, b, bench, earn_date, opt.get("earnings_implied_move"))
     except Exception as e:  # noqa: BLE001
         em = {"error": type(e).__name__}
+    kr_implied = None
+    if symbol[:1].isdigit() and b is not None and len(b) > 60:
+        from .data.collectors import vkospi as VK
+        vk = VK.get(app.engine, bench)
+        r = b["close"].pct_change().dropna()
+        sig = float(r.iloc[-20:].std())
+        beta = None
+        if bench is not None and len(bench) > 60:
+            m = bench["close"].pct_change().reindex(r.index).dropna()
+            if m.iloc[-120:].var() > 0:
+                beta = float(np.cov(r.reindex(m.index).iloc[-120:], m.iloc[-120:])[0, 1] / m.iloc[-120:].var())
+        sys_hist = abs(beta or 1.0) * float(bench["close"].pct_change().iloc[-20:].std()) if bench is not None and len(bench) > 21 else 0.0
+        idio = math.sqrt(max(sig * sig - sys_hist * sys_hist, 0.0))
+        if vk.get("available"):
+            kr_implied = {"vkospi": vk.get("level"), "source": vk.get("source"), "proxy": vk.get("proxy"), "percentile_1y": vk.get("percentile_1y"),
+                          "beta": None if beta is None else round(beta, 2), "move_1d": VK.stock_move(vk, beta, idio, 1),
+                          "move_5d": VK.stock_move(vk, beta, idio, 5), "move_20d": VK.stock_move(vk, beta, idio, 20), "as_of": vk.get("as_of")}
     flow = ops.get_state(app.engine, f"flow:{symbol}")
     g = ops.get_state(app.engine, "kgraph")
     nb = neighbors(g, symbol, 8) if g else []
@@ -456,7 +552,7 @@ def stock_desk(app, symbol: str) -> dict:
         "bar_as_of": label(b.index[-1], with_time=False) if b is not None and len(b) else None,
         "plan": plan, "action": rec.action if rec else None, "plan_sealed": bool(rec and rec.row_hash and (rec.payload or {}).get("plan")),
         "plan_at": label(rec.as_of) if rec else None,
-        "events": evs[:12], "event_risk": risk, "options": opt, "earnings_model": em,
+        "events": evs[:12], "event_risk": risk, "options": opt, "kr_implied": kr_implied, "earnings_model": em,
         "flow": (flow.get("summary") or {}) | ({"rows": flow.get("rows")[-60:]} if flow.get("rows") else {}) if flow else {},
         "flow_at": label(flow.get("at")) if flow else None,
         "alt": altdata.for_context(app.engine, symbol) | {"raw": ops.get_state(app.engine, f"alt:{symbol}")},
@@ -500,4 +596,4 @@ def my_journal(app) -> dict:
 __all__ = ["event_calendar", "event_impact", "readiness", "kis_validate", "slippage_calibrate", "model_decay",
            "prediction_power", "run_signal_study", "wics", "rotation", "alt_collect", "extract_events", "batch_ab", "fx",
            "notarize", "stock_desk", "my_journal", "my_journal_add", "portfolio_gate", "risk_of_ruin", "cost_config",
-           "event_caps_for"]
+           "event_caps_for", "power_alerts", "record_parity", "sim_bias", "PARITY_MIN"]

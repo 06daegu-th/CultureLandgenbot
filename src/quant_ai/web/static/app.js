@@ -1009,7 +1009,7 @@ function viewSettings(d) {
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
   ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["readiness", "check", "매매 준비 · 데이터"], ["power", "learn", "실제 예측력"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["graph", "models", "지식 그래프 · 업종"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
-  ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["calendar", "bell", "이벤트 캘린더"], ["execution", "engine", "체결 · 증권사 검증"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
+  ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["calendar", "bell", "이벤트 캘린더"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["execution", "engine", "체결 · 증권사 검증"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
   ["검증 · 학습", [["reports", "review", "리포트 · 브리핑"], ["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["myjournal", "journal", "내 저널 vs AI"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
   ["시스템", [["safety", "shield", "안전 센터"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
 ];
@@ -1064,6 +1064,7 @@ async function render() {
     else if (S.view === "calendar") await viewCalendar(el);
     else if (S.view === "execution") await viewExecution(el);
     else if (S.view === "myjournal") await viewMyJournal(el);
+    else if (S.view === "accounts") await viewAccounts(el);
     else if (S.view === "ledger") await viewLedger(el);
     else if (S.view === "graph") { await viewGraph(el); if (typeof rotationPanel === "function") rotationPanel(el); }
     else if (S.view === "reports") await viewReports(el);

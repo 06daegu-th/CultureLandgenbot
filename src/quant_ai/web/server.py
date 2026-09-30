@@ -169,6 +169,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.pipeline_status())
                     if url.path == "/api/myjournal":
                         return self._json(api.my_journal())
+                    if url.path == "/api/accounts":
+                        return self._json(api.accounts())
                 except Exception as exc:  # noqa: BLE001
                     log.exception("API 오류")
                     return self._json({"error": str(exc)}, 500)
@@ -227,6 +229,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     return self._json(api.notify_test())
                 if url.path == "/api/myjournal":
                     return self._json(api.my_journal_write(body))
+                if url.path == "/api/accounts":
+                    return self._json(api.accounts_write(body))
                 if url.path == "/api/chat/clear":
                     from ..assistant import clear
                     clear(api.engine, str(body.get("sid", ""))[:40])

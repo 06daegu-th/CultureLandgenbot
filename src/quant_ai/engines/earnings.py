@@ -114,8 +114,17 @@ def get(engine, symbol: str, bars, bench, next_date: date | None = None, implied
             st["error"] = f"{type(e).__name__}"
         st = {"at": now.isoformat(), "history_raw": hist}
         ops.set_state(engine, key, st)
-    out = model(hist or [], bars, bench, "KR" if symbol[:1].isdigit() else "US", next_date, implied_move, now.date())
-    return out | {"at": st["at"]}
+    kr = symbol[:1].isdigit()
+    extra, upcoming = [], None
+    if kr:  # 국내: 네이버 컨센서스 스냅샷으로 쌓은 서프라이즈 이력 (영업이익/EPS)
+        from ..data.collectors.kr_consensus import history_for_model
+        extra = history_for_model(engine, symbol)
+        upcoming = ops.get_state(engine, f"krcons:{symbol}").get("upcoming")
+    seen = {h.get("date") for h in hist or []}
+    merged = list(hist or []) + [h for h in extra if h["date"] not in seen]
+    out = model(merged, bars, bench, "KR" if kr else "US", next_date, implied_move, now.date())
+    return out | {"at": st["at"], "consensus": upcoming, "kr_history": len(extra),
+                  "source": ("Yahoo" if hist else "") + (" + 네이버 컨센서스" if extra else "") or "사전 분포만"}
 
 
 __all__ = ["model", "reactions", "get", "fetch_yahoo", "PRIOR"]

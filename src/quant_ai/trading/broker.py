@@ -67,6 +67,7 @@ class ShadowBroker(PaperBroker):
         self.would_have_sent: list[tuple[datetime, Order, MarketQuote]] = []
         self.book_fn = book_fn  # (종목) -> 10단계 호가 dict | None · 기본: KIS 웹소켓 최신 호가
         self.last_sim: dict | None = None
+        self.sim_bias_bps = 0.0  # 실측 parity(100건+)로 잰 시뮬레이터 편향 — 예측 체결가에 더한다
 
     def _book(self, symbol: str) -> dict | None:
         if self.book_fn is not None:
@@ -85,7 +86,8 @@ class ShadowBroker(PaperBroker):
                 return None
             if sim.qty < order.qty:
                 order = replace(order, qty=sim.qty, reason=order.reason + f" (호가 {sim.levels}단계까지: 부분체결)")
-            fill = Fill(order, ts, sim.qty, sim.avg_price, self.costs.fee(order.side, sim.avg_price, sim.qty))
+            px = sim.avg_price * (1 + (1 if order.side is Side.BUY else -1) * self.sim_bias_bps / 1e4)
+            fill = Fill(order, ts, sim.qty, px, self.costs.fee(order.side, px, sim.qty))
             self.portfolio.apply(fill)
             self.last_sim = sim.as_dict()
             return fill
