@@ -253,7 +253,12 @@ def compare(app, symbols: list[str], days: int = 250) -> dict:
                      "ai": None if cons is None else {"action": cons.action, "prob_up": round(cons.prob_up, 3),
                                                       "confidence": round(cons.confidence), "as_of": label(cons.as_of)},
                      "hit": tk["hit"], "n_scored": tk["n_scored"],
-                     "per": st.get("per"), "pbr": st.get("pbr"), "div_yield": st.get("div_yield"), "market_cap": st.get("market_cap")})
+                     "per": st.get("per"), "pbr": st.get("pbr"), "div_yield": st.get("div_yield"), "market_cap": st.get("market_cap"),
+                     "var95": round(float(-np.quantile(rets[sym], 0.05)), 4)})
+    from .insight import compare_extra
+    ext = compare_extra(app, [r["symbol"] for r in rows])  # 성장률 · 선행 PER · 수급 · AI 성적
+    for r in rows:
+        r.update(ext.get(r["symbol"]) or {})
     corr = rets.corr().round(2)
     return {"symbols": list(df.columns), "missing": missing, "from": str(df.index[0].date()), "to": str(df.index[-1].date()),
             "series": series, "rows": rows, "corr": {a: {b: float(corr.loc[a, b]) for b in corr.columns} for a in corr.index}}

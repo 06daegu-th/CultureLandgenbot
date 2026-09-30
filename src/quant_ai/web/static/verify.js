@@ -103,22 +103,37 @@ async function viewVerify(el) {
 }
 
 async function viewLedger(el) {
-  const r = await api(`/api/ledger${S.ledgerBefore ? `?before=${S.ledgerBefore}` : ""}`);
+  S.lg = S.lg || { symbol: "", result: "" };
+  const q = new URLSearchParams();
+  if (S.ledgerBefore) q.set("before", S.ledgerBefore);
+  if (S.lg.symbol) q.set("symbol", S.lg.symbol);
+  if (S.lg.result) q.set("result", S.lg.result);
+  const r = await api(`/api/ledger?${q}`);
+  const RES = { SUCCESS: ["성공", "pos"], FAIL: ["실패", "neg"], PENDING: ["대기", ""] };
   const rows = r.rows.map((x) => `<tr><td class="num dim">#${x.id}</td><td><a href="#analysis/${esc(x.symbol)}"><b>${esc(x.name)}</b></a></td>
     <td class="small">${time(x.as_of, true)}</td><td class="small">${x.created_at ? time(x.created_at, true) : '<span class="dim">이전 기록</span>'}</td>
-    <td>${badge(x.action)}</td><td class="r num">${R(x.prob_up, 0)}</td><td class="r num">${P(x.expected)}</td>
+    <td><b class="${x.prediction === "UP" ? "up" : "down"}">${x.prediction === "UP" ? "▲ UP" : "▼ DOWN"}</b> ${badge(x.action)}</td><td class="r num">${R(x.prob_up, 0)}</td><td class="r num">${P(x.expected)}</td>
+    <td class="r num">${x.risk != null ? P(x.risk, 1) : "-"}</td><td class="xs mono" title="${esc(JSON.stringify(x.versions || {}))}">${esc((x.model || "-").slice(0, 18))}</td><td class="xs mono" title="데이터 스냅샷 ID (판단에 쓴 근거의 해시)">${esc((x.snapshot || "-").slice(0, 10))}</td>
     <td class="r num ${x.realized == null ? "" : x.realized >= 0 ? "up" : "down"}">${x.realized == null ? '<span class="dim">대기</span>' : P(x.realized)}</td>
     <td class="small num">${x.outcomes ? ["1", "5", "20"].map((h) => x.outcomes[h] == null ? "·" : P(x.outcomes[h], 1)).join(" / ") : ""}</td>
-    <td>${x.correct == null ? "" : x.correct ? "✔" : "✘"}</td>
+    <td><span class="chip xs ${RES[x.result]?.[1] || ""}">${RES[x.result]?.[0] || "-"}</span></td>
     <td class="mono xs" title="${esc(x.hash || "")}">${x.hash ? `${x.hash_ok ? "🔒" : "⚠️"} ${esc(x.hash.slice(0, 10))}` : '<span class="dim">-</span>'}</td></tr>`).join("");
-  el.innerHTML = card(`예측 장부 <span class="small dim">모든 판단을 저장 순간에 봉인 · 결과는 나중에 붙는다</span>`,
-    rows ? `<div class="scroll"><table class="tight"><thead><tr><th>#</th><th>종목</th><th>기준 봉</th><th>저장 시각</th><th>신호</th><th class="r">상승</th><th class="r">예상</th><th class="r">실제</th><th>1·5·20일</th><th></th><th>해시</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div style="margin-top:10px;display:flex;gap:8px"><button class="btn-sm" id="lg-new">최신</button><button class="btn-sm" id="lg-more">이전 60개</button></div>` : empty("아직 예측이 없습니다"),
-    `<a class="link" href="#verify">검증실 ${ICONS.arrow}</a>`);
+  el.innerHTML = card(`예측 장부 <span class="small dim">모든 판단을 저장 순간에 봉인 · 결과는 나중에 붙는다 · 수정 불가</span>`, `
+    <div class="lg-filter"><input id="lg-sym" class="mini-in" placeholder="종목 코드" value="${esc(S.lg.symbol)}">
+      <div class="tabs" id="lg-res">${[["", "전체"], ["success", "성공"], ["fail", "실패"]].map(([k, v]) => `<button data-k="${k}" class="${S.lg.result === k ? "on" : ""}">${v}</button>`).join("")}</div>
+      <button class="btn-sm" id="lg-apply">필터</button></div>
+    ${rows ? `<div class="scroll"><table class="tight"><thead><tr><th>#</th><th>종목</th><th>기준 봉</th><th>저장 시각</th><th>예측</th><th class="r">확률</th><th class="r">예상</th><th class="r">Risk</th><th>모델</th><th>스냅샷</th><th class="r">실제</th><th>1·5·20일</th><th>결과</th><th>해시</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div style="margin-top:10px;display:flex;gap:8px"><button class="btn-sm" id="lg-new">최신</button><button class="btn-sm" id="lg-more">이전 60개</button></div>` : empty("조건에 맞는 예측이 없습니다")}
+    <div class="xs dim" style="margin-top:6px">Risk = 무효화(손절)까지 거리 · 스냅샷 ID = 판단 근거(입력 데이터)의 해시 — 같은 근거면 같은 ID · 🔒 = 저장 후 한 글자도 바뀌지 않음</div>`,
+  `<a class="link" href="#scorecard">AI 성적표 ${ICONS.arrow}</a> <a class="link" href="#verify">검증실 ${ICONS.arrow}</a>`);
   const more = $("#lg-more");
   if (more) more.onclick = () => { S.ledgerBefore = r.rows[r.rows.length - 1]?.id; render(); };
   const nw = $("#lg-new");
   if (nw) nw.onclick = () => { S.ledgerBefore = null; render(); };
+  el.querySelectorAll("#lg-res button").forEach((b) => b.onclick = () => { S.lg.result = b.dataset.k; S.ledgerBefore = null; render(); });
+  const apply = () => { S.lg.symbol = $("#lg-sym").value.trim().slice(0, 12); S.ledgerBefore = null; render(); };
+  $("#lg-apply").onclick = apply;
+  $("#lg-sym").onkeydown = (e) => { if (e.key === "Enter") apply(); };
 }
 
 // ================================================================= 지식 그래프 · 섹터 · 에이전트
@@ -349,7 +364,7 @@ async function fillAgentStrip() {
 function buildTabbar() {
   const t = $("#tabbar");
   if (!t) return;
-  const items = [["dashboard", "home", "홈"], ["control", "control", "관제실"], ["readiness", "check", "준비"], ["power", "score", "예측력"], ["chat", "chat", "AI"]];
+  const items = [["dashboard", "home", "홈"], ["action", "bell", "오늘"], ["watch", "score", "관심"], ["pos", "portfolio", "자산"], ["chat", "chat", "AI"]];
   t.innerHTML = items.map(([v, ic, l]) => `<a href="#${v}" data-tab="${v}">${ICONS[ic] || ""}<span>${l}</span></a>`).join("");
 }
 function markTab() {

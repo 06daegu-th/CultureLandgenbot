@@ -114,7 +114,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     if url.path == "/api/verify":
                         return self._json(api.verify())
                     if url.path == "/api/ledger":
-                        return self._json(api.ledger(int(arg("before", "0") or 0) or None))
+                        return self._json(api.ledger(int(arg("before", "0") or 0) or None, arg("symbol", "")[:12], arg("result", "")[:8]))
                     if url.path == "/api/graph":
                         return self._json(api.graph(arg("symbol")))
                     if url.path == "/api/agents":
@@ -195,6 +195,60 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.ai_health())
                     if url.path == "/api/prefs":
                         return self._json(api.prefs())
+                    # ---- v16
+                    sym = arg("symbol", "")[:12]
+                    if url.path.startswith("/api/stock/"):
+                        return self._json(api.stock_part(url.path.rsplit("/", 1)[-1], sym))
+                    if url.path == "/api/news-impact":
+                        return self._json(api.news_impact(int(arg("id", "0") or 0)))
+                    if url.path == "/api/notrade":
+                        return self._json(api.notrade(arg("mode"), int(arg("days", "30") or 30), sym))
+                    if url.path == "/api/ai-card":
+                        return self._json(api.ai_card(sym))
+                    if url.path == "/api/ai-verify":
+                        return self._json(api.ai_verify(sym))
+                    if url.path == "/api/ai-public":
+                        return self._json(api.ai_public(int(arg("n", "1000") or 1000)))
+                    if url.path == "/api/action-center":
+                        return self._json(api.action_center(arg("mode")))
+                    if url.path == "/api/watchlist":
+                        return self._json(api.watchlist())
+                    if url.path == "/api/risk-simple":
+                        return self._json(api.risk_simple(arg("mode")))
+                    if url.path == "/api/thesis":
+                        return self._json(api.thesis(sym or None))
+                    if url.path == "/api/sentinel":
+                        return self._json(api.sentinel())
+                    if url.path == "/api/data-health":
+                        return self._json(api.data_health(arg("refresh", "") == "1"))
+                    if url.path == "/api/failure-lab":
+                        return self._json(api.failure_lab(arg("refresh", "") == "1"))
+                    if url.path == "/api/ai-lab":
+                        return self._json(api.ai_lab())
+                    if url.path == "/api/portfolio-os":
+                        return self._json(api.portfolio_os(arg("mode")))
+                    if url.path == "/api/briefing":
+                        return self._json(api.briefing(arg("mode")))
+                    if url.path == "/api/simulate":
+                        return self._json(api.simulate(arg("mode")))
+                    if url.path == "/api/user-profile":
+                        return self._json(api.user_profile())
+                    if url.path == "/api/discover":
+                        return self._json(api.discover())
+                    if url.path == "/api/mistakes":
+                        return self._json(api.mistakes())
+                    if url.path == "/api/exec-costs":
+                        return self._json(api.exec_costs())
+                    if url.path == "/api/orderbook":
+                        return self._json(api.orderbook(sym, arg("qty", "")[:9]))
+                    if url.path == "/api/validation":
+                        return self._json(api.validation())
+                    if url.path == "/api/governance":
+                        return self._json(api.governance())
+                    if url.path == "/api/ticket":
+                        return self._json(api.ticket(sym, arg("side", "buy")[:4], arg("qty", "")[:9], arg("amount", "")[:14]))
+                    if url.path == "/api/ticket/book":
+                        return self._json(api.ticket_book())
                 except ValueError as e:
                     return self._json({"error": str(e)}, 400)
                 except Exception as exc:  # noqa: BLE001
@@ -229,6 +283,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                 return self._json({"error": "잘못된 JSON"}, 400)
             if url.path == "/api/killswitch":
                 api.app.set_kill_switch(bool(body.get("on")), str(body.get("reason", ""))[:200], by="dashboard")
+                api._audit("killswitch", f"{'ON' if body.get('on') else 'OFF'} {str(body.get('reason', ''))[:100]}")
                 api._cache = None  # 대시보드 캐시 무효화
                 return self._json({"kill_switch": api.app.kill_switch_on()})
             if url.path == "/api/order-sheet":
@@ -261,6 +316,16 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     return self._json(api.star(body))
                 if url.path == "/api/prefs":
                     return self._json(api.prefs_write(body))
+                if url.path == "/api/stock/digest":
+                    return self._json(api.stock_digest(body))
+                if url.path == "/api/watch-group":
+                    return self._json(api.watch_group(body))
+                if url.path == "/api/thesis":
+                    return self._json(api.thesis_write(body))
+                if url.path == "/api/user-profile":
+                    return self._json(api.user_profile_write(body))
+                if url.path == "/api/ticket":
+                    return self._json(api.ticket_place(body))
                 if url.path == "/api/chat/clear":
                     from ..assistant import clear
                     clear(api.engine, str(body.get("sid", ""))[:40])

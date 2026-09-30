@@ -88,7 +88,8 @@ def ai_health(app, now: datetime | None = None) -> dict:
         if x.get("status") == "decaying":
             problems.append(f"{x.get('label')}: {x.get('message')}")
     status = "bad" if problems else "warn" if any(c["status"] == "yellow" for c in checks) or any(r["decay"] == "watch" for r in rows) else "ok"
-    return {"at": now.isoformat(), "as_of": label(now), "status": status, "problems": problems[:10], "analysts": rows,
+    tiles = _tiles(app, rows, prov, decay, rec, latest, now)
+    return {"at": now.isoformat(), "as_of": label(now), "status": status, "problems": problems[:10], "analysts": rows, "tiles": tiles,
             "providers": sorted(prov.values(), key=lambda p: -(p["ok"] + p["error"])),
             "llm_errors": [{"at": label(t), "provider": pv, "error": (e or "")[:160]} for t, pv, e in last_err],
             "model": {"champion": f"{rec.name}@{rec.version}" if rec else None, "trained": label(rec.created_at) if rec else None,
@@ -98,6 +99,49 @@ def ai_health(app, now: datetime | None = None) -> dict:
                       "decay": {k: {kk: (decay.get(k) or {}).get(kk) for kk in ("status", "message", "n", "reference", "recent", "half_life_days")}
                                 for k in ("consensus", "quant")} | {"at": decay.get("at")}},
             "has_llm": app.settings.has_llm}
+
+
+def _tiles(app, rows, prov, decay, rec, latest, now) -> list[dict]:
+    """한눈에: Quant · 뉴스 AI · 거시 AI · 공시·실적 AI 정상 여부 + 최근 성능 저하 · 데이터 부족 · API 오류 · 자동 감시."""
+    by = {r["analyst"]: r for r in rows}
+    out = []
+
+    def ai_tile(key, title):
+        r = by.get(key)
+        if r is None:
+            return {"key": key, "title": title, "status": "na", "detail": "기록 없음 (이 AI 가 꺼져 있거나 아직 판단 전)"}
+        if r["decay"] == "decaying":
+            return {"key": key, "title": title, "status": "bad", "detail": "성능 저하 — " + (r["decay_msg"] or "")}
+        if r["stale"]:
+            return {"key": key, "title": title, "status": "bad", "detail": f"판단 멈춤 (마지막 {r['last']})"}
+        if r["n_scored"] < 40:
+            return {"key": key, "title": title, "status": "warn", "detail": f"채점 {r['n_scored']}건 — 판단하기엔 표본 부족"}
+        return {"key": key, "title": title, "status": "warn" if r["decay"] == "watch" else "ok",
+                "detail": f"적중 {r['hit']:.0%} · 최근 {r['hit_recent']:.0%}" if r.get("hit_recent") is not None and r.get("hit") is not None else "정상"}
+    q = by.get("quant")
+    if rec is None:
+        out.append({"key": "quant", "title": "Quant 모델", "status": "warn", "detail": "챔피언 없음 — 학습 후보가 검증 게이트 탈락 (차트·Quant AI 기권)"})
+    else:
+        t = ai_tile("quant", "Quant 모델")
+        t["detail"] = f"{rec.name}@{rec.version} · " + t["detail"] if q else f"{rec.name}@{rec.version}"
+        out.append(t)
+    out += [ai_tile("primary", "뉴스 AI"), ai_tile("nvidia", "거시(경제·시장) AI"), ai_tile("panel", "공시·실적 AI")]
+    dec = [r["label"] for r in rows if r["decay"] == "decaying"] + [(decay.get(k) or {}).get("label") for k in ("consensus", "quant")
+                                                                   if (decay.get(k) or {}).get("status") == "decaying"]
+    out.append({"key": "decay", "title": "최근 성능 저하", "status": "bad" if dec else "ok",
+                "detail": ", ".join(x for x in dec if x) if dec else f"저하 신호 없음 · 점검 {label(decay.get('at')) or '기록 없음'}"})
+    thin = [r["label"] for r in rows if r["analyst"] not in ("risk",) and r["n_scored"] < 40]
+    stale_ai = latest is None or now - latest > timedelta(days=3)
+    out.append({"key": "data", "title": "데이터 부족", "status": "bad" if stale_ai else "warn" if thin else "ok",
+                "detail": ("AI 판단 자체가 3일 넘게 없음" if stale_ai else "") + (f" 채점 표본 부족: {', '.join(thin)}" if thin else "") or "충분"})
+    err = [f"{p['provider']} 실패율 {p['error_rate']:.0%}" for p in prov.values() if (p["error_rate"] or 0) > 0.1]
+    out.append({"key": "api", "title": "API 오류", "status": "bad" if any((p["error_rate"] or 0) > 0.3 for p in prov.values()) else "warn" if err else
+                ("ok" if prov else "na"), "detail": ", ".join(err) or ("최근 24시간 LLM 오류 없음" if prov else "LLM 호출 없음 (키 없음 또는 휴장)")})
+    sn = ops.get_state(app.engine, "sentinel")
+    out.append({"key": "sentinel", "title": "자동 감시", "status": sn.get("status") or "na",
+                "detail": "; ".join(f"{c['title']}: {c['detail'][:40]}" for c in sn.get("checks") or [] if c["status"] in ("bad", "warn"))[:200]
+                or (f"모두 정상 · {sn.get('as_of')}" if sn else "아직 실행 전 (5분마다)")})
+    return out
 
 
 __all__ = ["ai_health"]

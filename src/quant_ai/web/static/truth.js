@@ -28,10 +28,10 @@ function tickMarketClock() {
     const target = Date.parse(m.next_event === "폐장" ? m.next_close : m.next_open);
     const left = (target - Date.now()) / 1000;
     if (left <= 0) refetch = true;
-    const state = m.trading_day ? PHASE_KO[m.phase] || m.phase : `휴장${m.holiday && m.holiday !== "주말" ? "·" + m.holiday : ""}`;
-    const cls = m.phase === "open" ? "open" : m.trading_day ? "" : "holiday";
+    const state = m.trading_day ? m.session_label || PHASE_KO[m.phase] || m.phase : `휴장${m.holiday && m.holiday !== "주말" ? "·" + m.holiday : ""}`;
+    const cls = m.phase === "open" ? "open" : m.trading_day ? (["pre_market", "after_hours", "pre_auction"].includes(m.session_code) ? "ext" : "") : "holiday";
     const tip = `${m.name} · 현지 ${m.local_time} · 다음 개장 ${m.next_open_kst} · 다음 폐장 ${m.next_close_kst}${m.session?.note ? " · " + m.session.note : ""}`;
-    return `<a class="pill mktc ${cls}" href="#truth" title="${esc(tip)}"><b>${k === "US" ? "미국" : "KRX"}</b> ${esc(state)} <span class="mono xs">${esc(m.next_event)} ${dur(left)}</span></a>`;
+    return `<a class="pill mktc ${cls}" href="#truth" title="${esc(tip)}">${m.flag || ""} <b>${esc(m.short || k)}</b> ${esc(state)} <span class="mono xs">${esc(m.next_event)} ${dur(left)}</span></a>`;
   }).join(" ");
   if (refetch && Date.now() - MKT.fetchedAt > 20e3) loadClock();
 }
@@ -39,7 +39,7 @@ function tickMarketClock() {
 function initMarketClock() {
   loadClock();
   setInterval(tickMarketClock, 1000);
-  setInterval(loadClock, 5 * 60e3);
+  setInterval(loadClock, 60e3);  // 세부 세션(동시호가·시간외·프리/애프터마켓)이 바뀌는 시점을 놓치지 않게
 }
 
 // ------------------------------------------------------------ Truth Center · 완성 기준
@@ -244,8 +244,8 @@ function initRecentSearch() {
 }
 
 // ------------------------------------------------------------ 키보드 단축키
-const KEYS = [["/", "종목 검색"], ["g h", "홈"], ["g t", "Truth Center"], ["g r", "매매 준비"], ["g p", "포트폴리오"], ["g k", "리스크"], ["g e", "이벤트 캘린더"], ["g c", "종목 비교"], ["g a", "AI 분석"], ["s", "관심종목 별표 (종목 화면)"], ["d", "다크/라이트 전환"], ["?", "단축키 도움말"], ["Esc", "닫기"]];
-const GO = { h: "#dashboard", t: "#truth", r: "#readiness", p: "#portfolio", k: "#risk", e: "#calendar", c: "#compare", a: "#analysis" };
+const KEYS = [["/", "종목 검색"], ["g h", "홈"], ["g o", "오늘 할 일 (Action Center)"], ["g m", "시장"], ["g w", "관심종목"], ["g s", "AI 성적표"], ["g t", "Truth Center"], ["g r", "매매 준비"], ["g p", "Portfolio OS"], ["g k", "리스크"], ["g e", "이벤트 캘린더"], ["g c", "종목 비교"], ["g a", "종목 (AI 분석)"], ["g n", "뉴스 · 공시"], ["g d", "데이터 건강"], ["s", "관심종목 별표 (종목 화면)"], ["d", "다크/라이트 전환"], ["?", "단축키 도움말"], ["Esc", "닫기"]];
+const GO = { h: "#dashboard", o: "#action", m: "#market", w: "#watch", s: "#scorecard", t: "#truth", r: "#readiness", p: "#pos", k: "#risk", e: "#calendar", c: "#compare", a: "#analysis", n: "#news", d: "#datahealth" };
 function initShortcuts() {
   let g = 0;
   document.addEventListener("keydown", (e) => {

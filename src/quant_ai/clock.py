@@ -131,6 +131,38 @@ CALENDAR_SOURCE = "holidays 패키지 (XKRX · XNYS)" if HOLIDAY_NAMES["KRX"] el
 MARKETS = {"KRX": KRX, "US": US}
 
 
+def detail_session(cal: MarketCalendar, now: datetime) -> tuple[str, str]:
+    """세부 세션 (코드, 한국어). 정규장 외 시간대까지 — 주문 가능 여부와 가격 신뢰도가 다르다.
+    KRX: 장 시작 전 · 장전 동시호가(개장 30분 전) · 장중 · 장마감 동시호가(마지막 10분) · 시간외(~18:00) · 장마감 · 휴장
+    미국: 프리마켓(04:00~) · 장중 · 애프터마켓(~20:00, 조기 폐장일은 폐장+4시간) · 장마감 · 휴장"""
+    t = cal.local(now)
+    if not cal.is_trading_day(t.date()):
+        return "holiday", "휴장"
+    o, c, _ = cal.session(t.date())
+    od, cd = datetime.combine(t.date(), o, cal.tz), datetime.combine(t.date(), c, cal.tz)
+    if cal.name == "KRX":
+        if t < od - timedelta(minutes=30):
+            return "before", "장 시작 전"
+        if t < od:
+            return "pre_auction", "장전 동시호가"
+        if t < cd - timedelta(minutes=10):
+            return "regular", "장중"
+        if t < cd:
+            return "close_auction", "장마감 동시호가"
+        if t < datetime.combine(t.date(), time(18, 0), cal.tz):
+            return "after_hours", "시간외"
+        return "closed", "장마감"
+    if t < datetime.combine(t.date(), time(4, 0), cal.tz):
+        return "closed", "장마감"
+    if t < od:
+        return "pre_market", "프리마켓"
+    if t < cd:
+        return "regular", "장중"
+    if t < cd + timedelta(hours=4):
+        return "after_hours", "애프터마켓"
+    return "closed", "장마감"
+
+
 def next_open(cal: MarketCalendar, now: datetime) -> datetime:
     """지금 이후 처음 열리는 시각 (장중이면 다음 거래일 개장)."""
     t = cal.local(now)
@@ -172,8 +204,11 @@ def clock_status(now: datetime, markets: dict[str, MarketCalendar] | None = None
         no, nc = next_open(cal, now), next_close(cal, now)
         ph = cal.phase(now)
         nxt = nc if ph is Phase.OPEN else no
+        sc, sl = detail_session(cal, now)
         out[key] = {
             "name": "한국 (KRX)" if key == "KRX" else "미국 (NYSE·Nasdaq)", "tz": str(cal.tz), "phase": ph.value,
+            "flag": "🇰🇷" if key == "KRX" else "🇺🇸", "short": "KRX" if key == "KRX" else "NASDAQ",
+            "session_code": sc, "session_label": sl,
             "local_time": t.strftime("%Y-%m-%d %H:%M"), "trading_day": trading, "holiday": None if trading else cal.holiday_name(d) or "주말",
             "session": {"open": o.strftime("%H:%M"), "close": c.strftime("%H:%M"), "note": note} if trading else None,
             "next_open": no.isoformat(), "next_open_kst": no.astimezone(kst).strftime("%m-%d %H:%M KST"),

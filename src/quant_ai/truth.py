@@ -84,6 +84,9 @@ def data_truth(app, now: datetime) -> dict:
     xc = ops.get_state(app.engine, "live_quotes").get("conflicts") or []
     checks.append(_c("cross_check", "교차 검증 (증권사 ↔ DB)", "bad" if xc else "ok",
                      f"±30% 넘게 다른 종목: {', '.join(xc[:5])}" if xc else "불일치 없음 (증권사·실시간 시세 기준)"))
+    from .datahealth import price_delay
+    pdl = price_delay(app, now)  # 장중 실시간 시세가 15분 넘게 멈추면 → DATA 관문 빨강 → 신규 매수 차단
+    checks.append(_c("price_delay", "장중 가격 지연", "bad" if pdl["block"] else "ok" if pdl["open"] and pdl["delay_s"] is not None else "na", pdl["detail"]))
     q = quality_scan(app)
     checks.append(_c("quality", "데이터 품질 (급변·0값·결측·정지)", "warn" if q["issues"] else "ok",
                      f"{q['checked']}종목 중 경고 {len(q['issues'])}종목: " + ", ".join(f"{x['symbol']}({x['warning'][:24]})" for x in q["issues"][:4])

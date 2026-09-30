@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -56,7 +56,8 @@ class DartCollector:
                 if session.scalar(select(Disclosure.id).where(Disclosure.receipt_no == row["receipt_no"])):
                     continue
                 result = self.analyzer.analyze(row["title"], "")
-                session.add(Disclosure(source="DART", sentiment=result.sentiment, events=result.events, **row))
+                session.add(Disclosure(source="DART", sentiment=result.sentiment, events=result.events,
+                                       collected_at=datetime.now(UTC), **row))
                 session.flush()
                 n += 1
             if page >= int(payload.get("total_page", 1)):

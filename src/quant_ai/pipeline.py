@@ -193,8 +193,15 @@ class QuantAI:
             if hit and hit[1] == key and _time.monotonic() - hit[0] < 60:
                 bars, bench, sent = hit[2]
                 return dict(bars), bench, sent
-            out = self._market_data(None)
-            self._md_cache = (_time.monotonic(), key, out)
+            import threading
+            lock = self.__dict__.setdefault("_md_lock", threading.Lock())
+            with lock:  # 화면이 동시에 여러 API 를 부르면 전 종목 일봉을 한 번만 읽는다 (나머지는 기다렸다 재사용)
+                hit = getattr(self, "_md_cache", None)
+                if hit and hit[1] == key and _time.monotonic() - hit[0] < 60:
+                    bars, bench, sent = hit[2]
+                    return dict(bars), bench, sent
+                out = self._market_data(None)
+                self._md_cache = (_time.monotonic(), key, out)
             return dict(out[0]), out[1], out[2]
         return self._market_data(as_of)
 
@@ -880,6 +887,8 @@ class QuantAI:
             risk.buy_block = _rd.buy_block(self, name)
             want = {x.symbol for x in signals_override} if signals_override is not None else {d.symbol for d in decisions}
             risk.event_caps = event_caps_for(self, want)
+            from .failmode import apply_caps
+            risk.event_caps = apply_caps(self, risk.event_caps, want, ts)  # 뉴스 수집 다운 → 신규 매수 절반 (fail-closed)
             try:
                 gate_bars, _, _ = self.market_data(ts) if not is_us_book(name) else (None, None, None)
                 if gate_bars:
@@ -957,6 +966,7 @@ class QuantAI:
         if ops.get_state(self.engine, key).get("day") != str(ts.date()):
             ops.set_state(self.engine, key, {"day": str(ts.date()), "age": age})
             self.notifier.send(msg, "critical")
+            DBJournal(mode.value, self.engine).note(ts, "skip", msg[:500], None, category="data", age=age)  # 왜 거래 안 했나
         log.warning(msg)
         return msg
 

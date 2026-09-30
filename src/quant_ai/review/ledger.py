@@ -121,20 +121,44 @@ def verify(session, sample_limit: int = 50) -> dict:
                         f"경고: 해시 불일치 {len(tampered)}건 · 사슬 끊김 {len(breaks)}곳")}
 
 
-def entries(session, limit: int = 50, before_id: int | None = None, names: dict | None = None) -> list[dict]:
+def snapshot_id(payload: dict) -> str | None:
+    """판단에 쓴 입력(가격·지표·뉴스 요약)의 지문 — 같은 입력이면 같은 ID (재현·감사용)."""
+    import hashlib
+    import json
+    ev = (payload or {}).get("evidence")
+    if not ev:
+        return None
+    return hashlib.sha256(json.dumps(ev, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()[:10]
+
+
+def entries(session, limit: int = 50, before_id: int | None = None, names: dict | None = None, symbol: str | None = None,
+            result: str | None = None) -> list[dict]:
     q = select(ConsensusRecord).order_by(ConsensusRecord.id.desc()).limit(limit)
     if before_id:
         q = q.where(ConsensusRecord.id < before_id)
+    if symbol:
+        q = q.where(ConsensusRecord.symbol == symbol)
+    if result == "fail":
+        q = q.where(ConsensusRecord.correct.is_(False))
+    elif result == "success":
+        q = q.where(ConsensusRecord.correct.is_(True))
     names = names or {}
     out = []
     for r in session.scalars(q):
         p = r.payload or {}
+        v = p.get("versions") or {}
+        plan = p.get("plan") or {}
         out.append({"id": r.id, "symbol": r.symbol, "name": names.get(r.symbol, r.symbol), "as_of": _iso(r.as_of),
                     "created_at": _iso(r.created_at), "action": r.action, "prob_up": r.prob_up,
+                    "prediction": "UP" if r.prob_up >= 0.5 else "DOWN",
                     "confidence": r.confidence, "horizon": p.get("horizon"), "expected": p.get("expected_return"),
+                    "risk": plan.get("stop_pct"),
+                    "model": v.get("quant") or v.get("model") or next((f"{k}:{x}" for k, x in v.items() if k not in ("replay",)), None),
+                    "snapshot": snapshot_id(p),
                     "realized": r.realized_return, "correct": r.correct, "outcomes": p.get("outcomes"),
+                    "result": "PENDING" if r.correct is None else "SUCCESS" if r.correct else "FAIL",
                     "hash": r.row_hash, "hash_ok": (row_hash(r) == r.row_hash) if r.row_hash else None,
-                    "versions": p.get("versions"), "trigger": p.get("trigger")})
+                    "versions": v, "trigger": p.get("trigger")})
     return out
 
 

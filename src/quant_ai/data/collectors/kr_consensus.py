@@ -88,9 +88,15 @@ def update(engine, code: str, parsed: dict, now: datetime | None = None) -> dict
             base_m = "eps" if e.get("eps") and row.get("eps") is not None else "op_income"
             a, b = row.get(base_m), e.get(base_m)
             if a is not None and b not in (None, 0):
+                extra = {}
+                for m in ("revenue", "op_income", "eps"):  # 매출·영업이익·EPS 각각의 서프라이즈 (실적 분석 화면)
+                    ea, eb = row.get(m), e.get(m)
+                    if ea is not None and eb not in (None, 0):
+                        extra[f"{m}_estimate"], extra[f"{m}_actual"] = eb, ea
+                        extra[f"{m}_surprise_pct"] = round((ea - eb) / abs(eb) * 100, 2)
                 surprises.append({"period": k, "label": p["label"], "date": now.date().isoformat(), "metric": base_m,
                                   "estimate": b, "actual": a, "surprise_pct": round((a - b) / abs(b) * 100, 2),
-                                  "estimate_seen": e.get("last_seen")})
+                                  "estimate_seen": e.get("last_seen"), **extra})
                 done.add(k)
     nxt = next((p for p in parsed.get("periods") or [] if p["consensus"]), None)
     upcoming = None

@@ -182,6 +182,13 @@ python -m quant_ai.checklist         # 완성 기준 체크리스트 (docs/FINAL
 - **AI · 모델 Health** (`#aihealth`): AI 별 적중(전체·초기·최근 20거래일) · 성능 저하 자동 감지(일별 검정 → 알림) · LLM 응답 상태
 - 홈 **⚙ 홈 편집**(숨기기·순서) · 설정의 **외부 알림 설정**(종류별 텔레그램/디스코드·웹 푸시 · 조용한 시간) — 서버 저장, 모든 기기 공통
 
+### Stock OS · 검증 가능한 AI · 데이터 OS (v16)
+
+- 종목 페이지: **현재 상황 한 줄**(🟢/🟡/🔴) · **OS 헤더**(AI 확률·실적 D-n·뉴스 톤·공시·수급·밸류·위험·내 보유) · 가격/뉴스/공시/AI **신선도(초 단위)** · 차트 위 지지/저항·뉴스·공시·실적 표시 · 뉴스 v2(톤·예상 영향·AI 요약·영향 분석) · 실적 · 종목 리스크 · **과거 동일 조건 N회 검증** · **투자 논리** · **모의 주문**(수동 장부) · 섹션 숨기기/순서
+- `#action` 오늘 할 일 · `#watch` 관심종목 그룹 · `#notrade` 거래 안 한 이유 · `#scorecard` **공개 AI 성적표**(1000건 전부, 실패 포함) · `#ailab` AI Lab·실패 연구
+- `#datahealth` **DATA HEALTH**(가격 지연 15분 → 매수 차단) · Sentinel · Fail-Closed · `#pos` Portfolio OS·위기 시뮬레이션 · `#profile` 투자 성향·실수 패턴 · `#validation` 실전 검증 진행표·비용 실측 · `#governance` 규제 단계·보안·라이선스·감사 로그
+- 문서: [COMPLIANCE](docs/COMPLIANCE.md) · [SECURITY](docs/SECURITY.md) · [DATA_LICENSES](docs/DATA_LICENSES.md) · [SAAS_ARCHITECTURE](docs/SAAS_ARCHITECTURE.md)
+
 ## 안전 원칙
 - AI → 신호 → 앙상블 → **리스크 게이트** → 실행 엔진 → 증권사. AI 는 `broker.buy()` 를 호출할 수 없다.
 - Risk AI 의 규칙 veto (이벤트 임박, 변동성 급증, 데이터 이상, 위기 국면, 상장폐지 공시)는 다른 AI 가 뒤집을 수 없다.

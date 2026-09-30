@@ -64,8 +64,16 @@ def run(app, mode: str, argv: list[str] | None = None) -> None:  # pragma: no co
     proc = subprocess.Popen(cmd)  # noqa: S603 - 고정 인자
     started = time.monotonic()
     record(app.engine, "start", " ".join(cmd[-3:]))
+    last_sentinel = 0.0
     while True:
         time.sleep(CHECK_S)
+        if time.monotonic() - last_sentinel >= 300:  # 스케줄러가 죽어도 자동 감시는 여기서 계속 (DB·데이터·AI·증권사)
+            last_sentinel = time.monotonic()
+            try:
+                from .sentinel import check
+                check(app)
+            except Exception as e:  # noqa: BLE001
+                log.warning("자동 감시 실패: %s", e)
         act = decide(proc.poll() is None, started, time.monotonic(), heartbeat_age(app.engine))
         if act == "ok":
             fails = 0

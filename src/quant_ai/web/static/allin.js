@@ -84,7 +84,7 @@ function stockNav() {
 }
 
 async function stockPage(sym, a) {
-  stockNav();
+  if (typeof osNav !== "function") stockNav();  // v16: 섹션 이동은 os.js (숨기기·순서 포함)
   if (typeof stockExtras === "function") stockExtras(sym, a || {}, {});  // 외부 자료(프로필)를 기다리지 않고 알림·관계·공시부터
   let d;
   try { d = await api(`/api/stock?symbol=${encodeURIComponent(sym)}`); } catch { return; }
@@ -92,8 +92,9 @@ async function stockPage(sym, a) {
   trustChip(d.trust);
   ddayStrip(d.events);
   storyCard(sym, d.story);
-  digestCard(d.digest);
+  if (!$("#pf-news")) digestCard(d.digest);  // v16 은 뉴스·공시 v2(os.js)가 대신
   pretradeCard(sym);
+  if (typeof stockOS === "function") stockOS(sym, d);
 }
 
 function trustChip(t) {

@@ -107,6 +107,11 @@ def pretrade(app, symbol: str, weight: float | None = None, mode: str = "paper",
     step("매매 준비", "bad" if risk.buy_block else "ok" if gated else "na",
          risk.buy_block or (f"{rd.get('status', '-')} · 게이트 적용" if gated else f"{rd.get('status', '-')} · 이 장부({mode})는 게이트 미적용 (기록만)"))
     risk.event_caps = event_caps_for(app, {symbol})
+    from .failmode import apply_caps, news_down
+    risk.event_caps = apply_caps(app, risk.event_caps, {symbol}, now)
+    nd = news_down(app, now)
+    if nd:
+        step("뉴스 수집", "warn", nd)
     cap = risk.event_caps.get(symbol)
     step("이벤트", "warn" if cap else "ok", f"{cap[1]} → 수량 ×{cap[0]}" if cap else "가까운 실적·큰 이벤트 없음")
     try:
@@ -236,6 +241,9 @@ def digest(app, symbol: str, now: datetime | None = None) -> dict:
 
 
 # ------------------------------------------------------------------ 일정 (D-day)
+# 종목 화면에 항상 보여줄 시장 일정 (중요도와 무관): FOMC · CPI · 고용 · 옵션 만기 · 지수 편입/편출 · 금통위
+ALWAYS_KINDS = {"fomc", "cpi", "nfp", "options_expiry", "quad_witching", "index_rebalance", "bok"}
+US_FOR_KR = {"fomc", "cpi", "nfp"}  # 국내 종목도 미국 거시 일정의 영향을 받는다
 def events(app, symbol: str, now: datetime | None = None, days: int = 45) -> list[dict]:
     from zoneinfo import ZoneInfo
     now = now or datetime.now(UTC)
@@ -251,20 +259,26 @@ def events(app, symbol: str, now: datetime | None = None, days: int = 45) -> lis
         if dd < -3 or dd > days:
             continue
         mine = e.get("symbol") == symbol
-        market = not e.get("symbol") and e.get("importance", 0) >= 0.7 and e.get("market") in (("KR", "GLOBAL", "US") if kr else ("US", "GLOBAL"))
+        mkt_ok = e.get("market") in (("KR", "GLOBAL") if kr else ("US", "GLOBAL")) or (kr and e.get("kind") in US_FOR_KR)
+        market = not e.get("symbol") and mkt_ok and (e.get("kind") in ALWAYS_KINDS or e.get("importance", 0) >= 0.7)
         if mine or (market and dd <= 21):
-            out.append({"date": d.isoformat(), "d_day": dd, "d_label": "오늘" if dd == 0 else f"D-{dd}" if dd > 0 else f"D+{-dd}",
+            out.append({"date": d.isoformat(), "d_day": dd, "d_label": "D-Day" if dd == 0 else f"D-{dd}" if dd > 0 else f"D+{-dd}",
                         "kind": e.get("kind"), "title": e.get("title"), "estimated": bool(e.get("estimated")), "scope": "종목" if mine else "시장",
                         "source": e.get("source"), "importance": e.get("importance")})
     out.sort(key=lambda x: (x["d_day"] < 0, abs(x["d_day"]), x["scope"] != "종목"))
-    return out[:12]
+    return out[:16]
 
 
 def page(app, symbol: str, mode: str = "paper") -> dict:
     """종목 페이지 한 번에 (빠른 것만)."""
+    from . import stockplus, thesis
+    from .scorecard import verify_now
     out = {"symbol": symbol}
-    for k, f in (("trust", lambda: trust(app, symbol)), ("story", lambda: story(app, symbol, mode)),
-                 ("digest", lambda: digest(app, symbol)), ("events", lambda: events(app, symbol))):
+    for k, f in (("header", lambda: stockplus.header(app, symbol)), ("situation", lambda: stockplus.situation(app, symbol)),
+                 ("freshness", lambda: stockplus.freshness(app, symbol)), ("position", lambda: stockplus.position(app, symbol)),
+                 ("trust", lambda: trust(app, symbol)), ("story", lambda: story(app, symbol, mode)),
+                 ("digest", lambda: digest(app, symbol)), ("events", lambda: events(app, symbol)),
+                 ("thesis", lambda: thesis.get(app.engine, symbol)), ("verify", lambda: verify_now(app, symbol))):
         try:
             out[k] = f()
         except Exception as e:  # noqa: BLE001 - 한 칸이 실패해도 나머지는 보인다

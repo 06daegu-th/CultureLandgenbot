@@ -457,7 +457,11 @@ def start_action(app, name: str, params: dict | None = None) -> dict:
            "event_extract": lambda say: {"n": desk.extract_events(app)["n"]},
            "batch_ab": lambda say: {"rows": len(desk.batch_ab(app)["rows"])},
            "notary": lambda say: {k: v for k, v in desk.notarize(app).items() if k in ("ok", "skipped", "upto_id", "results")},
-           "prereg": lambda say: _prereg_new(app)}
+           "prereg": lambda say: _prereg_new(app),
+           # v16
+           "failure_lab": lambda say: _brief(__import__("quant_ai.failure_lab", fromlist=["analyze"]).analyze(app), ("n", "hit", "days")),
+           "data_health": lambda say: _brief(__import__("quant_ai.datahealth", fromlist=["report"]).report(app), ("overall", "trading", "block_reason")),
+           "sentinel": lambda say: _brief(__import__("quant_ai.sentinel", fromlist=["check"]).check(app), ("status",))}
     if name not in fns:
         raise ValueError(f"알 수 없는 동작: {name}")
     return _run(name, fns[name])

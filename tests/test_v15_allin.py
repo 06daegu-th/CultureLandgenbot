@@ -128,10 +128,14 @@ def test_digest_and_events(app):
         {"date": (today + timedelta(days=5)).isoformat(), "kind": "options_expiry", "title": "옵션 만기", "market": "KR", "importance": 0.5},
         {"date": (today + timedelta(days=3)).isoformat(), "kind": "earnings", "title": "남의 실적", "symbol": "000000", "importance": 0.9}]})
     ev = stock.events(app, sym)
-    assert [e["title"] for e in ev] == ["FOMC", "실적 발표"]  # 가까운 순 · 중요하지 않은 시장 일정·다른 종목 제외
+    # 가까운 순 · 다른 종목 제외 · v16: 옵션 만기·FOMC 같은 시장 일정은 중요도와 무관하게 항상 표시 (D-n 로)
+    assert [e["title"] for e in ev] == ["FOMC", "실적 발표", "옵션 만기"]
+    assert ev[2]["d_day"] - ev[0]["d_day"] == 4  # D-day 는 한국 날짜 기준 (UTC 자정~KST 9시 사이 실행에도 안전)
+    assert all(e["d_label"] == ("D-Day" if e["d_day"] == 0 else f"D-{e['d_day']}") for e in ev)
     assert ev[1]["scope"] == "종목" and ev[1]["d_label"].startswith("D-") and ev[1]["estimated"]
     p = stock.page(app, sym)
-    assert set(p) == {"symbol", "trust", "story", "digest", "events"}
+    assert {"symbol", "trust", "story", "digest", "events"} <= set(p)
+    assert {"header", "situation", "freshness", "position", "thesis", "verify"} <= set(p)  # v16 Stock OS
 
 
 # ------------------------------------------------------------------ AI 별 성능 저하 (일별 검정)

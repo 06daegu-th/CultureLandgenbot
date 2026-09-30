@@ -116,6 +116,7 @@ class Settings:
     broker: str = "none"  # none / kis
     # 주가 데이터가 이 영업일 수보다 오래되면 자동매매를 멈춘다 (데이터 갱신 장애 시 낡은 순위로 매매 방지). 0 = 끔
     max_data_age_days: int = 5
+    service_level: str = "personal"  # QUANT_SERVICE_LEVEL: personal(본인 사용) — 다른 사람에게 제공하면 governance 단계 검토
     core_only: bool = False  # QUANT_CORE_ONLY=true → 코어-위성 전략에서 AI 오버레이 끔 (코어 100%)
     # 코어 전용이어도 AI 는 하루 한 번 판단·채점만 한다 (주문에는 영향 없음) → AI 를 켜도 될지 증거를 쌓는다.
     # QUANT_AI_SHADOW=false 로 끔. LLM 키가 하나도 없으면 자동으로 꺼진다.
@@ -192,6 +193,7 @@ class Settings:
             strategy=e.get("QUANT_STRATEGY", cls.strategy),
             kis_env=e.get("KIS_ENV", cls.kis_env),
             core_only=e.get("QUANT_CORE_ONLY", "").lower() == "true",
+            service_level=(e.get("QUANT_SERVICE_LEVEL") or "personal").lower(),
             ai_shadow=e.get("QUANT_AI_SHADOW", "true").lower() != "false",
             ai_overlay="veto" if e.get("QUANT_AI_OVERLAY", "").lower() == "veto" else "full",
             max_data_age_days=int(f("QUANT_MAX_DATA_AGE_DAYS", cls.max_data_age_days)),

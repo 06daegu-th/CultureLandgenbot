@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from sqlalchemy import func, select
 from . import ops
 from .data.db import session_scope
 from .data.models import AlertRecord, ConsensusRecord, Instrument, JournalEntry, LedgerAnchor, PortfolioSnapshot
+
+log = logging.getLogger(__name__)
 
 KST = timedelta(hours=9)
 
@@ -119,6 +122,7 @@ def morning_brief(app, now: datetime | None = None) -> dict:
         "ladder": lad.get("stage") or "backtest",
         "power": _power_line(app), "readiness": ops.get_state(app.engine, "readiness").get("status"),
     }
+    brief |= _portfolio_risk_lines(app)
     brief["text"] = brief_text(brief)
     return brief
 
@@ -142,12 +146,40 @@ def brief_text(b: dict) -> str:
         L.append(f"📰 뉴스: {b['news']['summary']}")
     if b.get("sectors") and b["sectors"].get("leaders"):
         L.append("🏭 강한 업종: " + ", ".join(b["sectors"]["leaders"][:3]))
+    if b.get("portfolio"):
+        pf = b["portfolio"]
+        L.append(f"💼 내 포트폴리오: {pf['total']:,}원 · 주식 {pf['stock_pct']:.0%} / 현금 {pf['cash_pct']:.0%} · 위험 {pf['risk_level']}")
+    if b.get("risks"):
+        L.append("⚠️ 위험 요소")
+        L += [f" · {x}" for x in b["risks"][:3]]
+    if b.get("check3"):
+        L.append("✅ 오늘 확인할 것: " + " · ".join(f"{c['name']}({', '.join(c['why'][:1])})" for c in b["check3"][:3]))
     L.append(f"🪜 검증 단계: {b['ladder']}")
     if b.get("readiness"):
         L.append(f"🚦 매매 준비: {b['readiness']}")
     if b.get("power"):
         L.append(f"🧪 {b['power']}")
     return "\n".join(L)
+
+
+def _portfolio_risk_lines(app) -> dict:
+    """브리핑용: 내 포트폴리오 한 줄 · 가장 큰 위험 3개 · 오늘 확인할 종목 3개 (실패해도 브리핑은 나간다)."""
+    out: dict = {}
+    mode = app.settings.mode.value if app.settings.mode.value in ("paper", "shadow", "live") else "paper"
+    try:
+        from .portfolio_os import overview
+        o = overview(app, mode)
+        if not o.get("empty"):
+            out["portfolio"] = {k: o[k] for k in ("total", "stock_pct", "cash_pct", "risk_level", "source")}
+            out["risks"] = [o["biggest_risk"], *o.get("other_risks", [])][:3]
+    except Exception as e:  # noqa: BLE001
+        log.warning("브리핑 포트폴리오 요약 실패: %s", e)
+    try:
+        from .center import action_center
+        out["check3"] = action_center(app, mode)["check"][:3]
+    except Exception as e:  # noqa: BLE001
+        log.warning("브리핑 확인 목록 실패: %s", e)
+    return out
 
 
 def _power_line(app) -> str | None:
@@ -192,7 +224,7 @@ def daily_report(app, now: datetime | None = None) -> dict:
     pulse = ops.get_state(app.engine, "market_pulse").get("hist", [])
     from .alerts import focus_symbols
     tomorrow = _today_events(app, focus_symbols(app), day + timedelta(days=1))
-    rep = {
+    rep = _portfolio_risk_lines(app) | {
         "kind": "daily", "date": day.isoformat(), "at": now.isoformat(), "books": books, "trades": trades,
         "predictions_made": int(made), "alerts": int(alerts), "scorecard": sc["summary"], "recent": sc["recent"][:10],
         "market": pulse[-1] if pulse else None,
@@ -233,6 +265,8 @@ def report_text(r: dict) -> str:
         L.append(f"🔒 장부 봉인 #{r['ledger']['upto_id']}: {r['ledger']['digest'][:16]}… (이 해시가 외부 증거입니다)")
     if r["tomorrow"]:
         L.append("📅 내일: " + ", ".join(f"{e['name']} {e['label']}" for e in r["tomorrow"][:4]))
+    if r.get("risks"):
+        L.append("⚠️ 위험 요소: " + " · ".join(r["risks"][:3]))
     return "\n".join(L)
 
 

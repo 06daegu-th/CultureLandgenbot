@@ -331,10 +331,38 @@ def ingest_quotes(app, quotes: dict[str, dict], now: datetime | None = None, foc
                            level="info" if mv > 0 else "warn", symbol=sym, link=f"#analysis/{sym}",
                            dedupe=f"fast:{sym}:{bucket}", data={"dir": "up" if mv > 0 else "down", "move": mv}, now=now)
                 n += rid is not None
+    n += _volume_spikes(app, quotes, focus, names, now, day)
     state["_at"] = now.isoformat()
     ops.set_state(app.engine, "live_quotes", state)
     n += evaluate_rules(app, quotes, now, names)
     return {"checked": len(quotes), "alerts": n}
+
+
+VOLUME_SPIKE = 3.0
+_VOL_CACHE: dict = {}
+
+
+def _volume_spikes(app, quotes: dict, focus: dict, names: dict, now: datetime, day: str) -> int:
+    """보유·관심 종목의 거래량이 평소(20일 평균 × 장 경과 비율)의 3배 이상 → 하루 한 번 알림 (규칙 없이 자동)."""
+    syms = [s for s, q in quotes.items() if q.get("volume") and s in focus]
+    if not syms:
+        return 0
+    key = (id(app.engine), day)
+    cache = _VOL_CACHE.setdefault(key, {})
+    need = [s for s in syms if s not in cache]
+    if need:
+        cache.update(_avg_volume(app.engine, need))
+    n = 0
+    for sym in syms:
+        avg = cache.get(sym)
+        if not avg:
+            continue
+        ratio = quotes[sym]["volume"] / (avg * _session_fraction(sym, now))
+        if ratio >= VOLUME_SPIKE:
+            n += push(app.engine, "price", f"{names.get(sym, sym)} 거래량 폭증 {ratio:.1f}배",
+                      f"평소(20일 평균) 대비 · 장 경과 비율 반영 ({'·'.join(sorted(focus.get(sym, [])))})", level="info",
+                      symbol=sym, link=f"#analysis/{sym}", dedupe=f"vol:{sym}:{day}", data={"ratio": round(ratio, 2)}, now=now) is not None
+    return n
 
 
 # ---------------------------------------------------------------- AI 신호 · 공시 · 뉴스 · 채점 · 일정 · 감시
@@ -358,15 +386,17 @@ def alert_scan(app, now: datetime | None = None) -> dict:
                                            .order_by(ConsensusRecord.id)).all()
         sigs = []
         for c in new_c:
-            if c.action not in ("BUY", "SELL") or c.symbol not in focus:
+            if c.symbol not in focus:
                 continue
             prev = s.scalar(select(ConsensusRecord.action).where(ConsensusRecord.symbol == c.symbol,
                                                                  ConsensusRecord.id < c.id)
                             .order_by(ConsensusRecord.id.desc()))
             if prev == c.action:
                 continue  # 같은 신호가 이어지는 것은 알리지 않는다
+            if c.action not in ("BUY", "SELL") and prev not in ("BUY", "SELL"):
+                continue  # HOLD↔NO_TRADE 같은 변화는 알리지 않음 · BUY→HOLD 같은 '신호 해제'는 알림
             p = c.payload or {}
-            sigs.append((c.id, c.symbol, c.action, c.prob_up, p.get("expected_return"), p.get("horizon", 5), c.confidence))
+            sigs.append((c.id, c.symbol, c.action, c.prob_up, p.get("expected_return"), p.get("horizon", 5), c.confidence, prev))
         discs = [] if first else [(d.id, d.symbol, d.title, d.url) for d in s.scalars(
             select(Disclosure).where(Disclosure.id > cur.get("d", 0)).order_by(Disclosure.id)) if d.symbol in focus]
         news = [] if first else [(n.id, n.title, n.symbols or [], n.importance, n.url) for n in s.scalars(
@@ -378,11 +408,14 @@ def alert_scan(app, now: datetime | None = None) -> dict:
             .order_by(ConsensusRecord.as_of)).all()
         res_rows = [(r.id, r.symbol, r.correct, r.realized_return, (r.payload or {}).get("expected_return"), r.as_of)
                     for r in resolved]
-    for cid, sym, act, p, exp, h, conf in sigs:
-        made += push(eng, "signal", f"AI 신호: {names.get(sym, sym)} {act}",
-                     f"상승 확률 {p:.0%} · 예상 {_pct(exp)} ({h}거래일) · 신뢰도 {conf:.0f}", level="info",
+    for cid, sym, act, p, exp, h, conf, prev in sigs:
+        released = act not in ("BUY", "SELL")
+        title = (f"AI 신호 해제: {names.get(sym, sym)} {prev}→{act}" if released
+                 else f"AI 신호: {names.get(sym, sym)} {act}" + (f" (이전 {prev})" if prev else ""))
+        made += push(eng, "signal", title,
+                     f"상승 확률 {p:.0%} · 예상 {_pct(exp)} ({h}거래일) · 신뢰도 {conf:.0f}", level="warn" if released and "보유" in focus.get(sym, set()) else "info",
                      symbol=sym, link=f"#analysis/{sym}", dedupe=f"sig:{cid}",
-                     data={"action": act, "prob_up": p, "expected": exp}, now=now) is not None
+                     data={"action": act, "prev": prev, "prob_up": p, "expected": exp}, now=now) is not None
     for did, sym, title, url in discs:
         made += push(eng, "disclosure", f"공시: {names.get(sym, sym)}", title, level="info", symbol=sym,
                      link=f"#analysis/{sym}", dedupe=f"disc:{did}", data={"url": url}, now=now) is not None

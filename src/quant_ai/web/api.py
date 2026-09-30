@@ -701,11 +701,11 @@ class DashboardAPI:
                     "prompts": [{"role": k, "title": ROLE_TITLES.get(k, k), "version": v} for k, v in PROMPT_VERSIONS.items()]}
         return self._cached("verify", 20, build)
 
-    def ledger(self, before: int | None = None) -> dict:
+    def ledger(self, before: int | None = None, symbol: str | None = None, result: str | None = None) -> dict:
         from ..review.ledger import entries
         with session_scope(self.engine) as s:
             names = {i.symbol: i.name or i.symbol for i in s.scalars(select(Instrument))}
-            return {"rows": entries(s, 60, before, names)}
+            return {"rows": entries(s, 60, before, names, symbol or None, result if result in ("fail", "success") else None)}
 
     # ------------------------------------------------------------------ 지식 그래프 · 섹터 · 에이전트
     def graph(self, symbol: str | None = None) -> dict:
@@ -732,6 +732,7 @@ class DashboardAPI:
                 "kinds": RULE_KINDS}
 
     def rule_write(self, body: dict) -> dict:
+        self._audit("alert_rule", str({k: body.get(k) for k in ("symbol", "kind", "value", "delete") if k in body}))
         from ..alerts import add_rule, update_rule
         if body.get("id"):
             return update_rule(self.engine, int(body["id"]), body.get("active"), bool(body.get("delete")))
@@ -1095,6 +1096,7 @@ class DashboardAPI:
 
     def prefs_write(self, body: dict) -> dict:
         from .. import prefs
+        self._audit("prefs", ", ".join(sorted(k for k in body))[:200])
         return {"ok": True, **prefs.save(self.engine, body)}
 
     def today(self) -> dict:
@@ -1112,6 +1114,7 @@ class DashboardAPI:
     def star(self, body: dict) -> dict:
         from .. import ux
         syms = ux.set_star(self.app, str(body.get("symbol", ""))[:12], bool(body.get("on", True)))
+        self._risk_cache.pop("watchlist", None)
         self._risk_cache.pop("today", None)
         return {"ok": True, "starred": syms}
 
@@ -1126,6 +1129,7 @@ class DashboardAPI:
     def accounts_write(self, body: dict) -> dict:
         from .. import accounts
         self._risk_cache.pop("accounts", None)
+        self._audit("accounts", f"삭제 {body['delete']}" if body.get("delete") else f"저장 {body.get('name') or body.get('id') or ''}")
         if body.get("delete"):
             return {"deleted": accounts.delete(self.engine, str(body["delete"])[:20])}
         return accounts.upsert(self.engine, body)
@@ -1137,6 +1141,198 @@ class DashboardAPI:
     def my_journal_write(self, body: dict) -> dict:
         from .. import desk
         return desk.my_journal_add(self.app, body)
+
+    # ------------------------------------------------------------------ v16
+    def _mode(self, mode: str | None) -> str:
+        mode = mode or "paper"
+        if mode not in ("paper", "shadow", "live"):
+            raise ValueError("장부는 paper/shadow/live")
+        return mode
+
+    def _audit(self, action: str, detail: str = "") -> None:
+        from ..governance import audit
+        try:
+            audit(self.engine, action, detail)
+        except Exception as e:  # noqa: BLE001 - 감사 기록 실패가 조작을 막지는 않는다 (로그)
+            log.warning("감사 로그 실패: %s", e)
+
+    def stock_part(self, part: str, symbol: str) -> dict:
+        """종목 페이지 중 느린 칸 (뉴스 영향 통계 · 차트 오버레이 · 위험) 따로."""
+        from .. import stockplus
+        from ..insight import earnings
+        fns = {"news": lambda: stockplus.news(self.app, symbol), "overlay": lambda: stockplus.overlay(self.app, symbol),
+               "risk": lambda: stockplus.risk(self.app, symbol), "earnings": lambda: earnings(self.app, symbol),
+               "situation": lambda: stockplus.situation(self.app, symbol), "freshness": lambda: stockplus.freshness(self.app, symbol),
+               "header": lambda: stockplus.header(self.app, symbol)}
+        if part not in fns:
+            raise ValueError("알 수 없는 칸")
+        if not symbol:
+            raise ValueError("symbol 필요")
+        ttl = {"news": 120, "overlay": 120, "risk": 300, "earnings": 300}.get(part, 0)
+        return self._cached(f"sp:{part}:{symbol}", ttl, fns[part]) if ttl else fns[part]()
+
+    def stock_digest(self, body: dict) -> dict:
+        from ..stockplus import ai_digest
+        sym = str(body.get("symbol", ""))[:12]
+        if not sym:
+            raise ValueError("symbol 필요")
+        self._risk_cache.pop(f"sp:news:{sym}", None)
+        return ai_digest(self.app, sym)
+
+    def news_impact(self, news_id: int) -> dict:
+        from ..insight import news_impact
+        return news_impact(self.app, news_id)
+
+    def notrade(self, mode: str | None, days: int = 30, symbol: str | None = None) -> dict:
+        from ..notrade import report
+        m = self._mode(mode)
+        return self._cached(f"notrade:{m}:{days}:{symbol}", 60, lambda: report(self.app, m, max(1, min(days, 365)), symbol or None))
+
+    def ai_card(self, symbol: str | None = None) -> dict:
+        from ..scorecard import scorecard
+        return self._cached(f"aicard:{symbol}", 120, lambda: scorecard(self.app, symbol or None))
+
+    def ai_verify(self, symbol: str) -> dict:
+        from ..scorecard import verify_now
+        return verify_now(self.app, symbol)
+
+    def ai_public(self, n: int = 1000) -> dict:
+        from ..scorecard import public_report
+        return self._cached(f"aipublic:{n}", 300, lambda: public_report(self.app, max(50, min(n, 5000))))
+
+    def action_center(self, mode: str | None) -> dict:
+        from ..center import action_center
+        m = self._mode(mode)
+        return self._cached(f"ac:{m}", 30, lambda: action_center(self.app, m))
+
+    def watchlist(self) -> dict:
+        from ..center import watchlist
+        return self._cached("watchlist", 20, lambda: watchlist(self.app))
+
+    def watch_group(self, body: dict) -> dict:
+        from ..center import set_group
+        self._risk_cache.pop("watchlist", None)
+        g = body.get("group")
+        return set_group(self.app, str(body.get("symbol", ""))[:12], str(g)[:20] if g else None)
+
+    def risk_simple(self, mode: str | None) -> dict:
+        from ..center import risk_simple
+        m = self._mode(mode)
+        return self._cached(f"risk_simple:{m}", 60, lambda: risk_simple(self.app, m))
+
+    def thesis(self, symbol: str | None = None) -> dict:
+        from .. import thesis
+        if symbol:
+            return {"symbol": symbol, "thesis": thesis.get(self.engine, symbol)}
+        return {"all": thesis.all_(self.engine), "breaches": thesis.breaches(self.app)}
+
+    def thesis_write(self, body: dict) -> dict:
+        from .. import thesis
+        sym = str(body.get("symbol", ""))[:12]
+        if body.get("delete"):
+            out = thesis.save(self.engine, sym, {"delete": True})
+        else:
+            out = thesis.save(self.engine, sym, body)
+        self._audit("thesis", f"{sym} {'삭제' if body.get('delete') else '저장'}")
+        return {"ok": True, "thesis": out}
+
+    def sentinel(self) -> dict:
+        from .. import sentinel
+        return self._cached("sentinel", 30, lambda: sentinel.check(self.app, store=False))
+
+    def data_health(self, refresh: bool = False) -> dict:
+        from .. import datahealth
+        if not refresh:
+            st = _ops.get_state(self.engine, "data_health")
+            if st.get("at") and (datetime.now(UTC) - datetime.fromisoformat(st["at"])).total_seconds() < 600:
+                return st
+        return datahealth.report(self.app)
+
+    def failure_lab(self, refresh: bool = False) -> dict:
+        from .. import failure_lab
+        st = _ops.get_state(self.engine, "failure_lab")
+        if st and not refresh:
+            return st
+        return failure_lab.analyze(self.app)
+
+    def ai_lab(self) -> dict:
+        from ..lab import lab_status
+        return self._cached("ai_lab", 60, lambda: lab_status(self.app))
+
+    def portfolio_os(self, mode: str | None) -> dict:
+        from ..portfolio_os import overview
+        m = self._mode(mode)
+        return self._cached(f"pos:{m}", 30, lambda: overview(self.app, m))
+
+    def briefing(self, mode: str | None) -> dict:
+        from ..portfolio_os import briefing
+        m = self._mode(mode)
+        return self._cached(f"brief:{m}", 60, lambda: briefing(self.app, m))
+
+    def simulate(self, mode: str | None) -> dict:
+        from ..portfolio_os import simulate
+        m = self._mode(mode)
+        return self._cached(f"sim:{m}", 300, lambda: simulate(self.app, m))
+
+    def user_profile(self) -> dict:
+        from .. import personal
+        return {"profile": personal.get_profile(self.engine), "styles": personal.STYLES}
+
+    def user_profile_write(self, body: dict) -> dict:
+        from .. import personal
+        out = personal.save_profile(self.engine, body)
+        self._risk_cache.pop("discover", None)
+        self._audit("profile", ", ".join(sorted(k for k in body)))
+        return {"ok": True, "profile": out}
+
+    def discover(self) -> dict:
+        from .. import personal
+        return self._cached("discover", 120, lambda: personal.discover(self.app))
+
+    def mistakes(self) -> dict:
+        from .. import personal
+        return self._cached("mistakes", 120, lambda: personal.mistakes(self.app))
+
+    def exec_costs(self) -> dict:
+        from ..execreport import costs
+        return self._cached("exec_costs", 120, lambda: costs(self.app))
+
+    def orderbook(self, symbol: str, qty: str = "") -> dict:
+        from ..execreport import book
+        try:
+            q = int(qty) if qty else None
+        except ValueError:
+            raise ValueError("수량은 정수") from None
+        return book(self.app, symbol, q)
+
+    def validation(self) -> dict:
+        from ..validation import progress
+        return self._cached("validation", 60, lambda: progress(self.app))
+
+    def governance(self) -> dict:
+        from .. import governance
+        from ..failmode import MATRIX
+        return {"service": governance.service_level(self.app), "licenses": governance.licenses(self.app),
+                "security": governance.security(self.app), "failmode": MATRIX, "audit": governance.audit_log(self.engine, 100)}
+
+    def ticket(self, symbol: str, side: str, qty: str = "", amount: str = "") -> dict:
+        from .. import ticket
+        try:
+            q = int(qty) if qty else None
+            a = float(amount) if amount else None
+        except ValueError:
+            raise ValueError("수량·금액은 숫자로") from None
+        return ticket.preview(self.app, symbol, side, q, a)
+
+    def ticket_place(self, body: dict) -> dict:
+        from .. import ticket
+        out = ticket.place(self.app, body)
+        self._risk_cache.clear()
+        return out
+
+    def ticket_book(self) -> dict:
+        from .. import ticket
+        return ticket.book(self.app)
 
     def reviews(self, limit: int = 10) -> list[dict]:
         with session_scope(self.engine) as s:

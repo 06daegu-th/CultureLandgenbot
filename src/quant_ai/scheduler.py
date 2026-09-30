@@ -294,6 +294,17 @@ def build_default_scheduler(app, mode) -> Scheduler:
         from .data.sources import gap_fill as _gap
         sch.add("truth", lambda now: _truth.report(app, mode.value if mode.value in ("paper", "shadow", "live") else None, now), 3600, "always")
         sch.add("gap_fill", lambda now: _gap(app, list(_f13(app))), 3 * 3600, "closed")
+        # v16 — 자동 감시(데이터·AI·스케줄러·DB·증권사) 5분 · 투자 논리(목표·무효화·점검일) 알림 30분 · 쉬운 위험 기록 하루
+        from . import sentinel as _sentinel
+        from . import thesis as _thesis
+        from .center import risk_simple as _rs
+        sch.add("sentinel", lambda now: _sentinel.check(app, now), 300, "always")
+        sch.add("thesis_watch", lambda now: _thesis.alert(app), 1800, "always")
+        sch.add("risk_hist", lambda now: _rs(app, mode.value if mode.value in ("paper", "shadow", "live") else "paper"), 6 * 3600, "always")
+        from . import datahealth as _dh
+        from . import failure_lab as _fl
+        sch.add("data_health", lambda now: _dh.report(app, now), 3600, "always")
+        sch.add("failure_lab", lambda now: _fl.analyze(app, now=now), 24 * 3600, "closed")
         if st.broker == "kis":
             # 하루 한 번 장중: KIS 검증 스위트 (모의 = 주문·취소 경로까지 · QUANT_KIS_FILL_TEST=true 면 1주 실제 체결로 슬리피지 실측)
             fill_test = os.environ.get("QUANT_KIS_FILL_TEST", "").lower() == "true" and st.kis_env == "demo"

@@ -138,10 +138,12 @@ async function candleChart(el, symbol, n = 260) {
   const vol = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", lastValueVisible: false, priceLineVisible: false });
   chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
   vol.setData(d.bars.map((b) => ({ time: b.time, value: b.volume, color: (b.close >= b.open ? up : down) + "66" })));
-  candles.setMarkers(d.markers.map((m) => ({
+  el._times = d.bars.map((b) => b.time);
+  el._markers = d.markers.map((m) => ({
     time: m.time, position: m.action === "BUY" ? "belowBar" : "aboveBar", shape: m.action === "BUY" ? "arrowUp" : "arrowDown",
     color: m.action === "BUY" ? "#22c55e" : "#fb7185", text: `${m.action} ${Math.round(m.confidence)}`,
-  })));
+  }));
+  candles.setMarkers(el._markers);  // v16: 뉴스·공시·실적 표시는 os.js 가 여기에 합친다
   chart.timeScale().fitContent();
 }
 
@@ -617,16 +619,18 @@ async function viewAnalysis(el) {
   const anCard = isKRsym && !c ? analyzeCard(sym, a.name || sym, autoAn) : "";
   const cur = a.currency || (isKRsym ? "KRW" : "USD");
   const chgCls = a.chg_pct == null ? "flat" : a.chg_pct >= 0 ? "up" : "down";
-  const head = `<div class="card stock-head">
+  const head = `<div id="pf-sit" class="pf-sit"></div><div class="card stock-head">
     <div class="sh-top"><div style="min-width:0">
       <div class="sh-name">${esc(a.name || sym)} <span class="dim small">${esc(sym)}</span> <span class="chip xs">${isGlobal ? "해외" : "국내"}</span></div>
       <div class="sh-price"><span class="num" data-live-sym="${esc(sym)}">${a.last == null ? "-" : esc(priceCur(a.last, cur))}</span>
         <span class="${chgCls} num">${a.chg == null ? "" : `${a.chg >= 0 ? "▲" : "▼"} ${esc(priceCur(Math.abs(a.chg), cur))} (${pct(a.chg_pct)})`}</span>
         <span class="xs dim">${a.last_ts ? date(a.last_ts) + " 종가" : ""}</span></div></div>
-      <div class="sh-act">${sel}<button class="btn-sm primary" data-ask="${esc(a.name || sym)} 지금 사도 될까? 일정·지표·뉴스 보고 판단 근거 알려줘">${ICONS.chat} AI 에게 묻기</button></div></div>
+      <div class="sh-act">${sel}${isKRsym ? '<button class="btn-sm" id="tk-jump">모의 주문</button>' : ""}<button class="btn-sm primary" data-ask="${esc(a.name || sym)} 지금 사도 될까? 일정·지표·뉴스 보고 판단 근거 알려줘">${ICONS.chat} AI 에게 묻기</button></div></div>
     ${c ? `<div class="sh-pred"><span class="xs muted">AI 예상 (${esc(date(c.as_of))})</span> <b>${c.horizon || 5}거래일 상승 확률 ${(c.prob_up * 100).toFixed(0)}%</b>
       ${c.expected_return != null ? ` · 예상 <b class="${c.expected_return >= 0 ? "up" : "down"}">${c.expected_return >= 0 ? "+" : ""}${(c.expected_return * 100).toFixed(1)}%</b>` : ""} ${badge(c.action)}
       ${c.trigger ? `<span class="chip xs" title="${esc(c.trigger)}">⚡ 이벤트 재분석</span>` : ""}</div>` : ""}
+    <div id="pf-os" class="pf-os"></div>
+    <div id="pf-fresh" class="pf-fresh"></div>
     <div id="pf-trust" class="pf-trust"></div>
     <div id="pf-dday" style="margin-top:8px"></div>
     <div class="small muted" style="margin:12px 0 6px"><b style="color:var(--text)">다가오는 일정</b> · 실적 발표 · 배당 · 공시</div>
@@ -638,21 +642,24 @@ async function viewAnalysis(el) {
   </div>
   ${ops ? card("AI 별 독립 의견 <span class='small dim'>서로의 의견을 모른 채 판단 · Risk AI 거부권은 희석되지 않음</span>", `<div class="op-grid">${ops}</div>`) : ""}
   ${hist ? card("판단 이력 · 채점", `<div class="scroll" style="max-height:360px"><table><thead><tr><th>일자</th><th>신호</th><th class="r">P(상승)</th><th class="r">신뢰도</th><th class="r">실제</th><th class="r"></th></tr></thead><tbody>${hist}</tbody></table></div>`) : ""}` : "";
+  // v16 순서: 차트 → 뉴스 → 공시 → 실적 → 재무 → 수급 → AI → Risk → 내 보유 (섹션은 ⚙ 로 숨기기·순서 변경, 서버 저장)
   el.innerHTML = `${head}
   <div id="pf-nav" class="pf-nav"></div>
-  <div class="grid g-21">
-    ${card("차트", `<div id="an-chart" class="chart"></div>`)}
+  <div id="pf-body">
+  <section data-w="pf-chart"><div class="grid g-21">
+    ${card("차트 <span class='small dim'>AI 매수 관심구간 · 목표 · 위험 · 지지/저항 · 뉴스·공시·실적 표시</span>", `<div id="an-chart" class="chart"></div>`)}
     ${card("투자 전 체크 <span class='small dim'>핵심 지표</span>", `<div id="pf-stats"><div class="ev-none small dim">불러오는 중…</div></div>`)}
-  </div>
-  <div id="pf-why"></div>
-  <div id="pf-hold"></div>
-  <div class="grid g-2"><div id="pf-story"></div><div id="pf-pretrade"></div></div>
-  <div id="pf-desk"></div>
-  <div id="pf-digest"></div>
-  <div id="pf-sections"></div>
-  <div id="pf-extra"></div>
-  ${aiSections}
-  ${sim ? card("과거 유사 사례 (RAG 메모리)", `<div class="scroll"><table><tbody>${sim}</tbody></table></div>`) : ""}`;
+  </div></section>
+  <section data-w="pf-news"><div id="pf-news"></div></section>
+  <section data-w="pf-disc"><div id="pf-disc"></div></section>
+  <section data-w="pf-earn"><div id="pf-earn"></div></section>
+  <section data-w="pf-fin"><div id="pf-sections"></div></section>
+  <section data-w="pf-flow"><div id="pf-extra"></div></section>
+  <section data-w="pf-ai"><div id="pf-why"></div><div id="pf-verify"></div><div id="pf-desk"></div>${aiSections}
+    ${sim ? card("과거 유사 사례 (RAG 메모리)", `<div class="scroll"><table><tbody>${sim}</tbody></table></div>`) : ""}</section>
+  <section data-w="pf-risk"><div class="grid g-2"><div id="pf-risk"></div><div id="pf-pretrade"></div></div><div id="pf-ticket"></div></section>
+  <section data-w="pf-mine"><div id="pf-hold"></div><div class="grid g-2"><div id="pf-story"></div><div id="pf-thesis"></div></div></section>
+  </div>`;
   $("#sym-select").onchange = (e) => { location.hash = `#analysis/${e.target.value}`; };
   if (anCard) bindAnalyze(sym, autoAn, () => render());
   candleChart($("#an-chart"), sym);
@@ -1017,10 +1024,12 @@ function viewSettings(d) {
 
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
-  ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["readiness", "check", "매매 준비 · 데이터"], ["truth", "shield", "Truth Center · 완성 기준"], ["power", "learn", "실제 예측력"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["graph", "models", "지식 그래프 · 업종"], ["analysis", "ai", "AI 분석"], ["compare", "compare", "종목 비교"], ["ai", "score", "AI 성적 · 보정"], ["aihealth", "pulse", "AI · 모델 Health"]]],
-  ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["calendar", "bell", "이벤트 캘린더"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["execution", "engine", "체결 · 증권사 검증"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
-  ["검증 · 학습", [["reports", "review", "리포트 · 브리핑"], ["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["myjournal", "journal", "내 저널 vs AI"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
-  ["시스템", [["safety", "shield", "안전 센터"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
+  // v16 메뉴: 홈 · 종목 · 시장 · 뉴스/공시 · AI · 포트폴리오 · 리스크 · 백테스트 · AI 성적표 · 일정 · 투자일지 (+ 신뢰 · 시스템)
+  ["핵심", [["dashboard", "home", "홈"], ["action", "bell", "오늘 할 일 · Action Center"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["market", "market", "시장"], ["news", "news", "뉴스 · 공시"], ["calendar", "bell", "일정 (D-Day)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
+  ["AI", [["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI Lab · 실패 연구"], ["ai", "score", "AI 성적 · 보정"], ["aihealth", "pulse", "AI · 모델 Health"], ["power", "learn", "실제 예측력"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["graph", "models", "지식 그래프 · 업종"]]],
+  ["포트폴리오 · 리스크", [["pos", "portfolio", "Portfolio OS"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 · 증권사 검증"], ["sheet", "sheet", "리밸런싱 주문표"]]],
+  ["기록 · 연구", [["myjournal", "journal", "투자일지 vs AI"], ["profile", "settings", "내 투자 성향"], ["journal", "journal", "AI 판단 저널"], ["research", "research", "백테스트 · 리서치"], ["lab", "lab", "실험 · 승격"], ["review", "review", "복기 리포트"], ["reports", "review", "리포트 · 브리핑"], ["models", "models", "모델 · 검증"]]],
+  ["신뢰 · 시스템", [["datahealth", "data", "데이터 건강"], ["readiness", "check", "매매 준비"], ["truth", "shield", "Truth Center"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "24H 관제실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
 ];
 function buildNav() {
   $("#nav").innerHTML = NAV.map(([g, items]) => `<div class="grp">${g}</div>` + items.map(([v, ic, label]) =>
@@ -1040,7 +1049,7 @@ async function render() {
   const d = S.data;
   if (!d) { el.innerHTML = skeleton(); return; }
   try {
-    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); todayCard(el); applyHomeLayout(el); }
+    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); todayCard(el).then(() => osHomeBrief(el)); applyHomeLayout(el); }
     else if (S.view === "analysis") await viewAnalysis(el);
     else if (S.view === "market") {
       el.innerHTML = viewMarket(d);
@@ -1086,6 +1095,18 @@ async function render() {
     else if (S.view === "lab") await viewLab(el);
     else if (S.view === "server") await viewServer(el);
     else if (S.view === "chat") await viewChat(el);
+    // v16
+    else if (S.view === "action") await viewActionCenter(el);
+    else if (S.view === "watch") await viewWatch(el);
+    else if (S.view === "notrade") await viewNoTrade(el);
+    else if (S.view === "scorecard") await viewScorecard(el);
+    else if (S.view === "ailab") await viewAILabV16(el);
+    else if (S.view === "datahealth") await viewDataHealth(el);
+    else if (S.view === "pos") await viewPortfolioOS(el);
+    else if (S.view === "profile") await viewProfile(el);
+    else if (S.view === "validation") await viewValidation(el);
+    else if (S.view === "governance") await viewGovernance(el);
+    else if (S.view === "manual") await viewManual(el);
     else el.innerHTML = card("페이지 없음", empty(`'${esc(S.view)}' 화면이 없습니다`));
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
@@ -1198,7 +1219,11 @@ function setTheme(t) {
   document.documentElement.dataset.theme = t; safeSet("qa_theme", t);
   $("#theme-btn").innerHTML = t === "light" ? ICONS.moon : ICONS.sun;
 }
-$("#theme-btn").onclick = () => { setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"); render(); };
+$("#theme-btn").onclick = () => {
+  const t = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  setTheme(t); render();
+  post("/api/prefs", { theme: t }).then(() => { if (S.prefs) S.prefs.theme = t; }).catch(() => {});  // v16: 기기 간 동기화
+};
 $("#menu-btn").onclick = () => $(".side").classList.toggle("open");
 
 $("#brand-logo").innerHTML = ICONS.logo;
@@ -1206,6 +1231,7 @@ $("#search-ico").innerHTML = ICONS.search;
 $("#settings-btn").innerHTML = ICONS.settings;
 $("#bell-btn").innerHTML = ICONS.bell;
 setTheme(safeGet("qa_theme") || "dark");
+loadPrefs().then((p) => { if (p.theme && p.theme !== document.documentElement.dataset.theme) setTheme(p.theme); }).catch(() => {});
 buildNav();
 initChatWidget();
 initLive();

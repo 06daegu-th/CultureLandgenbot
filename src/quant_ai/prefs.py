@@ -1,6 +1,8 @@
 """사용자 설정 (서버 저장 — PC·휴대폰 어디서 열어도 같다).
 
   home    홈 화면 구성: 카드 숨기기 · 순서
+  theme   다크/라이트 (v16 — 기기 간 동기화)
+  widgets 종목 페이지 섹션 숨기기 · 순서 (v16)
   notify  외부 알림: 종류별로 텔레그램/디스코드 · 웹 푸시 켜고 끄기 · 조용한 시간(밤에는 외부 알림 보류, 긴급은 예외)
            설정이 없으면 .env 기본값(QUANT_NOTIFY_KINDS 등)을 그대로 쓴다.
 """
@@ -22,7 +24,8 @@ KST = ZoneInfo("Asia/Seoul")
 
 def get(engine) -> dict:
     p = ops.get_state(engine, KEY)
-    return {"home": p.get("home") or {"hidden": [], "order": []}, "notify": p.get("notify") or {}, "at": p.get("at")}
+    return {"home": p.get("home") or {"hidden": [], "order": []}, "notify": p.get("notify") or {}, "theme": p.get("theme"),
+            "widgets": p.get("widgets") or {}, "at": p.get("at")}
 
 
 def _hhmm(v, default: str) -> str:
@@ -44,6 +47,15 @@ def save(engine, body: dict) -> dict:
         cur["notify"] = {"external": {k: bool(v) for k, v in (n.get("external") or {}).items() if k in KINDS},
                          "push": {k: bool(v) for k, v in (n.get("push") or {}).items() if k in KINDS},
                          "quiet": {"on": bool(q.get("on")), "start": _hhmm(q.get("start"), "23:00"), "end": _hhmm(q.get("end"), "07:00")}}
+    if "theme" in body:
+        if body["theme"] not in ("dark", "light", None):
+            raise ValueError("theme 은 dark/light")
+        cur["theme"] = body["theme"]
+    if "widgets" in body:  # 종목 페이지 섹션 숨기기/순서 (v16)
+        w = body["widgets"] or {}
+        ok = re.compile(r"^pf-[a-z]{2,12}$")
+        cur["widgets"] = {"hidden": [x for x in w.get("hidden") or [] if ok.match(str(x))][:30],
+                          "order": [x for x in dict.fromkeys(w.get("order") or []) if ok.match(str(x))][:30]}
     cur["at"] = datetime.now(KST).isoformat()
     ops.set_state(engine, KEY, cur)
     return cur

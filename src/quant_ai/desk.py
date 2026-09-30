@@ -579,9 +579,14 @@ def my_journal_add(app, body: dict) -> dict:
         raise ValueError("종목을 입력하세요")
     bars, _ = app._all_bars()
     ref = float(bars[sym]["close"].iloc[-1]) if sym in bars and len(bars[sym]) else None
+    from .pipeline import latest_consensus
+    c = latest_consensus(app.engine, sym)  # 그때 AI 가 뭐라고 했는지 자동으로 함께 봉인
+    tags = {"view": str(body.get("view") or "")[:500] or None, "exit_reason": str(body.get("exit_reason") or "")[:500] or None,
+            "ai": {"action": c.action, "prob_up": round(c.prob_up, 3), "as_of": c.as_of.isoformat()} if c else None,
+            "run5": round(float(bars[sym]["close"].iloc[-1] / bars[sym]["close"].iloc[-6] - 1), 4) if sym in bars and len(bars[sym]) > 6 else None}
     with session_scope(app.engine) as s:
         return add(s, sym, body.get("action", "BUY"), int(body.get("conviction") or 3), int(body.get("horizon") or 5),
-                   body.get("reason"), ref)
+                   body.get("reason"), ref, tags={k: v for k, v in tags.items() if v is not None})
 
 
 def my_journal(app) -> dict:

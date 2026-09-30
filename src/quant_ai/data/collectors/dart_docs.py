@@ -103,6 +103,7 @@ def summarize_pending(app, api_key: str, client=None, limit: int = 5, fetch=None
         with session_scope(app.engine) as s:
             d = s.get(Disclosure, did)
             d.summary = summary[:1200]
+            d.summarized_at = datetime.now(UTC)
         done.append(sym)
     return {"summarized": len(done), "failed": failed}
 

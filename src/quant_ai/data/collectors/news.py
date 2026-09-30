@@ -92,6 +92,7 @@ class NewsCollector:
                     source=a.source, url=a.url, published_at=a.published_at, title=a.title, body=a.body,
                     symbols=tag_symbols(f"{a.title} {a.body}", aliases),
                     sentiment=result.sentiment, events=result.events, importance=result.importance,
+                    collected_at=datetime.now(UTC),
                 ))
                 session.flush()
                 n += 1

@@ -121,7 +121,7 @@
 | ✓ Watchdog | 스케줄러 죽음·멈춤(심장박동 5분) → 재시작 | `watchdog.py` | `test_watchdog_decisions` |
 | ✓ Restart | 재시작 복구 · 따라잡기 | `recovery.py` | `test_recovery_startup_catch_up_and_source_health` |
 | ✓ Backup | SQLite 백업 · 무결성 · 7개 보관 | `data/backup.py` | `test_sqlite_backup_is_compressed_verified_and_rotated` |
-| ✓ DB migration | Alembic 0001~0005 · ensure_columns | `migrations · data/db.py` | `test_old_database_gets_new_columns` |
+| ✓ DB migration | Alembic 0001~0006 (0006: 수집 시각·요약 시각) · ensure_columns | `migrations · data/db.py` | `test_old_database_gets_new_columns` |
 | ✓ Health check | /api/health · DB 점검 | `web/server.py · recovery.db_check` | `test_web_security_headers_and_health` |
 | ✓ Alerts | 토스트·알림센터·텔레그램·웹 푸시 | `alerts.py · ops.Notifier · webpush.py` | `test_alert_routing_to_external_channels` |
 
@@ -146,3 +146,52 @@
 | ✓ Today · compare | 오늘 할 일 · 시장 한눈에 · 종목 비교(2~4개) | `ux.py · web/static/truth.js` | `test_star_holdings_track_today_compare` |
 | ✓ Customization | 홈 편집(숨기기·순서) · 외부 알림 종류별 채널 · 조용한 시간 (서버 저장) | `prefs.py · alerts._route` | `test_prefs_validate_and_route_notifications` |
 | ✓ Convenience | 모바일 · 다크/라이트 · 키보드 단축키(?) · 최근 검색 | `web/static` | `e2e 스크린샷` |
+
+## DATA
+
+| 항목 | 무엇을 | 어디 | 검증 |
+|---|---|---|---|
+| ✓ Data provenance | 뉴스·공시 수집 시각(collected_at)·공시 요약 시각 · 종목 페이지 신선도(초 단위, SLA 초과 경고) | `stockplus.freshness · migrations 0006` | `test_header_situation_freshness_position` |
+| ✓ DATA HEALTH | 분야별 점수 % + 전체 · 주가 50% 미만 또는 장중 가격 15분 지연 → TRADING BLOCKED | `datahealth.py` | `test_data_health_blocks_and_explain_gate` |
+
+## SAFETY
+
+| 항목 | 무엇을 | 어디 | 검증 |
+|---|---|---|---|
+| ✓ Fail-Closed matrix | AI 다운=기권 · 뉴스 다운=신규 매수 절반 · 증권사/DB/시세 다운=차단 | `failmode.py` | `test_failmode_news_down_halves_new_buys` |
+| ✓ Data quality gate | AI BUY 여도 데이터 품질 LOW 면 '거래하지 않음' (판단은 기록 그대로) | `explain.for_symbol` | `test_data_health_blocks_and_explain_gate` |
+| ✓ Audit log | 긴급 정지·설정·계좌·알림 규칙·투자 논리·성향·모의 주문 — 추가만 가능 | `governance.audit` | `test_governance_audit_prefs_theme_widgets` |
+
+## AI
+
+| 항목 | 무엇을 | 어디 | 검증 |
+|---|---|---|---|
+| ✓ Verifiable AI | 지금 확률과 같은 구간의 과거 판단 N회 · 실제 상승 % · Calibration GOOD/FAIR/POOR | `scorecard.verify_now` | `test_scorecard_verify_now_and_public_report` |
+| ✓ Public scorecard | 최근 1000건 전부 · 정확도·Brier Skill·보정·Net Alpha·MDD·90일 안정성·실패 사례 공개 | `scorecard.public_report` | `test_scorecard_verify_now_and_public_report` |
+| ✓ Failure research | 틀린 예측 원인 후보 태그(시장·실적·뉴스·국면·거래량·금리환율·데이터) + 약점 패턴 | `failure_lab.py` | `test_lab_validation_portfolio_personal_failure` |
+| ✓ AI Lab | 여러 AI → 합의 → Risk Gate → 최종 · 모델 단계 Research→Challenger→Shadow→Champion | `lab.py` | `test_lab_validation_portfolio_personal_failure` |
+
+## UX
+
+| 항목 | 무엇을 | 어디 | 검증 |
+|---|---|---|---|
+| ✓ Stock OS | 현재 상황 한 줄 · OS 헤더(가격·AI·실적 D-n·뉴스 톤·공시·수급·밸류·위험·내 보유) · 섹션 숨기기/순서 | `stockplus.header/situation · os.js` | `test_header_situation_freshness_position` |
+| ✓ News v2 · AI digest | 톤 · 과거 같은 톤 뉴스 뒤 평균 움직임 · 중요 공시 강조 · AI 요약(외부 텍스트 지시 무시) | `stockplus.news/ai_digest · insight.news_impact` | `test_news_v2_tone_important_disclosure_and_ai_digest` |
+| ✓ Chart AI overlay | 매수 관심구간·목표·무효화 · 지지/저항 · 뉴스·공시·실적 표시 | `stockplus.overlay` | `test_overlay_lines_and_marks` |
+| ✓ Action Center · briefing | 확인할 종목 3 · 주의 이벤트 · AI 신호 변경 · 위험 증가 · 공시 · 오늘의 AI 브리핑 ①~⑤ | `center.action_center · portfolio_os.briefing` | `test_action_center_watchlist_groups` |
+| ✓ Why no trade | 막히거나 줄어든 매수 · 건너뛴 사이클 · 실행 안 된 AI BUY 를 원인별로 | `notrade.py` | `test_notrade_categories_and_report` |
+| ✓ Manual paper ticket | 검색→종목→[모의 주문] 3탭 · 같은 리스크 엔진 · 전략 장부와 분리 | `ticket.py` | `test_manual_ticket_fail_closed_and_place` |
+
+## PORTFOLIO
+
+| 항목 | 무엇을 | 어디 | 검증 |
+|---|---|---|---|
+| ✓ Thesis | 왜 샀나·무엇이 틀리면 판다·목표·무효화·점검일 → 30분마다 감시·알림 | `thesis.py` | `test_thesis_validation_breach_and_alert` |
+| ✓ Portfolio OS | 내 자산·주식/현금·업종 집중·최대 위험 한 문장 · 전략·위기 시뮬레이션 | `portfolio_os.py` | `test_lab_validation_portfolio_personal_failure` |
+
+## OPERATIONS
+
+| 항목 | 무엇을 | 어디 | 검증 |
+|---|---|---|---|
+| ✓ Validation tracker | KIS 모의·WebSocket·실측 슬리피지·Forward·장기 — 진행률과 다음 할 일 | `validation.py` | `test_lab_validation_portfolio_personal_failure` |
+| ✓ Sentinel | 데이터 수집·AI 작업·스케줄러·DB·증권사 5분 감시 · 나빠짐/회복 알림 | `sentinel.py` | `test_sentinel_and_briefing_text` |

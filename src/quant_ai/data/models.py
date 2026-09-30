@@ -100,6 +100,7 @@ class NewsArticle(Base):
     sentiment: Mapped[float | None] = mapped_column(Float)
     events: Mapped[list | None] = mapped_column(JSONType)
     importance: Mapped[float | None] = mapped_column(Float)
+    collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 데이터 출처 추적: 우리가 받은 시각
 
 
 class Disclosure(Base):
@@ -116,6 +117,8 @@ class Disclosure(Base):
     sentiment: Mapped[float | None] = mapped_column(Float)
     events: Mapped[list | None] = mapped_column(JSONType)
     summary: Mapped[str | None] = mapped_column(Text)  # 공시 원문 요약 (AI 또는 규칙)
+    collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 우리가 받은 시각
+    summarized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 요약을 만든 시각
 
 
 class MacroObservation(Base):

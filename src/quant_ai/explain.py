@@ -43,6 +43,8 @@ def explain(payload: dict, action: str, prob_up: float, confidence: float, gates
         blocks.append(f"매매 준비: {g['readiness']}")
     if g.get("event"):
         blocks.append(f"이벤트: {g['event']}")
+    if g.get("data"):
+        blocks.append(f"데이터 품질: {g['data']}")
     plan = p.get("plan") or {}
     to_buy = max(cfg.buy_prob - prob_up, 0.0)
     to_sell = max(prob_up - cfg.sell_prob, 0.0)
@@ -68,10 +70,44 @@ def explain(payload: dict, action: str, prob_up: float, confidence: float, gates
         change.append("SELL 이 되려면: " + need(f"상승 확률 −{to_sell * 100:.1f}%p" if to_sell > 0 else None, []))
     if plan.get("stop"):
         change.append(f"판단이 틀렸다고 인정하는 가격: {plan['stop']:,.2f} ({plan.get('stop_pct', 0):+.1%})")
-    return {"action": action, "headline": head, "for": for_[:5], "against": against[:5], "blocks": blocks,
+    plain = _plain(action, prob_up, confidence, for_, against, blocks, cfg, up)
+    effective = action
+    if g.get("data") and action in ("BUY", "SELL"):  # 판단은 기록대로 두고, 실행 여부만 막는다 (fail-closed)
+        effective = "NO_TRADE"
+        head = f"AI {action} {prob_up:.0%} — 하지만 데이터 품질 LOW → 거래하지 않음 ({g['data']})"
+        plain = plain + [f"실행: 데이터가 믿을 수 없는 상태({g['data']})라 이 판단으로 거래하지 않습니다. 데이터가 정상으로 돌아오면 다시 판단합니다."]
+    return {"action": action, "effective_action": effective, "headline": head, "plain": plain, "for": for_[:5], "against": against[:5], "blocks": blocks,
             "reasons": (p.get("reasons") or [])[:6], "risks": (p.get("risks") or [])[:6], "what_changes": change,
             "thresholds": {"buy_prob": cfg.buy_prob, "sell_prob": cfg.sell_prob, "min_confidence": cfg.min_confidence},
             "conflict": p.get("conflict"), "prob_raw": p.get("prob_raw")}
+
+
+def _plain(action: str, p: float, conf: float, for_: list, against: list, blocks: list, cfg, up: bool) -> list[str]:
+    """숫자 대신 말로: 누가 어느 쪽인지 → 왜 이 결론인지 → 무엇을 뜻하는지."""
+    n = len(for_) + len(against)
+    ups = len(for_) if up else len(against)
+    top = (for_ or [None])[0]
+    side = "오른다" if up else "내린다"
+    who = f"의견을 낸 AI {n}개 중 {ups}개가 오른다고, {n - ups}개가 내린다고 봤습니다" if n else "방향 의견을 낸 AI 가 없습니다"
+    lead = f"가장 영향이 큰 건 {top['ai']} ({top['prob_up']:.0%})입니다." if top else ""
+    if action == "BUY":
+        why = f"합친 상승 확률 {p:.0%}, 신뢰도 {conf:.0f} 로 매수 기준({cfg.buy_prob:.0%} · {cfg.min_confidence:.0f})을 둘 다 넘었습니다."
+        mean = "뜻: 오를 가능성이 기준보다 높다고 본 것이지, 오른다는 보장은 아닙니다. 손절 가격을 함께 보세요."
+    elif action == "SELL":
+        why = f"합친 상승 확률이 {p:.0%} 로 매도 기준({cfg.sell_prob:.0%}) 아래입니다 — 내릴 쪽이 우세합니다."
+        mean = "뜻: 보유 중이면 줄이는 쪽, 새로 사지 않는 쪽입니다."
+    elif action == "NO_TRADE":
+        why = f"{side}는 쪽이 우세해도 막는 이유가 있습니다: " + (", ".join(blocks[:2]) or "진입 보류") + "."
+        mean = "뜻: 방향과 상관없이 지금은 거래하지 않습니다. 막은 이유가 풀리면 다시 판단합니다."
+    else:
+        gap = []
+        if p < cfg.buy_prob and p > cfg.sell_prob:
+            gap.append(f"확률 {p:.0%} 가 매수 {cfg.buy_prob:.0%} · 매도 {cfg.sell_prob:.0%} 사이")
+        if conf < cfg.min_confidence:
+            gap.append(f"신뢰도 {conf:.0f} 가 기준 {cfg.min_confidence:.0f} 미만 (AI 들이 한 방향으로 모이지 않음)")
+        why = "결론을 낼 만큼 뚜렷하지 않습니다: " + (" · ".join(gap) or "기준 근처") + "."
+        mean = "뜻: 지금은 지켜보는 구간입니다. 보유 중이면 그대로, 새로 사지는 않습니다."
+    return [x for x in (who + (". " + lead if lead else "."), why, mean) if x]
 
 
 def for_symbol(app, symbol: str) -> dict | None:
@@ -90,6 +126,14 @@ def for_symbol(app, symbol: str) -> dict | None:
         r = next((x for x in ops.get_state(app.engine, "event_calendar").get("risk") or [] if x["symbol"] == symbol), None)
         if r and r.get("buy_multiplier", 1) < 1:
             gates["event"] = f"{r.get('reason')} → 매수 ×{r['buy_multiplier']}"
+        dh = ops.get_state(app.engine, "data_health")
+        if dh.get("trading") == "BLOCKED":
+            gates["data"] = dh.get("block_reason") or f"데이터 건강 {dh.get('overall', 0)}%"
+        else:
+            from .stock import trust
+            tr = trust(app, symbol)
+            if tr["status"] == "bad":
+                gates["data"] = next((c["label"] + " — " + c["detail"] for c in tr["checks"] if c["status"] == "bad"), "데이터 신뢰도 낮음")[:120]
     except Exception:  # noqa: BLE001, S110 - 설명 보조 정보라 실패해도 본 설명은 보인다
         pass
     out = explain(rec.payload or {}, rec.action, rec.prob_up, rec.confidence, gates)
