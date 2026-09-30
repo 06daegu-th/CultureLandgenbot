@@ -297,7 +297,8 @@ async function viewControl(el) {
       <td>${j.ok === false ? `<span class="chip neg" title="${esc(j.error || "")}">실패</span>` : j.ok ? '<span class="chip pos">정상</span>' : '<span class="chip">대기</span>'}</td></tr>`).join("");
   const sc = c.scorecard[S.ctlMkt];
   const pulse = (c.pulse || []).map((p) => p.score);
-  el.innerHTML = `
+  const rdy = await api("/api/readiness").catch(() => null);
+  el.innerHTML = (typeof readinessStrip === "function" ? readinessStrip(rdy) : "") + `
   <div class="card ctl-hero">
     <div class="ctl-top"><div><div class="ctl-live ${alive ? "on" : ""}"><i></i>${alive ? "AI 24시간 관찰 중" : "스케줄러 멈춤 — ./run.sh 로 켜 두세요"}</div>
       <h2>24H 관제실</h2><div class="small muted">컴퓨터만 켜 두면 AI 가 시장을 관찰하고 · 모든 판단을 기록하고 · 틀린 이유까지 복기하면서 · 검증을 통과한 경우에만 실제 돈을 씁니다.</div></div>

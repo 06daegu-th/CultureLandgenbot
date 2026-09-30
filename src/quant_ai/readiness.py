@@ -72,8 +72,10 @@ def check_broker(app, mode: str, now: datetime) -> dict:
 def check_model(app, mode: str, real_money: bool) -> dict:
     ev = ops.get_state(app.engine, "evaluation")
     rec, _ = app.active_model()
+    if ev.get("status") in ("worse", "fail"):  # 예측이 기준선보다 나쁘거나 무결성이 깨졌으면 모델 유무와 상관없이 빨강
+        return _chk("MODEL", "red", ev.get("verdict") or "", evidence=ev.get("status"))
     if rec is None:
-        return _chk("MODEL", "red" if mode == "live" else "yellow", "챔피언 모델 없음 — 학습 필요")
+        return _chk("MODEL", "red" if mode == "live" else "yellow", "챔피언 모델 없음 — 학습 필요 (후보가 검증 게이트를 통과하지 못함)")
     age = (datetime.now(UTC) - (rec.created_at if rec.created_at.tzinfo else rec.created_at.replace(tzinfo=UTC))).days
     decay = ops.get_state(app.engine, "model_decay")
     status = ev.get("status")
@@ -82,6 +84,8 @@ def check_model(app, mode: str, real_money: bool) -> dict:
         return _chk("MODEL", "red", f"실제 돈 매매는 예측력 검증 통과가 필요 — 현재: {evidence}", evidence=status)
     if status == "fail":
         return _chk("MODEL", "red", f"무결성 문제: {evidence}", evidence=status)
+    if status == "worse":
+        return _chk("MODEL", "red", evidence, evidence=status)
     if decay.get("status") == "decaying":
         return _chk("MODEL", "yellow", f"모델 노후 신호: {decay.get('message', '')}"[:160], evidence=status)
     if age > 90:

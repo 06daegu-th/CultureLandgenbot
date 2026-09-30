@@ -204,6 +204,9 @@ def evaluate(session, bars: dict[str, pd.DataFrame] | None = None, market: str |
     ci = wilson(k, n)
     p_val = binom_p(k, n, best_base)
     sig = p_val is not None and p_val < 0.05 and hit > best_base
+    # 반대쪽도 본다: 기준선보다 유의하게 '나쁜' 예측은 우연이 아니라 해로운 신호다
+    p_low = (1.0 - (binom_p(k + 1, n, best_base) or 0.0)) if n else None
+    worse = p_low is not None and p_low < 0.05 and hit < best_base and n >= 100
     integrity_ok = (ledger or {}).get("ok", True) and (leakage or {}).get("ok", True) and base["mismatch_rate"] < 0.01
     # 봉인 전(레거시) 기록은 사후 수정 여부를 증명할 수 없다 → 절반 이상이 봉인돼야 "검증됨"
     sealed_share = sum(x["sealed"] for x in items) / n
@@ -211,9 +214,11 @@ def evaluate(session, bars: dict[str, pd.DataFrame] | None = None, market: str |
     verdict = ("검증됨: 기준선보다 유의하게 나음" if sig and integrity_ok and proven else
                "무결성 문제 — 성적을 믿기 전에 확인 필요" if not integrity_ok else
                f"기준선보다 나아 보임 — 단 봉인된 기록이 {sealed_share:.0%} 뿐이라 아직 증명 전" if sig else
+               f"기준선보다 유의하게 나쁨 (적중 {hit:.0%} < 기준선 {best_base:.0%}) — 이 예측을 매매에 쓰면 안 됨" if worse else
                "아직 우연과 구분되지 않음" if n >= 100 else "표본 부족")
     return base | {
-        "status": "pass" if sig and integrity_ok and proven else "fail" if not integrity_ok else "insufficient",
+        "status": "pass" if sig and integrity_ok and proven else "fail" if not integrity_ok else "worse" if worse else "insufficient",
+        "p_value_worse": p_low,
         "verdict": verdict, "sealed_share": sealed_share, "evaluated_at": now.isoformat(), "market": market or "ALL",
         "hit_rate": hit, "hits": k, "hit_ci95": ci, "p_value": p_val, "best_baseline": best_base, "baselines": baselines,
         "edge_vs_baseline": hit - best_base,

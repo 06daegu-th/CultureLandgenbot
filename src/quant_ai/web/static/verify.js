@@ -21,7 +21,7 @@ async function viewVerify(el) {
   const dr = v.drift || {};
   const base = e.baselines || {};
   const hitCi = e.hit_ci95;
-  const verdictCls = e.status === "pass" ? "good" : e.status === "fail" ? "bad-t" : "warn-t";
+  const verdictCls = e.status === "pass" ? "good" : e.status === "fail" || e.status === "worse" ? "bad-t" : "warn-t";
   const tbl = (rows, cols) => rows && rows.length ? `<div class="scroll"><table class="tight"><thead><tr>${cols.map((c) => `<th class="${c[2] || ""}">${c[0]}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td class="${c[2] || ""}">${c[1](r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : empty("표본 부족");
   const grp = (rows) => tbl(rows, [["구분", (r) => esc(r.key)], ["n", (r) => r.n, "r num"], ["적중", (r) => `${R(r.hit_rate)} ${hbar(r.hit_rate)}`, "r"], ["평균 실제", (r) => P(r.avg_actual, 2), "r num"]]);
   const errs = e.errors || {};
@@ -349,7 +349,7 @@ async function fillAgentStrip() {
 function buildTabbar() {
   const t = $("#tabbar");
   if (!t) return;
-  const items = [["dashboard", "home", "홈"], ["control", "control", "관제실"], ["verify", "score", "검증"], ["graph", "market", "그래프"], ["chat", "chat", "AI"]];
+  const items = [["dashboard", "home", "홈"], ["control", "control", "관제실"], ["readiness", "check", "준비"], ["power", "score", "예측력"], ["chat", "chat", "AI"]];
   t.innerHTML = items.map(([v, ic, l]) => `<a href="#${v}" data-tab="${v}">${ICONS[ic] || ""}<span>${l}</span></a>`).join("");
 }
 function markTab() {

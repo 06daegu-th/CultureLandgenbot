@@ -284,7 +284,7 @@ def test_recovery_startup_catch_up_and_source_health(app):
             s.add(JobRun(job="investor_flow", started_at=now - timedelta(hours=1), finished_at=now, ok=False, error="403"))
     r = startup(app, now)
     assert r["downtime_s"] > 86000 and r["stale_jobs"] >= 1 and r["db"]["ok"]
-    assert {c["step"] for c in r["catch_up"]} >= {"결과 채점", "장부 봉인", "독립 평가", "드리프트"}
+    assert {c["step"] for c in r["catch_up"]} >= {"결과 매칭", "복기 · 채점", "장부 봉인", "독립 평가", "드리프트"}
     assert ops.get_state(app.engine, "heartbeat")["at"] == now.isoformat()
     sh = {x["source"]: x for x in source_health(app, now)}
     assert sh["수급 (네이버)"]["status"] == "down" and sh["수급 (네이버)"]["last_error"] == "403"
@@ -317,3 +317,30 @@ def test_desk_and_api_endpoints_run_end_to_end(app, tmp_path):
     sl = desk.slippage_calibrate(app)
     assert sl["live"]["n"] == 0 and not sl["live"]["applied"]
     assert desk.model_decay(app)["status"] in ("insufficient", "stable", "watch", "decaying")
+
+
+def test_evaluator_flags_significantly_worse_than_baseline(tmp_path):
+    from quant_ai.data.db import init_db, make_engine, session_scope
+    from quant_ai.data.models import ConsensusRecord
+    from quant_ai.review import evaluator as E
+    from quant_ai.review import ledger as LG
+    from quant_ai.review.outcomes import forward
+    e = make_engine(f"sqlite:///{tmp_path}/w.db")
+    init_db(e)
+    rng = np.random.default_rng(2)
+    idx = pd.bdate_range("2025-01-01", periods=400, tz="UTC")
+    c = pd.Series(100 * np.exp(np.cumsum(rng.normal(0.0005, 0.02, 400))), index=idx)
+    b = pd.DataFrame({"open": c.shift(1).fillna(100), "high": c, "low": c, "close": c, "volume": 1e6})
+    with session_scope(e) as s:
+        for i in range(20, 380):
+            real = forward(b, idx[i], 5)
+            wrong = rng.random() < 0.65  # 65% 틀리는 예측
+            p = 0.6 if (real > 0) == (not wrong) else 0.4
+            r = ConsensusRecord(symbol="X", as_of=idx[i].to_pydatetime(), action="BUY", prob_up=p, confidence=60, conflict="low",
+                                payload={"horizon": 5}, realized_return=real, correct=(p >= 0.5) == (real > 0),
+                                created_at=idx[i].to_pydatetime() + timedelta(hours=1))
+            LG.seal(r)
+            s.add(r)
+    with session_scope(e) as s:
+        r = E.evaluate(s, {"X": b}, ledger={"ok": True}, leakage={"ok": True})
+    assert r["status"] == "worse" and "나쁨" in r["verdict"] and r["p_value_worse"] < 0.05

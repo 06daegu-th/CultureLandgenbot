@@ -149,6 +149,19 @@ quant-ai research krx --marcap-dir marcap/data --start 2010 --top 100 --register
 
 API 키가 없으면 해당 AI 는 오프라인 휴리스틱으로 대체되어 시스템은 계속 동작한다 (대시보드 설정 화면에 표시).
 
+### 매매 준비 · 실제 예측력 (v13)
+
+```bash
+quant-ai readiness                                   # 7관문 (DATA·BROKER·MODEL·RISK·EVENT·DRIFT·CALIBRATION)
+quant-ai kis-check --suite                           # KIS 모의투자 검증 8단계 (장중이면 주문·취소 경로까지)
+quant-ai kis-check --suite --fill                    # + 모의투자 1주 실제 체결 → 슬리피지 실측
+quant-ai power-study --marcap-dir marcap/data        # 실제 KRX 과거 데이터로 코어 점수 예측력 사후 검증
+```
+
+- NOT READY 면 live·shadow 장부의 **신규 매수가 막힌다** (매도·위험 축소는 항상 허용). `QUANT_READINESS_GATE=live|all|off`
+- 실적 발표 D-1 이내 매수는 ×0.5 (`QUANT_EVENT_GATE=reduce|block|off`)
+- "실제 시장 예측력" 은 사전 등록한 기준으로, 등록 이후 봉인된 예측만 순차 검정(SPRT)해서 판정한다 — 대시보드 **실제 예측력** 화면
+
 ## 안전 원칙
 - AI → 신호 → 앙상블 → **리스크 게이트** → 실행 엔진 → 증권사. AI 는 `broker.buy()` 를 호출할 수 없다.
 - Risk AI 의 규칙 veto (이벤트 임박, 변동성 급증, 데이터 이상, 위기 국면, 상장폐지 공시)는 다른 AI 가 뒤집을 수 없다.

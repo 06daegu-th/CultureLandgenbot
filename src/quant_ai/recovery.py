@@ -73,7 +73,7 @@ def startup(app, now: datetime | None = None, catch_up: bool = True) -> dict:
     out = {"at": now.isoformat(), "downtime_s": down, "db": db_check(app.engine),
            "stale_jobs": close_stale_jobs(app.engine, now=now), "catch_up": []}
     if catch_up and (down is None or down > 600):
-        steps = [("결과 채점", app.match_outcomes), ("장부 봉인", app.ledger_anchor)]
+        steps = [("결과 매칭", app.match_outcomes), ("복기 · 채점", lambda: app.review()), ("장부 봉인", app.ledger_anchor)]
         if down is None or down > 86400:
             steps += [("독립 평가", lambda: app.evaluation()), ("드리프트", lambda: app.drift())]
         for name, fn in steps:

@@ -445,7 +445,7 @@ class QuantAI:
         rec = save_consensus(s, sig, opinions, ctx.as_of, self.horizon, ctx.regime.get("regime"),
                              evidence=evidence_snapshot(ctx), versions=versions,
                              plan=self._trade_plan(sym, bars.get(sym), t, sig.prob_up, live=versions is None or
-                                                   not (versions or {}).get("replay")))
+                                                   not (versions or {}).get("replay"), action=sig.action))
         cid = rec.id
         if challenger is not None:  # 앙상블 미참여, 채점만
             ch = QuantAnalyst(challenger, challenger_rec.version, name="challenger").analyze(ctx)
@@ -470,7 +470,7 @@ class QuantAI:
                         meta={"consensus_id": cid, "action": sig.action})
         return cid
 
-    def _trade_plan(self, sym: str, b, t, prob_up: float, live: bool = True) -> dict | None:
+    def _trade_plan(self, sym: str, b, t, prob_up: float, live: bool = True, action: str | None = None) -> dict | None:
         """사이징 · 진입 구간 · 무효화 조건 — 예측과 함께 봉인된다. 과거 재생에는 그때의 이벤트·준비 상태가 없어 배수 1."""
         from .trading.trade_plan import plan
         if b is None:
@@ -488,7 +488,7 @@ class QuantAI:
                 rd = ops.get_state(self.engine, "readiness").get("status")
                 rm = {"NOT_READY": 0.0, "CAUTION": 0.75}.get(rd, 1.0)
             return plan(sym, b.loc[:t], prob_up, self.horizon, cost, self.settings.risk.max_position_weight,
-                        event_mult=em, event_reason=why, readiness_mult=rm, earnings_in_horizon=earn)
+                        event_mult=em, event_reason=why, readiness_mult=rm, earnings_in_horizon=earn, action=action)
         except Exception as e:  # noqa: BLE001 - 계획 실패가 판단 저장을 막으면 안 됨
             log.warning("매매 계획 실패 %s: %s", sym, e)
             return None

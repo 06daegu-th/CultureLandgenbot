@@ -271,6 +271,8 @@ function viewDashboard(d) {
   const tabs = (id, obj, cur) => `<div class="tabs" id="${id}">${Object.entries(obj).map(([k, v]) => `<button data-k="${k}" class="${cur === k ? "on" : ""}">${v}</button>`).join("")}</div>`;
   const lessons = (d.lessons || []).slice(0, 5);
   return `
+  ${typeof readinessStrip === "function" ? readinessStrip(d.readiness) : ""}
+  <div class="asof-line xs dim">${typeof asOf === "function" ? `${asOf(d.asof?.now, "fresh", "화면 기준")} ${asOf(d.asof?.last_bar, "fresh", "일봉")} ${d.asof?.summary ? asOf(d.asof.summary, "fresh", "AI 판단") : ""}` : ""}</div>
   <div id="live-strip"></div>
   <div id="setup-box"></div>
   <div class="grid h0">
@@ -440,7 +442,8 @@ async function viewRisk(el) {
     ${card("노출 · 통화", `<table><tbody><tr><td>주식 비중</td><td class="r num">${pctRaw(r.gross)}</td></tr><tr><td>현금</td><td class="r num">${pctRaw(r.cash_weight)}</td></tr><tr><td>보유 종목</td><td class="r num">${r.n_positions}</td></tr><tr><td>종목 간 평균 상관</td><td class="r num">${r.avg_corr ?? "-"}</td></tr>
       ${Object.entries(r.currency || {}).map(([k, v]) => `<tr><td>통화 ${esc(k)}</td><td class="r num">${pctRaw(v)}</td></tr>`).join("")}</tbody></table>`)}
   </div>
-  ${card("유동성 <span class='small dim'>20일 평균 거래대금 · 참여율 10% 로 청산에 걸리는 일수 · 주문은 거래대금의 5% 이내로 자동 제한</span>", liq ? `<div class="scroll"><table><thead><tr><th>종목</th><th class="r">일 거래대금</th><th class="r">청산 일수</th></tr></thead><tbody>${liq}</tbody></table></div>` : empty())}`;
+  ${card("유동성 <span class='small dim'>20일 평균 거래대금 · 참여율 10% 로 청산에 걸리는 일수 · 주문은 거래대금의 5% 이내로 자동 제한</span>", liq ? `<div class="scroll"><table><thead><tr><th>종목</th><th class="r">일 거래대금</th><th class="r">청산 일수</th></tr></thead><tbody>${liq}</tbody></table></div>` : empty())}
+  ${typeof riskV13 === "function" ? riskV13(r) : ""}`;
   bindRiskTabs();
 }
 function bindRiskTabs() { document.querySelectorAll("#risk-tabs button").forEach((b) => b.onclick = () => { S.riskMode = b.dataset.k; render(); }); }
@@ -638,12 +641,14 @@ async function viewAnalysis(el) {
     ${card("투자 전 체크 <span class='small dim'>핵심 지표</span>", `<div id="pf-stats"><div class="ev-none small dim">불러오는 중…</div></div>`)}
   </div>
   <div id="pf-sections"></div>
+  <div id="pf-desk"></div>
   <div id="pf-extra"></div>
   ${aiSections}
   ${sim ? card("과거 유사 사례 (RAG 메모리)", `<div class="scroll"><table><tbody>${sim}</tbody></table></div>`) : ""}`;
   $("#sym-select").onchange = (e) => { location.hash = `#analysis/${e.target.value}`; };
   if (anCard) bindAnalyze(sym, autoAn, () => render());
   candleChart($("#an-chart"), sym);
+  if (typeof stockDesk === "function") stockDesk(sym);  // 매매 계획 · 이벤트 · 옵션 · 실적 모델 · 관계 — 종목 정보와 따로 (desk.js)
   loadProfile(sym, a.name || sym, a);
 }
 
@@ -1003,9 +1008,9 @@ function viewSettings(d) {
 
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
-  ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["graph", "models", "지식 그래프 · 업종"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
-  ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
-  ["검증 · 학습", [["reports", "review", "리포트 · 브리핑"], ["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
+  ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["readiness", "check", "매매 준비 · 데이터"], ["power", "learn", "실제 예측력"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["graph", "models", "지식 그래프 · 업종"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
+  ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["calendar", "bell", "이벤트 캘린더"], ["execution", "engine", "체결 · 증권사 검증"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
+  ["검증 · 학습", [["reports", "review", "리포트 · 브리핑"], ["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["myjournal", "journal", "내 저널 vs AI"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
   ["시스템", [["safety", "shield", "안전 센터"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
 ];
 function buildNav() {
@@ -1053,9 +1058,14 @@ async function render() {
     else if (S.view === "journal") await viewJournal(el);
     else if (S.view === "evidence") await viewEvidence(el, S.param);
     else if (S.view === "settings") { el.innerHTML = alertSettingsCard() + extraSettingsCard() + viewSettings(d); bindAlertSettings(); bindExtraSettings(); }
-    else if (S.view === "verify") await viewVerify(el);
+    else if (S.view === "verify") { await viewVerify(el); if (typeof notaryCard === "function") notaryCard(el); }
+    else if (S.view === "readiness") await viewReadiness(el);
+    else if (S.view === "power") await viewPower(el);
+    else if (S.view === "calendar") await viewCalendar(el);
+    else if (S.view === "execution") await viewExecution(el);
+    else if (S.view === "myjournal") await viewMyJournal(el);
     else if (S.view === "ledger") await viewLedger(el);
-    else if (S.view === "graph") await viewGraph(el);
+    else if (S.view === "graph") { await viewGraph(el); if (typeof rotationPanel === "function") rotationPanel(el); }
     else if (S.view === "reports") await viewReports(el);
     else if (S.view === "control") await viewControl(el);
     else if (S.view === "alpha") await viewAlpha(el);
@@ -1187,6 +1197,7 @@ buildNav();
 initChatWidget();
 initLive();
 initPWA();
+if (typeof initAsOfChip === "function") initAsOfChip();
 tickClock(); setInterval(tickClock, 1000);
 
 window.addEventListener("hashchange", route);

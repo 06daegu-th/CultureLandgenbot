@@ -416,7 +416,7 @@ def stock_desk(app, symbol: str) -> dict:
     rec = latest_consensus(app.engine, symbol)
     plan = (rec.payload or {}).get("plan") if rec else None
     if plan is None and b is not None and rec is not None:
-        plan = app._trade_plan(symbol, b, b.index[-1], rec.prob_up)
+        plan = app._trade_plan(symbol, b, b.index[-1], rec.prob_up, action=rec.action)
     cal = ops.get_state(app.engine, "event_calendar")
     today = E.today_kst(now)
     evs = [e for e in cal.get("events", []) if e.get("symbol") == symbol and e.get("d_day", -1) >= -7]
@@ -454,7 +454,7 @@ def stock_desk(app, symbol: str) -> dict:
     return _json({
         "symbol": symbol, "name": names.get(symbol, symbol), "as_of": label(now),
         "bar_as_of": label(b.index[-1], with_time=False) if b is not None and len(b) else None,
-        "plan": plan, "plan_sealed": bool(rec and rec.row_hash and (rec.payload or {}).get("plan")),
+        "plan": plan, "action": rec.action if rec else None, "plan_sealed": bool(rec and rec.row_hash and (rec.payload or {}).get("plan")),
         "plan_at": label(rec.as_of) if rec else None,
         "events": evs[:12], "event_risk": risk, "options": opt, "earnings_model": em,
         "flow": (flow.get("summary") or {}) | ({"rows": flow.get("rows")[-60:]} if flow.get("rows") else {}) if flow else {},

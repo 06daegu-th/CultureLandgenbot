@@ -51,7 +51,8 @@ def fit(obs: list[dict], prior_bps: float = 5.0, prior_coef: float = 0.7, seed: 
     y_all = np.array([o["slip"] for o in obs], dtype=float)
     n = len(y_all)
     if n == 0:
-        return {"n": 0, "applied": False, "fixed_bps": prior_bps, "impact_coef": prior_coef, "prior": {"fixed_bps": prior_bps, "impact_coef": prior_coef}}
+        return {"n": 0, "applied": False, "fixed_bps": prior_bps, "impact_coef": prior_coef,
+                "prior": {"fixed_bps": prior_bps, "impact_coef": prior_coef}, "verdict": "실측 체결 없음 — 기존 가정 유지"}
     with_x = [o for o in obs if o["x"] is not None]
 
     def est(sample):

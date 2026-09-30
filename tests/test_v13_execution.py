@@ -143,6 +143,8 @@ def test_trade_plan_sizing_entry_and_invalidation():
     assert p["stop"] < c and p["stop_pct"] < 0 and {i["kind"] for i in p["invalidation"]} == {"price", "time", "thesis"}
     half = plan("X", b, 0.62, 5, 30, 0.1, event_mult=0.5, event_reason="실적 D-1", earnings_in_horizon=True)
     assert half["sizing"]["weight"] == pytest.approx(p["sizing"]["weight"] * 0.5) and any(i["kind"] == "event" for i in half["invalidation"])
+    hold = plan("X", b, 0.62, 5, 30, 0.1, action="HOLD")
+    assert not hold["tradeable"] and "참고용" in hold["note"] and hold["sizing"]["weight"] > 0
     flat = plan("X", b, 0.51, 5, 30)
     assert not flat["tradeable"] and flat["sizing"]["binding"] == "비용 후 기대수익 ≤ 0"
     after = b.iloc[-3:].copy()

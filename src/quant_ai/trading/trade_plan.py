@@ -32,7 +32,7 @@ def atr(b: pd.DataFrame, n: int = 14) -> float | None:
 
 def plan(symbol: str, bars: pd.DataFrame, prob_up: float, horizon: int = 5, cost_bps: float = 30.0,
          max_weight: float = 0.10, target_vol: float = 0.004, event_mult: float = 1.0, event_reason: str | None = None,
-         readiness_mult: float = 1.0, earnings_in_horizon: bool = False) -> dict | None:
+         readiness_mult: float = 1.0, earnings_in_horizon: bool = False, action: str | None = None) -> dict | None:
     """cost_bps: 왕복 비용(수수료+세금+슬리피지). target_vol: 종목 하나의 일간 변동성 기여 목표(0.4%p)."""
     if bars is None or len(bars) < 25:
         return None
@@ -78,7 +78,9 @@ def plan(symbol: str, bars: pd.DataFrame, prob_up: float, horizon: int = 5, cost
                   "support": {"ma20": round(ma20, 4), "low10": round(low10, 4)}, "atr": round(a, 4)},
         "invalidation": inval, "stop": round(stop, 4), "stop_pct": round(stop_pct, 4),
         "target": None if target is None else round(target, 4), "reward_risk": None if rr is None else round(rr, 2),
-        "tradeable": w > 0,
+        # 합의 신호가 BUY 가 아니면 계획은 '만약 산다면' 참고용 — 사이징 숫자가 매수 권유처럼 보이지 않게
+        "action": action, "tradeable": w > 0 and (action is None or action == "BUY"),
+        "note": None if action in (None, "BUY") else f"합의 신호 {action} — 이 계획은 '산다면' 참고용이며 주문은 나가지 않습니다",
     }
 
 
