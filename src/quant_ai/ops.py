@@ -164,26 +164,88 @@ class Notifier:
         with urllib.request.urlopen(req, timeout=10):  # noqa: S310 - 설정된 https 웹훅만 호출
             pass
 
-    def send(self, message: str, level: str = "info") -> None:
-        if self.levels.index(level) < self.levels.index(self.min_level):
-            return
-        icon = {"info": "ℹ️", "warn": "⚠️", "critical": "🚨"}[level]
-        text_msg = f"{icon} [Quant AI] {message}"[:1900]
-        self.sent.append((level, text_msg))
-        self.sent = self.sent[-100:]
-        targets = []
-        if self.discord:
-            targets.append((self.discord, {"content": text_msg}))
-        if self.slack:
-            targets.append((self.slack, {"text": text_msg}))
+    MAX_PER_MIN = 20
+    DEDUPE_S = 600
+
+    @property
+    def channels(self) -> list[str]:
+        return [n for n, ok in (("discord", self.discord), ("slack", self.slack),
+                                ("telegram", self.tg_token and self.tg_chat)) if ok]
+
+    def _throttled(self, text_msg: str) -> bool:
+        """분당 20건 · 같은 내용 10분 안 반복은 보내지 않는다 (알림 폭주 방지)."""
+        import time as _t
+        now = _t.monotonic()
+        hist = getattr(self, "_hist", [])
+        hist = [(t, m) for t, m in hist if now - t < self.DEDUPE_S]
+        if any(m == text_msg for _, m in hist) or sum(1 for t, _ in hist if now - t < 60) >= self.MAX_PER_MIN:
+            self._hist = hist
+            return True
+        hist.append((now, text_msg))
+        self._hist = hist
+        return False
+
+    @staticmethod
+    def _chunks(text: str, size: int) -> list[str]:
+        out, cur = [], ""
+        for line in text.split("\n"):
+            while len(line) > size:
+                out.append(line[:size])
+                line = line[size:]
+            if len(cur) + len(line) + 1 > size:
+                out.append(cur)
+                cur = ""
+            cur = f"{cur}\n{line}" if cur else line
+        if cur:
+            out.append(cur)
+        return out
+
+    def _targets(self, text_msg: str) -> list[tuple[str, str, dict]]:
+        import html as _html
+        out = []
+        for part in self._chunks(text_msg, 1900):
+            if self.discord:
+                out.append(("discord", self.discord, {"content": part}))
+            if self.slack:
+                out.append(("slack", self.slack, {"text": part}))
         if self.tg_token and self.tg_chat:
-            targets.append((f"https://api.telegram.org/bot{self.tg_token}/sendMessage",
-                            {"chat_id": self.tg_chat, "text": text_msg}))
-        for url, payload in targets:
+            for i, part in enumerate(self._chunks(text_msg, 3800)):
+                lines = part.split("\n")
+                body = _html.escape(part) if i else f"<b>{_html.escape(lines[0])}</b>" + (
+                    "\n" + _html.escape("\n".join(lines[1:])) if len(lines) > 1 else "")
+                out.append(("telegram", f"https://api.telegram.org/bot{self.tg_token}/sendMessage",
+                            {"chat_id": self.tg_chat, "text": body, "parse_mode": "HTML", "disable_web_page_preview": True}))
+        return out
+
+    def send(self, message: str, level: str = "info", force: bool = False) -> dict:
+        """보낸 채널별 결과 {채널: "ok" | 오류}. 긴 글은 나눠 보내고, 폭주·중복은 막는다."""
+        if level not in self.levels:
+            level = "info"
+        if self.levels.index(level) < self.levels.index(self.min_level) and not force:
+            return {}
+        icon = {"info": "ℹ️", "warn": "⚠️", "critical": "🚨"}[level]
+        text_msg = f"{icon} [Quant AI] {message}"
+        if not force and self._throttled(text_msg):
+            return {"skipped": "rate-limit or duplicate"}
+        self.sent.append((level, text_msg[:1900]))
+        self.sent = self.sent[-100:]
+        results: dict[str, str] = {}
+        for name, url, payload in self._targets(text_msg):
             if not url.startswith("https://"):
                 log.warning("https 가 아닌 웹훅은 무시: %s", url[:30])
+                results[name] = "https 아님"
                 continue
             try:
                 self._post(url, payload)
+                results.setdefault(name, "ok")
             except Exception as exc:  # noqa: BLE001 - 알림 실패가 매매를 막으면 안 됨
+                results[name] = f"{type(exc).__name__}: {str(exc)[:120]}"
                 log.warning("알림 전송 실패: %s", exc)
+        return results
+
+    def test(self) -> dict:
+        """설정 화면의 '테스트 전송': 채널마다 성공/실패를 돌려준다 (토큰 값은 절대 포함하지 않음)."""
+        if not self.enabled:
+            return {"enabled": False, "message": ".env 에 QUANT_TELEGRAM_TOKEN·QUANT_TELEGRAM_CHAT_ID 또는 디스코드/슬랙 웹훅을 넣으세요"}
+        return {"enabled": True, "channels": self.channels,
+                "results": self.send("알림 테스트 — 이 메시지가 보이면 연결 성공입니다 ✅", "info", force=True)}

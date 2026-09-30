@@ -310,6 +310,7 @@ async function viewControl(el) {
     <div class="xs dim">${lastJob ? `마지막 작업: ${esc(lastJob.label)} · ${ago(lastJob.last)}` : "아직 실행 기록이 없습니다"}${pulse.length > 1 ? ` · 시장 심리 흐름 ${spark(pulse, 120, 22)}` : ""}</div>
     <div class="flow">${flow}</div>
   </div>
+  <div id="ag-strip"></div>
   <div class="grid g-21">
     ${card(`방금 저장된 예측 <span class="small dim">요인 +++ · AI 예상 · 실제 결과</span>`, c.feed.length ? `<div class="pred-grid">${c.feed.slice(0, 12).map(predCard).join("")}</div>` : empty("아직 예측이 없습니다 — AI 판단이 한 번 돌면 여기에 쌓입니다"), `<a class="link" href="#journal">판단 저널 ${ICONS.arrow}</a>`)}
     <div class="stack">
@@ -329,6 +330,7 @@ async function viewControl(el) {
     ltabs("ctl-mkt", { KR: "국내", US: "미국" }, S.ctlMkt))}
   ${card("24시간 작업표 <span class='small dim'>실시간 수집 → 매시간 재분석 → 장 마감 복기 → 야간 평가 → 다음 날 적용</span>", `<div class="scroll"><table class="tight"><thead><tr><th>작업</th><th>주기</th><th>마지막</th><th>다음</th><th>상태</th></tr></thead><tbody>${jobs}</tbody></table></div>`)}`;
   document.querySelectorAll("#ctl-mkt button").forEach((b) => b.onclick = () => { S.ctlMkt = b.dataset.k; render(); });
+  if (typeof fillAgentStrip === "function") fillAgentStrip();
   $("#lad-eval").onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = "평가 중…";
     const r = await runAction("ladder");
@@ -368,6 +370,14 @@ function pfCommunity(p) {
 }
 
 // ================================================================= 시작
+// CSP(script-src 'self') 는 onclick="..." 같은 인라인 스크립트를 막는다 → data-* 속성 + 위임 이벤트로 처리
+document.addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]");
+  if (go) { e.preventDefault(); location.hash = go.dataset.go; return; }
+  const ask = e.target.closest("[data-ask]");
+  if (ask && window.askAI) { e.preventDefault(); window.askAI(ask.dataset.ask); }
+});
+
 function initLive() {
   if (AL.started) return;
   AL.started = true;

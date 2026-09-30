@@ -31,10 +31,49 @@ FAST_MOVE = 0.02
 FAST_WINDOW = timedelta(minutes=20)
 
 
+# 외부로도 보낼 알림 (앱이 시작할 때 configure): 텔레그램·디스코드 / 웹 푸시
+# (아침 브리핑·일일 리포트는 reports.run_if_due 가 전문을 따로 보내므로 여기엔 넣지 않는다 — 중복 방지)
+ROUTE = {"notifier": None, "kinds": {"rule", "earnings"}, "push": None,
+         "push_kinds": {"price", "rule", "signal", "earnings", "guardian", "ladder", "brief", "report"}}
+
+
+def configure(notifier=None, kinds: set[str] | None = None, push_sender=None, push_kinds: set[str] | None = None) -> None:
+    if notifier is not None:
+        ROUTE["notifier"] = notifier
+    if kinds is not None:
+        ROUTE["kinds"] = set(kinds)
+    if push_sender is not None:
+        ROUTE["push"] = push_sender
+    if push_kinds is not None:
+        ROUTE["push_kinds"] = set(push_kinds)
+
+
+def _route(kind: str, level: str, title: str, body: str | None, link: str | None) -> None:
+    n = ROUTE.get("notifier")
+    if n is not None and kind in ROUTE["kinds"]:
+        try:
+            n.send(f"{title}\n{body}" if body else title, {"bad": "critical", "warn": "warn"}.get(level, "info"))
+        except Exception as e:  # noqa: BLE001 - 외부 알림 실패가 알림 저장을 막으면 안 됨
+            log.warning("외부 알림 실패: %s", e)
+    sender = ROUTE.get("push")
+    if sender is not None and (kind in ROUTE["push_kinds"] or level == "bad"):
+        try:
+            sender(title, body or "", link or "#control")
+        except Exception as e:  # noqa: BLE001
+            log.warning("웹 푸시 실패: %s", e)
+
+
 def push(engine, kind: str, title: str, body: str | None = None, level: str = "info", symbol: str | None = None,
          link: str | None = None, dedupe: str | None = None, data: dict | None = None,
-         now: datetime | None = None) -> int | None:
-    """알림 하나 추가. 같은 dedupe 가 이미 있으면 None."""
+         now: datetime | None = None, route: bool = True) -> int | None:
+    """알림 하나 추가. 같은 dedupe 가 이미 있으면 None. 설정된 종류는 텔레그램·웹 푸시로도 보낸다."""
+    rid = _store(engine, kind, title, body, level, symbol, link, dedupe, data, now)
+    if rid is not None and route:
+        _route(kind, level, title, body, link)
+    return rid
+
+
+def _store(engine, kind, title, body, level, symbol, link, dedupe, data, now) -> int | None:
     now = now or datetime.now(UTC)
     try:
         with session_scope(engine) as s:
@@ -99,24 +138,163 @@ def _open_markets(now: datetime) -> set[str]:
 
 
 # ---------------------------------------------------------------- 급등·급락
+# ---------------------------------------------------------------- 종목별 알림 규칙
+RULE_KINDS = {"above": "목표가 도달", "below": "손절가 도달", "move": "등락률", "volume": "거래량 급증"}
+
+
+def active_rules(engine) -> list[dict]:
+    from .data.models import AlertRule
+    with session_scope(engine) as s:
+        return [{"id": r.id, "symbol": r.symbol, "kind": r.kind, "value": r.value, "note": r.note, "repeat": r.repeat,
+                 "active": r.active, "fired_at": r.fired_at.isoformat() if r.fired_at else None,
+                 "created_at": r.created_at.isoformat() if r.created_at else None}
+                for r in s.scalars(select(AlertRule).order_by(AlertRule.id.desc()))]
+
+
+def add_rule(engine, symbol: str, kind: str, value: float, note: str | None = None, repeat: bool = False) -> dict:
+    from .data.models import AlertRule
+    if kind not in RULE_KINDS:
+        raise ValueError(f"알 수 없는 규칙: {kind}")
+    value = float(value)
+    if value <= 0:
+        raise ValueError("값은 0 보다 커야 합니다")
+    with session_scope(engine) as s:
+        same = s.query(AlertRule).filter(AlertRule.active.is_(True), AlertRule.symbol == symbol, AlertRule.kind == kind,
+                                         AlertRule.value == value).first()
+        if same is not None:  # 같은 규칙을 두 번 누른 경우 — 새로 만들지 않는다
+            return {"id": same.id, "duplicate": True}
+        if s.query(AlertRule).filter(AlertRule.active.is_(True)).count() >= 200:
+            raise ValueError("활성 규칙은 200개까지")
+        r = AlertRule(symbol=symbol, kind=kind, value=value, note=(note or "")[:200] or None, active=True,
+                      repeat=bool(repeat), created_at=datetime.now(UTC))
+        s.add(r)
+        s.flush()
+        return {"id": r.id}
+
+
+def update_rule(engine, rule_id: int, active: bool | None = None, delete: bool = False) -> dict:
+    from .data.models import AlertRule
+    with session_scope(engine) as s:
+        r = s.get(AlertRule, int(rule_id))
+        if r is None:
+            raise ValueError("규칙 없음")
+        if delete:
+            s.delete(r)
+            return {"deleted": rule_id}
+        if active is not None:
+            r.active = bool(active)
+            if active:
+                r.fired_at = None
+        return {"id": rule_id, "active": r.active}
+
+
+def _session_fraction(sym: str, now: datetime) -> float:
+    """장 시작 후 지난 비율 (거래량 급증 판단: 누적 거래량 ÷ (평균 × 비율))."""
+    from .clock import MARKETS
+    m = MARKETS["KRX" if sym.isdigit() else "US"]
+    loc = m.local(now)
+    o = loc.replace(hour=m.open_time.hour, minute=m.open_time.minute, second=0, microsecond=0)
+    c = loc.replace(hour=m.close_time.hour, minute=m.close_time.minute, second=0, microsecond=0)
+    total = (c - o).total_seconds()
+    return max(0.05, min(1.0, (loc - o).total_seconds() / total)) if total > 0 else 1.0
+
+
+def _avg_volume(engine, symbols: list[str], n: int = 20) -> dict[str, float]:
+    from .data.models import PriceBar
+    out = {}
+    with session_scope(engine) as s:
+        for sym in symbols:
+            vs = [v for (v,) in s.execute(select(PriceBar.volume).where(PriceBar.symbol == sym, PriceBar.interval == "1d")
+                                          .order_by(PriceBar.ts.desc()).limit(n)) if v]
+            if vs:
+                out[sym] = sum(vs) / len(vs)
+    return out
+
+
+def evaluate_rules(app, quotes: dict[str, dict], now: datetime | None = None, names: dict | None = None) -> int:
+    """시세가 들어올 때마다(2.5분 · 또는 실시간 체결) 규칙 확인 → 알림 + 외부 전송."""
+    from .data.models import AlertRule
+    now = now or datetime.now(UTC)
+    rules = [r for r in active_rules(app.engine) if r["active"] and r["symbol"] in quotes]
+    if not rules:
+        return 0
+    names = names or _names(app.engine)
+    vol_avg = _avg_volume(app.engine, sorted({r["symbol"] for r in rules if r["kind"] == "volume"}))
+    fired = 0
+    day = now.date().isoformat()
+    for r in rules:
+        q = quotes[r["symbol"]]
+        px, chg = q.get("price"), q.get("chg_pct")
+        if r["fired_at"] and r["repeat"] and r["fired_at"][:10] == day:
+            continue  # 반복 규칙은 하루 한 번
+        hit, why = False, ""
+        if r["kind"] == "above" and px and px >= r["value"]:
+            hit, why = True, f"현재 {px:,.2f} ≥ 목표 {r['value']:,.2f}"
+        elif r["kind"] == "below" and px and px <= r["value"]:
+            hit, why = True, f"현재 {px:,.2f} ≤ 기준 {r['value']:,.2f}"
+        elif r["kind"] == "move" and chg is not None and abs(chg) * 100 >= r["value"]:
+            hit, why = True, f"전일 대비 {chg:+.2%} (기준 ±{r['value']:g}%)"
+        elif r["kind"] == "volume" and q.get("volume") and vol_avg.get(r["symbol"]):
+            ratio = q["volume"] / (vol_avg[r["symbol"]] * _session_fraction(r["symbol"], now))
+            if ratio >= r["value"]:
+                hit, why = True, f"거래량 평소의 {ratio:.1f}배 (기준 {r['value']:g}배)"
+        if not hit:
+            continue
+        name = names.get(r["symbol"], r["symbol"])
+        rid = push(app.engine, "rule", f"{name} {RULE_KINDS[r['kind']]}", why + (f" · {r['note']}" if r["note"] else ""),
+                   level="warn", symbol=r["symbol"], link=f"#analysis/{r['symbol']}",
+                   dedupe=f"rule:{r['id']}:{day}", data={"rule": r["id"], "dir": "up" if (chg or 0) >= 0 else "down"}, now=now)
+        if rid is not None:
+            fired += 1
+            with session_scope(app.engine) as s:
+                rr = s.get(AlertRule, r["id"])
+                rr.fired_at = now
+                if not rr.repeat:
+                    rr.active = False
+    return fired
+
+
+def watch_list(app, markets: set[str]) -> tuple[dict[str, set[str]], list[str]]:
+    """감시 대상: 보유·관심·코어 + 규칙이 걸린 종목, 열려 있는 시장만."""
+    focus = focus_symbols(app)
+    for r in active_rules(app.engine):  # 규칙이 걸린 종목은 관심 종목이 아니어도 본다
+        if r["active"]:
+            focus.setdefault(r["symbol"], set()).add("규칙")
+    return focus, [s for s in focus if ("KR" if s.isdigit() else "US") in markets][:50]
+
+
 def price_watch(app, now: datetime | None = None, fetchers: dict | None = None, markets: set[str] | None = None) -> dict:
+    """2.5분마다 무료 시세를 받아 알림 (증권사 실시간 체결이 켜져 있으면 그쪽이 더 빠르다)."""
     from .data.live_quotes import fetch_quotes
     now = now or datetime.now(UTC)
     markets = _open_markets(now) if markets is None else markets
-    focus = focus_symbols(app)
-    syms = [s for s in focus if ("KR" if s.isdigit() else "US") in markets][:40]
+    focus, syms = watch_list(app, markets)
     if not syms:
         return {"checked": 0, "alerts": 0}
-    quotes = fetch_quotes(syms, fetchers)
+    return ingest_quotes(app, fetch_quotes(syms, fetchers), now, focus)
+
+
+HIST_EVERY = timedelta(seconds=60)
+
+
+def ingest_quotes(app, quotes: dict[str, dict], now: datetime | None = None, focus: dict | None = None) -> dict:
+    """시세 묶음 → 화면용 실시간 시세 저장 + 급등락·급변 알림 + 종목별 규칙. (무료 폴링 · KIS 실시간 공용)"""
+    now = now or datetime.now(UTC)
+    if not quotes:
+        return {"checked": 0, "alerts": 0}
+    focus = focus if focus is not None else focus_symbols(app)
     names = _names(app.engine)
     state = ops.get_state(app.engine, "live_quotes")
     day = (now + timedelta(hours=9)).date().isoformat() if any(s.isdigit() for s in quotes) else now.date().isoformat()
     n = 0
     for sym, q in quotes.items():
+        if not q.get("price"):
+            continue
         prev = state.get(sym) or {}
         hist = [h for h in prev.get("hist", []) if now - pd.Timestamp(h[0]).to_pydatetime() <= timedelta(hours=2)]
-        hist.append([now.isoformat(), q["price"]])
-        state[sym] = {**q, "hist": hist[-30:], "name": names.get(sym, sym), "tags": sorted(focus.get(sym, []))}
+        if not hist or now - pd.Timestamp(hist[-1][0]).to_pydatetime() >= HIST_EVERY:  # 체결마다가 아니라 1분 간격 표본
+            hist.append([now.isoformat(), q["price"]])
+        state[sym] = {**q, "hist": hist[-40:], "name": names.get(sym, sym), "tags": sorted(focus.get(sym, []))}
         name, tags = names.get(sym, sym), focus.get(sym, set())
         tag = "·".join(sorted(tags))
         chg = q.get("chg_pct")
@@ -145,6 +323,7 @@ def price_watch(app, now: datetime | None = None, fetchers: dict | None = None, 
                 n += rid is not None
     state["_at"] = now.isoformat()
     ops.set_state(app.engine, "live_quotes", state)
+    n += evaluate_rules(app, quotes, now, names)
     return {"checked": len(quotes), "alerts": n}
 
 

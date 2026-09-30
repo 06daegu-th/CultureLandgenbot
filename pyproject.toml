@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-ai"
-version = "0.1.0"
+version = "0.12.0"
 description = "Self-reviewing quant AI: data collection, regime/news/feature engines, prediction, backtest, paper/shadow/live trading and daily review"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,6 +20,7 @@ dependencies = [
 postgres = ["psycopg[binary]>=3.1", "alembic>=1.13"]
 ai = ["anthropic>=1.0"]
 yahoo = ["yfinance>=0.2.54"]
+live = ["websockets>=12", "cryptography>=41"]  # KIS 실시간 체결(웹소켓) · 웹 푸시(VAPID 암호화)
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]

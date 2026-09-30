@@ -113,6 +113,8 @@ def demotion_reasons(ev: dict, stage: str) -> list[str]:
         out.append(f"확률 보정 붕괴 (BSS {bss})")
     if ev.get("halted") and rank(stage) >= rank("live_small"):
         out.append("자동 킬스위치 HALTED")
+    if ev.get("integrity_ok") is False and rank(stage) >= rank("live_small"):
+        out.append("평가 무결성 실패 (예측 장부 또는 누수 감사)")
     live_dd = (ev.get("live") or {}).get("max_drawdown")
     if rank(stage) >= rank("live_small") and live_dd is not None and live_dd < DEMOTE_LIVE_DD:
         out.append(f"실전 낙폭 {_pct(live_dd)} < {DEMOTE_LIVE_DD:.0%}")
@@ -155,6 +157,8 @@ def decide(ev: dict, state: dict, now: datetime) -> dict:
         return out | {"reasons": [f"강등 뒤 재승격 대기 ({cooldown[:10]} 까지)"]}
     if ev.get("halted"):
         return out | {"reasons": ["자동 킬스위치 HALTED 중에는 승격하지 않음"]}
+    if ev.get("integrity_ok") is False:
+        return out | {"reasons": ["예측 장부·누수 감사가 통과해야 승격 (독립 평가 화면 확인)"]}
     if stage == "shadow" and gates["shadow"]["ok"]:
         return out | {"stage": "paper", "changed": "promote", "reasons": ["Shadow 조건 통과 → AI 가 가상 장부 주문에 참여"]}
     if stage == "paper" and gates["paper"]["ok"]:

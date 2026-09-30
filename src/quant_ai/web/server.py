@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from .api import DashboardAPI
 
 STATIC = Path(__file__).parent / "static"
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 log = logging.getLogger("quant_ai.web")
 
 
@@ -110,6 +111,22 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.analytics(url.path.rsplit("/", 1)[-1], arg("mode")))
                     if url.path == "/api/search":
                         return self._json(api.search(arg("q", "")[:60]))
+                    if url.path == "/api/verify":
+                        return self._json(api.verify())
+                    if url.path == "/api/ledger":
+                        return self._json(api.ledger(int(arg("before", "0") or 0) or None))
+                    if url.path == "/api/graph":
+                        return self._json(api.graph(arg("symbol")))
+                    if url.path == "/api/agents":
+                        return self._json(api.agents())
+                    if url.path == "/api/rules":
+                        return self._json(api.rules())
+                    if url.path == "/api/push/key":
+                        return self._json(api.push_info())
+                    if url.path == "/api/reports":
+                        return self._json(api.reports())
+                    if url.path == "/api/report":
+                        return self._json(api.report(arg("file", "")))
                     if url.path == "/api/alerts":
                         return self._json(api.alerts(int(arg("after", "0") or 0)))
                     if url.path == "/api/quotes":
@@ -184,6 +201,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                                                  params={k: v for k, v in body.items() if k in ("symbol",)}))
                 if url.path == "/api/chat":
                     return self._json(api.chat(body))
+                if url.path == "/api/rules":
+                    return self._json(api.rule_write(body))
+                if url.path.startswith("/api/push/"):
+                    return self._json(api.push_write(url.path, body))
+                if url.path == "/api/notify/test":
+                    return self._json(api.notify_test())
                 if url.path == "/api/chat/clear":
                     from ..assistant import clear
                     clear(api.engine, str(body.get("sid", ""))[:40])

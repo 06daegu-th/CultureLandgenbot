@@ -95,7 +95,8 @@ def build_context(
     # 같은 사건 기사 N개 → 이벤트 1개 (중복 보도로 호재/악재가 부풀려지지 않게, LLM 토큰도 절약)
     news = [{k: v for k, v in e.items() if k != "symbols"} for e in cluster_news(articles)][:max_news]
     discl = [
-        {"date": str(d.filed_at), "title": _clip(d.title, 200), "sentiment": _r(d.sentiment, 2), "events": d.events or []}
+        {"date": str(d.filed_at), "title": _clip(d.title, 200), "sentiment": _r(d.sentiment, 2), "events": d.events or [],
+         **({"summary": _clip(d.summary, 600)} if d.summary else {})}  # 원문 요약 (공시 당시 공개된 본문)
         for d in session.scalars(
             select(Disclosure).where(Disclosure.symbol == symbol, Disclosure.filed_at <= as_of.date(),
                                      Disclosure.filed_at >= (as_of - timedelta(days=7)).date())

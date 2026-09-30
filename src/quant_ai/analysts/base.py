@@ -43,6 +43,10 @@ class MarketContext:
     market_state: dict = field(default_factory=dict)  # 시장 상태 {label: RISK ON/OFF, score, type}
     cross_asset: list[dict] = field(default_factory=list)  # [{name, corr, beta, chg_5d}] NASDAQ·VIX·달러·금리·유가
     community: dict = field(default_factory=dict)  # 커뮤니티·SNS 분위기 요약 (참고용, 실시간 판단에만)
+    sector: dict = field(default_factory=dict)  # 업종 · 업종 순위 · 상대강도 · 폭 · 같은 업종 상위 종목 (섹터 엔진)
+    related: list[dict] = field(default_factory=list)  # 연관 종목 움직임 + 관계 근거 (지식 그래프)
+    market_agents: dict = field(default_factory=dict)  # 뉴스·매크로·섹터 에이전트의 시장 요약 (이 종목 관련 사건 포함)
+    flow: dict = field(default_factory=dict)  # 외국인·기관 수급 요약 (국내)
 
     def to_prompt(self) -> str:
         d = asdict(self)

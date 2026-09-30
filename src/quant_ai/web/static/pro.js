@@ -628,7 +628,7 @@ function pfCompany(p, name) {
   const web = safeUrl(c.website);
   return `<div class="chips">${facts.map(([k, v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join(" ")}${web ? ` <a class="chip link" href="${web}" target="_blank" rel="noopener">웹사이트 ↗</a>` : ""}</div>
     ${c.summary ? `<div class="co-sum small muted" id="co-sum">${esc(c.summary)}</div><div style="display:flex;gap:8px;margin-top:8px"><button class="btn-sm" id="co-more">더 보기</button>
-    <button class="btn-sm primary" onclick="askAI('${esc((name || "").replace(/'/g, ""))} 회사 소개를 한국어로 쉽게 요약하고, 투자 전에 확인할 점을 알려줘')">${ICONS.chat} AI 한국어 요약</button></div>` : ""}`;
+    <button class="btn-sm primary" data-ask="${esc(name || "")} 회사 소개를 한국어로 쉽게 요약하고, 투자 전에 확인할 점을 알려줘">${ICONS.chat} AI 한국어 요약</button></div>` : ""}`;
 }
 
 function pfNews(p, dbNews) {
@@ -667,6 +667,7 @@ async function loadProfile(sym, name, a, refresh = false) {
   box.innerHTML = `${secs.length ? `<div class="grid g-2">${secs.map(([t, b]) => card(t, b)).join("")}</div>` : ""}
     ${news ? card("관련 뉴스", news, `<span class="xs dim">${(a.news || []).length ? "국내 RSS" : ""}${(a.news || []).length && (p.news || []).length ? " + " : ""}${(p.news || []).length ? "Yahoo" : ""}</span>`) : ""}
     <div class="pf-src xs dim">${src} ${errs} <button class="btn-sm" id="pf-refresh">새로 고침</button></div>`;
+  if (typeof stockExtras === "function") stockExtras(sym, a, p);  // 알림 규칙 · 수급 · 연관 종목 · 공시 요약 (verify.js)
   const more = $("#co-more");
   if (more) more.onclick = () => { $("#co-sum").classList.toggle("open"); more.textContent = $("#co-sum").classList.contains("open") ? "접기" : "더 보기"; };
   $("#pf-refresh").onclick = (e) => { e.target.disabled = true; e.target.textContent = "불러오는 중…"; loadProfile(sym, name, a, true); };

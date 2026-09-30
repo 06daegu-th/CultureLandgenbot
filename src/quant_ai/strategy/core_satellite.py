@@ -34,6 +34,10 @@ class CoreSatelliteConfig:
     # False = 코어 전용: AI 분석(LLM 호출)·거부권·위성 없이 팩터 코어가 100%. AI 기여도가 검증되기 전 실전 기본 권장
     use_ai: bool = True
     affordability_slack: float = 1.5  # 1주 가격이 목표 금액의 이 배수를 넘으면 매수 불가로 보고 다음 순위로
+    # 위성 비중: "kelly" = 보정된 상승확률의 반(半)켈리로 크기를 정하되 자리당 상한(sat_w)을 넘지 않는다
+    # (p=0.60 이상이면 상한, p=0.55 면 절반). "equal" = 예전처럼 자리당 같은 비중
+    satellite_sizing: str = "kelly"
+    kelly_full_at: float = 0.60
     factor_weights: dict = field(default_factory=lambda: dict(CORE_FACTOR_WEIGHTS))
 
 
@@ -127,8 +131,15 @@ def build_plan(scores: pd.Series, prev_core: list[str], rebalance_due: bool, cfg
                         and b["symbol"] not in plan.weights and b["symbol"] not in vetoes
                         and b["symbol"] not in exits), key=lambda b: -b["confidence"])
         for b in cands[:cfg.satellite_k]:
-            plan.weights[b["symbol"]] = sat_w
-            plan.satellite.append({**b, "weight": sat_w})
+            w = sat_w
+            p = b.get("prob_up")
+            if cfg.satellite_sizing == "kelly" and p is not None:
+                # 반켈리 f = (2p−1)/2 (손익비 1 가정) → kelly_full_at 에서 상한 sat_w 에 닿도록 비례
+                w = sat_w * max(0.0, min(1.0, (2 * p - 1) / (2 * cfg.kelly_full_at - 1)))
+            if w <= 0:
+                continue
+            plan.weights[b["symbol"]] = w
+            plan.satellite.append({**b, "weight": w, "sizing": cfg.satellite_sizing})
         if len(plan.satellite) < cfg.satellite_k:
             plan.notes.append(f"위성 {cfg.satellite_k - len(plan.satellite)}자리 현금 (확신 있는 AI 합의 BUY 부족)")
     return plan

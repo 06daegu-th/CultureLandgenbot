@@ -220,7 +220,7 @@ function viewDashboard(d) {
     return [...d.indices.map((i) => ({ name: { KOSPI: "KOSPI (대용)", KOSDAQ: "KOSDAQ (대용)" }[i.symbol] || i.name, last: i.last, chg: i.chg, chg_pct: i.chg_pct, spark: i.spark })),
       ...w.map((x) => ({ name: x.name, last: x.last, chg_pct: x.chg_pct, spark: null, sym: x.symbol, tag: "대표 종목" }))];
   })();
-  const idx = idxCards.length ? `<div class="idx-row">${idxCards.map((i) => `<div class="idx ${i.sym ? "click" : ""}" ${i.sym ? `onclick="location.hash='#analysis/${esc(i.sym)}'"` : ""}><div class="n">${esc(i.name)}${i.tag ? ` <span class="xs dim">${i.tag}</span>` : ""}</div>
+  const idx = idxCards.length ? `<div class="idx-row">${idxCards.map((i) => `<div class="idx ${i.sym ? "click" : ""}" ${i.sym ? `data-go="#analysis/${esc(i.sym)}"` : ""}><div class="n">${esc(i.name)}${i.tag ? ` <span class="xs dim">${i.tag}</span>` : ""}</div>
       <div class="v num">${i.sym ? price(i.last, i.sym) : num(i.last, 2)}</div><div class="small">${i.bp != null ? `<span class="${i.bp >= 0 ? "up" : "down"}">${i.bp >= 0 ? "▲ +" : "▼ "}${(i.bp * 100).toFixed(1)}bp</span>` : pct(i.chg_pct)}</div>${spark(i.spark)}</div>`).join("")}</div>`
     : empty(S.idxTab === "kr" ? "지수 데이터 없음" : "FRED_API_KEY 설정 후 자동 수집됩니다");
   // 2) 시장 상태
@@ -261,7 +261,7 @@ function viewDashboard(d) {
   // 7) 매매 신호
   const sigs = (d.signals || []).slice(0, 6).map((s) => `<tr class="click" data-sym="${esc(s.symbol)}"><td><b>${esc(s.name)}</b></td><td>${badge(s.action)}</td><td class="r num">${pctRaw(s.prob_up, 0)}</td><td class="r dim small">${time(s.ts, true)}</td></tr>`).join("");
   // 8) 이벤트 · 글로벌
-  const evs = (d.events || []).slice(0, 6).map((e) => `<div class="ev-it ${e.d_label ? "click" : ""}" ${e.d_label ? `onclick="location.hash='#analysis/${esc(e.symbol)}'"` : ""}>${flag(e.country)}<span><span class="imp ${e.importance >= 0.8 ? "hi" : e.importance < 0.5 ? "lo" : ""}"></span>${esc(e.name)}</span><span class="dim xs mono">${e.d_label ? `<b style="color:var(--accent-3)">${esc(e.d_label)}</b> ${date(e.ts).slice(5)}` : `${date(e.ts).slice(5)} ${time(e.ts)}`}</span></div>`).join("");
+  const evs = (d.events || []).slice(0, 6).map((e) => `<div class="ev-it ${e.d_label ? "click" : ""}" ${e.d_label ? `data-go="#analysis/${esc(e.symbol)}"` : ""}>${flag(e.country)}<span><span class="imp ${e.importance >= 0.8 ? "hi" : e.importance < 0.5 ? "lo" : ""}"></span>${esc(e.name)}</span><span class="dim xs mono">${e.d_label ? `<b style="color:var(--accent-3)">${esc(e.d_label)}</b> ${date(e.ts).slice(5)}` : `${date(e.ts).slice(5)} ${time(e.ts)}`}</span></div>`).join("");
   const globRows = ["SP500", "NASDAQCOM", "VIXCLS", "DTWEXBGS", "DGS10", "DCOILWTICO"].map((k) => glob[k]).filter(Boolean)
     .map((x) => `<tr><td>${esc(x.label)}</td><td class="r num">${num(x.last, 2)}</td><td class="r">${x.rate ? `<span class="${x.chg >= 0 ? "up" : "down"}">${(x.chg * 100).toFixed(0)}bp</span>` : pct(x.chg_pct)}</td></tr>`).join("");
   S.symbol = S.symbol || d.watchlist.find((w) => w.action === "BUY")?.symbol || d.watchlist[0]?.symbol;
@@ -350,7 +350,7 @@ async function fillAI(d, sym) {
     ${rg ? `<div class="rng"><span class="muted">${rg.horizon}거래일 예상 범위 (1σ)</span><span class="num">${num(rg.lower)} ~ ${num(rg.upper)}</span>
       <span class="muted">변동성 손절선 (2σ)</span><span class="num down">${num(rg.stop)} (${pctRaw(rg.stop / rg.last - 1)})</span></div>` : ""}
     <div class="ai-roles" style="margin-top:12px">${roles.map((v) => `<span class="ai-role" title="${esc(v.summary || "")}">${aiIcon(providerOf(v.backend), v.analyst, v.backend, 20)}${esc(ROLE_LABEL[v.analyst] || v.analyst)} <b class="num ${v.prob_up == null ? "flat" : v.prob_up >= 0.5 ? "up" : "down"}">${v.prob_up == null ? (v.veto ? "VETO" : "통과") : pctRaw(v.prob_up, 0)}</b></span>`).join("")}</div>
-    <button class="btn-wide" onclick="location.hash='#evidence/${c.id}'">근거 추적 (Evidence Chain) 보기 ${ICONS.arrow}</button>`;
+    <button class="btn-wide" data-go="#evidence/${c.id}">근거 추적 (Evidence Chain) 보기 ${ICONS.arrow}</button>`;
 }
 
 function pipeline(d, o) {
@@ -619,7 +619,7 @@ async function viewAnalysis(el) {
       <div class="sh-price"><span class="num" data-live-sym="${esc(sym)}">${a.last == null ? "-" : esc(priceCur(a.last, cur))}</span>
         <span class="${chgCls} num">${a.chg == null ? "" : `${a.chg >= 0 ? "▲" : "▼"} ${esc(priceCur(Math.abs(a.chg), cur))} (${pct(a.chg_pct)})`}</span>
         <span class="xs dim">${a.last_ts ? date(a.last_ts) + " 종가" : ""}</span></div></div>
-      <div class="sh-act">${sel}<button class="btn-sm primary" onclick="askAI('${esc((a.name || sym).replace(/'/g, ""))} 지금 사도 될까? 일정·지표·뉴스 보고 판단 근거 알려줘')">${ICONS.chat} AI 에게 묻기</button></div></div>
+      <div class="sh-act">${sel}<button class="btn-sm primary" data-ask="${esc(a.name || sym)} 지금 사도 될까? 일정·지표·뉴스 보고 판단 근거 알려줘">${ICONS.chat} AI 에게 묻기</button></div></div>
     ${c ? `<div class="sh-pred"><span class="xs muted">AI 예상 (${esc(date(c.as_of))})</span> <b>${c.horizon || 5}거래일 상승 확률 ${(c.prob_up * 100).toFixed(0)}%</b>
       ${c.expected_return != null ? ` · 예상 <b class="${c.expected_return >= 0 ? "up" : "down"}">${c.expected_return >= 0 ? "+" : ""}${(c.expected_return * 100).toFixed(1)}%</b>` : ""} ${badge(c.action)}
       ${c.trigger ? `<span class="chip xs" title="${esc(c.trigger)}">⚡ 이벤트 재분석</span>` : ""}</div>` : ""}
@@ -638,6 +638,7 @@ async function viewAnalysis(el) {
     ${card("투자 전 체크 <span class='small dim'>핵심 지표</span>", `<div id="pf-stats"><div class="ev-none small dim">불러오는 중…</div></div>`)}
   </div>
   <div id="pf-sections"></div>
+  <div id="pf-extra"></div>
   ${aiSections}
   ${sim ? card("과거 유사 사례 (RAG 메모리)", `<div class="scroll"><table><tbody>${sim}</tbody></table></div>`) : ""}`;
   $("#sym-select").onchange = (e) => { location.hash = `#analysis/${e.target.value}`; };
@@ -1002,9 +1003,9 @@ function viewSettings(d) {
 
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
-  ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
+  ["메인", [["dashboard", "home", "홈"], ["control", "control", "24H 관제실"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["chat", "chat", "AI 어시스턴트"], ["market", "market", "시장 분석"], ["graph", "models", "지식 그래프 · 업종"], ["analysis", "ai", "AI 분석"], ["ai", "score", "AI 성적 · 보정"]]],
   ["투자", [["portfolio", "portfolio", "포트폴리오"], ["risk", "risk", "리스크 관리"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["sheet", "sheet", "리밸런싱 주문표"]]],
-  ["검증 · 학습", [["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
+  ["검증 · 학습", [["reports", "review", "리포트 · 브리핑"], ["lab", "lab", "실험 · 승격"], ["journal", "journal", "판단 저널"], ["news", "news", "뉴스 & 이벤트"], ["review", "review", "복기 리포트"], ["research", "research", "리서치 · 백테스트"], ["models", "models", "모델 · 검증"]]],
   ["시스템", [["safety", "shield", "안전 센터"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
 ];
 function buildNav() {
@@ -1051,7 +1052,11 @@ async function render() {
     else if (S.view === "risk") await viewRisk(el);
     else if (S.view === "journal") await viewJournal(el);
     else if (S.view === "evidence") await viewEvidence(el, S.param);
-    else if (S.view === "settings") { el.innerHTML = alertSettingsCard() + viewSettings(d); bindAlertSettings(); }
+    else if (S.view === "settings") { el.innerHTML = alertSettingsCard() + extraSettingsCard() + viewSettings(d); bindAlertSettings(); bindExtraSettings(); }
+    else if (S.view === "verify") await viewVerify(el);
+    else if (S.view === "ledger") await viewLedger(el);
+    else if (S.view === "graph") await viewGraph(el);
+    else if (S.view === "reports") await viewReports(el);
     else if (S.view === "control") await viewControl(el);
     else if (S.view === "alpha") await viewAlpha(el);
     else if (S.view === "safety") await viewSafety(el);
@@ -1064,6 +1069,7 @@ async function render() {
   }
   bindCommon();
   animateView(el);
+  markTab();
 }
 
 function bindCommon() {
@@ -1180,6 +1186,7 @@ setTheme(safeGet("qa_theme") || "dark");
 buildNav();
 initChatWidget();
 initLive();
+initPWA();
 tickClock(); setInterval(tickClock, 1000);
 
 window.addEventListener("hashchange", route);

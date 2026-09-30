@@ -199,7 +199,7 @@ ensure_installed() {
     rm -f "$VENV/.installed"
   fi
   clean_broken_pip
-  local extras="ai,dev,yahoo"  # yahoo: 해외 일봉 (브라우저 흉내로 429 차단을 피하는 yfinance)
+  local extras="ai,dev,yahoo,live"  # yahoo: 해외 일봉 · live: KIS 실시간 체결 · 웹 푸시
   [[ "$(env_get DATABASE_URL)" == postgres* ]] && extras="$extras,postgres"
   local hash stamp need=0 e
   hash="$("$VENV/bin/python" -c 'import hashlib; print(hashlib.sha1(open("pyproject.toml","rb").read()).hexdigest())')"

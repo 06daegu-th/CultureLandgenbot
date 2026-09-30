@@ -425,6 +425,9 @@ class DashboardAPI:
                      "events": n.events or [], "source": n.source, "url": n.url}
                     for n in s.scalars(select(NewsArticle).order_by(NewsArticle.published_at.desc()).limit(600))
                     if symbol in (n.symbols or []) or any(t in (n.title or "").lower() for t in terms)][:15]
+            discs = [{"date": str(d.filed_at), "title": d.title, "summary": d.summary, "url": d.url}
+                     for d in s.scalars(select(Disclosure).where(Disclosure.symbol == symbol)
+                                        .order_by(Disclosure.filed_at.desc(), Disclosure.id.desc()).limit(8))]
             similar = self.app.memory.search(s, f"{symbol} {inst[symbol].name if symbol in inst else ''} "
                                              + " ".join(n["title"] for n in news[:3]), k=5,
                                              before=c.as_of if c else None, symbol=symbol)
@@ -447,6 +450,7 @@ class DashboardAPI:
             "has_llm": self.app.settings.has_llm,
             "consensus": ({**(c.payload or {}), "as_of": _ts(c.as_of), "id": c.id} if c else None),
             "details": details, "scenario": scen.payload if scen else None, "news": news, "similar": similar,
+            "disclosures": discs,
             "history": [{"ts": _ts(h.as_of), "action": h.action, "prob_up": _f(h.prob_up), "confidence": h.confidence,
                          "correct": h.correct, "realized": _f(h.realized_return)} for h in hist],
         }
@@ -479,6 +483,7 @@ class DashboardAPI:
         vr = float(vol.iloc[-5:].mean() / vol.iloc[-60:].mean()) if vol.iloc[-60:].mean() > 0 else 1.0
         p = (c.payload or {}) if c else {}
         ev = p.get("evidence") or {}
+        fl = ev.get("flow") or {}
         news = ev.get("news") or []
         ns = [x.get("sentiment") for x in news if x.get("sentiment") is not None]
         nscore = float(np.mean(ns)) if ns else None
@@ -489,8 +494,14 @@ class DashboardAPI:
              "text": f"{tech} 추세 · 20일 {ret20:+.1%} · RSI {rsi:.0f}"},
             {"key": "뉴스", "ok": (nscore or 0) > 0.1, "tone": "긍정" if (nscore or 0) > 0.1 else "부정" if (nscore or 0) < -0.1 else "중립",
              "text": (f"이벤트 {len(news)}건 · 평균 감성 {nscore:+.2f}" if nscore is not None else "관련 뉴스 없음")},
-            {"key": "수급", "ok": vr >= 1.1 and ret20 > 0, "tone": "유입" if vr >= 1.1 else "보통" if vr >= 0.8 else "감소",
-             "text": f"5일 거래량 60일 평균의 {vr:.1f}배 (외국인·기관 수급 데이터는 미연결)"},
+            ({"key": "수급", "ok": (fl.get("foreign_5d") or 0) + (fl.get("inst_5d") or 0) > 0,
+              "tone": "유입" if (fl.get("foreign_5d") or 0) + (fl.get("inst_5d") or 0) > 0 else "유출",
+              "text": f"5일 외국인 {fl.get('foreign_5d') or 0:+,.0f}주 · 기관 {fl.get('inst_5d') or 0:+,.0f}주"
+                      + (f" · 외국인 {abs(fl['foreign_streak'])}일 연속 {'순매수' if fl['foreign_streak'] > 0 else '순매도'}"
+                         if fl.get("foreign_streak") else "")}
+             if fl.get("foreign_5d") is not None else
+             {"key": "수급", "ok": vr >= 1.1 and ret20 > 0, "tone": "유입" if vr >= 1.1 else "보통" if vr >= 0.8 else "감소",
+              "text": f"5일 거래량 60일 평균의 {vr:.1f}배 (외국인·기관 수급은 장 마감 후 수집되면 표시)"}),
             {"key": "거시", "ok": mk.get("label") == "RISK ON", "tone": mk.get("label") or "-",
              "text": (f"시장 {mk.get('label')} {mk.get('score')}점" if mk else "시장 상태 없음")
              + (f" · {cross[0]['name']} 상관 {cross[0]['corr']:+.2f}" if cross else "")},
@@ -655,6 +666,104 @@ class DashboardAPI:
             r["action"] = c.action if c else None
         return {"results": res}
 
+    # ------------------------------------------------------------------ 검증실 · 장부 · 드리프트
+    def verify(self) -> dict:
+        """독립 평가(야간 결과) + 장부 무결성(지금 다시 확인) + 드리프트 + 모델 계보."""
+        from ..review.ledger import verify as ledger_verify
+
+        def build():
+            with session_scope(self.engine) as s:
+                led = ledger_verify(s)
+            ev = _ops.get_state(self.engine, "evaluation")
+            models = []
+            with session_scope(self.engine) as s:
+                for m in s.scalars(select(ModelRecord).order_by(ModelRecord.created_at.desc()).limit(12)):
+                    p = m.params or {}
+                    models.append({"id": m.id, "name": m.name, "version": m.version, "status": m.status,
+                                   "created_at": _ts(m.created_at), "reason": p.get("reason"), "parent": p.get("parent"),
+                                   "train_end": p.get("train_end"), "embargo": p.get("embargo"),
+                                   "sharpe": _f((m.metrics or {}).get("strategy", {}).get("sharpe"), 2),
+                                   "dsr": _f((m.metrics or {}).get("dsr"), 3)})
+            from ..analysts.analysts import PROMPT_VERSIONS, ROLE_TITLES
+            return {"evaluation": ev or None, "ledger": led, "drift": _ops.get_state(self.engine, "drift") or None,
+                    "models": models, "model_events": _ops.get_state(self.engine, "model_events").get("events", [])[-10:][::-1],
+                    "prompts": [{"role": k, "title": ROLE_TITLES.get(k, k), "version": v} for k, v in PROMPT_VERSIONS.items()]}
+        return self._cached("verify", 20, build)
+
+    def ledger(self, before: int | None = None) -> dict:
+        from ..review.ledger import entries
+        with session_scope(self.engine) as s:
+            names = {i.symbol: i.name or i.symbol for i in s.scalars(select(Instrument))}
+            return {"rows": entries(s, 60, before, names)}
+
+    # ------------------------------------------------------------------ 지식 그래프 · 섹터 · 에이전트
+    def graph(self, symbol: str | None = None) -> dict:
+        from ..engines.knowledge import ego
+        g = _ops.get_state(self.engine, "kgraph")
+        if not g:
+            return {"nodes": {}, "edges": [], "stats": None, "message": "아직 그래프가 없습니다 — 장 마감 후 자동으로 만들어집니다"}
+        if symbol:
+            return {**ego(g, symbol, 12), "stats": g.get("stats"), "at": g.get("at")}
+        top = g.get("edges", [])[:160]
+        keep = {x for e in top for x in (e["a"], e["b"])}
+        return {"nodes": {k: v for k, v in g.get("nodes", {}).items() if k in keep}, "edges": top, "stats": g.get("stats"), "at": g.get("at")}
+
+    def agents(self) -> dict:
+        return {k: _ops.get_state(self.engine, k) or None for k in ("news_digest", "macro_brief", "sector_view")} | {
+            "sector_map_size": len(_ops.get_state(self.engine, "sector_map").get("map", {}))}
+
+    # ------------------------------------------------------------------ 알림 규칙 · 푸시 · 외부 알림 · 리포트
+    def rules(self) -> dict:
+        from ..alerts import RULE_KINDS, active_rules
+        with session_scope(self.engine) as s:
+            names = {i.symbol: i.name or i.symbol for i in s.scalars(select(Instrument))}
+        return {"rules": [{**r, "name": names.get(r["symbol"], r["symbol"])} for r in active_rules(self.engine)],
+                "kinds": RULE_KINDS}
+
+    def rule_write(self, body: dict) -> dict:
+        from ..alerts import add_rule, update_rule
+        if body.get("id"):
+            return update_rule(self.engine, int(body["id"]), body.get("active"), bool(body.get("delete")))
+        sym = str(body.get("symbol", ""))[:12]
+        if not re.fullmatch(r"\d{6}|[A-Z][A-Z.\-]{0,9}", sym):
+            raise ValueError("종목 코드가 올바르지 않습니다")
+        return add_rule(self.engine, sym, str(body.get("kind", "")), float(body.get("value") or 0),
+                        str(body.get("note") or "")[:200] or None, bool(body.get("repeat")))
+
+    def push_info(self) -> dict:
+        from ..webpush import SUBS_KEY, available, vapid_keys
+        if not available():
+            return {"available": False, "message": "cryptography 미설치 — ./run.sh 를 다시 실행하세요"}
+        return {"available": True, "public_key": vapid_keys(self.app.settings.artifacts_dir)["public"],
+                "subscriptions": len(_ops.get_state(self.engine, SUBS_KEY).get("subs", []))}
+
+    def push_write(self, path: str, body: dict) -> dict:
+        from ..webpush import send, subscribe, unsubscribe
+        if path.endswith("/subscribe"):
+            return subscribe(self.engine, body.get("subscription") or {}, str(body.get("label", "")))
+        if path.endswith("/unsubscribe"):
+            return unsubscribe(self.engine, str((body.get("subscription") or {}).get("endpoint", "")))
+        return send(self.engine, self.app.settings.artifacts_dir, "Quant AI 푸시 테스트",
+                    "이 알림이 보이면 휴대폰·PC 푸시 연결 성공입니다", "#settings")
+
+    def notify_test(self) -> dict:
+        return self.app.notifier.test()
+
+    def reports(self) -> dict:
+        from ..reports import list_reports
+        return {"reports": list_reports(self.app)}
+
+    def report(self, file: str) -> dict:
+        import json as _json
+
+        from ..reports import report_dir
+        if not re.fullmatch(r"(morning|daily)-\d{4}-\d{2}-\d{2}\.html", file or ""):
+            raise ValueError("잘못된 리포트 이름")
+        p = report_dir(self.app) / file.replace(".html", ".json")
+        if not p.exists():
+            raise ValueError("리포트 없음")
+        return _json.loads(p.read_text(encoding="utf-8"))
+
     def alerts(self, after: int = 0) -> dict:
         from ..alerts import recent
         return recent(self.engine, after=max(0, int(after or 0)), limit=60)
@@ -714,11 +823,14 @@ class DashboardAPI:
         a = dict(p.get("analyst") or {})
         if a.get("target_mean") and st.get("price"):
             a["upside"] = a["target_mean"] / st["price"] - 1
+        flow = _ops.get_state(self.engine, f"flow:{symbol}")
         com = _ops.get_state(self.engine, f"community:{symbol}")
         return {**p, "stats": st, "analyst": a, "name": inst.name if inst else symbol,
                 "market": inst.market if inst else "",
                 "community": {**{k: com.get(k) for k in ("at", "source", "n", "bull", "bear", "mood", "label")},
-                              "posts": (com.get("posts") or [])[:6]} if com.get("at") else None}
+                              "posts": (com.get("posts") or [])[:6]} if com.get("at") else None,
+                "flow": {"at": flow.get("at"), "rows": flow.get("rows", [])[-20:], "summary": flow.get("summary")}
+                if flow.get("at") else None}
 
     def ensure_symbol(self, symbol: str) -> dict:
         """해외 종목이면 무료 일봉을 받아 캐시 (처음 한 번 · 12시간마다 갱신)."""

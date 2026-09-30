@@ -42,11 +42,17 @@ def evidence_snapshot(ctx) -> dict:
         "data_quality": ctx.data_quality,
         **({"community": {k: ctx.community.get(k) for k in ("source", "posts", "bullish", "bearish", "mood", "label")}}
            if getattr(ctx, "community", None) else {}),
+        **({"sector": ctx.sector} if getattr(ctx, "sector", None) else {}),
+        **({"flow": ctx.flow} if getattr(ctx, "flow", None) else {}),
+        **({"related": ctx.related[:5]} if getattr(ctx, "related", None) else {}),
+        **({"agents": {"news_for_this_stock": (ctx.market_agents or {}).get("news_for_this_stock")}}
+           if (getattr(ctx, "market_agents", None) or {}).get("news_for_this_stock") else {}),
     }
 
 
 def save_consensus(session: Session, sig: ConsensusSignal, opinions: list[Opinion], as_of: datetime,
-                   horizon: int, regime: str | None, evidence: dict | None = None) -> ConsensusRecord:
+                   horizon: int, regime: str | None, evidence: dict | None = None,
+                   versions: dict | None = None) -> ConsensusRecord:
     from ..review.scorecard import expected_move
     sigma = ((evidence or {}).get("price") or {}).get("vol_20")
     exp_h, exp_1d = expected_move(sig.prob_up, sigma, horizon)  # 확률 → 크기 (예측 성적표에서 실제와 비교)
@@ -55,7 +61,10 @@ def save_consensus(session: Session, sig: ConsensusSignal, opinions: list[Opinio
                           payload={**sig.to_dict(), "regime": regime, "horizon": horizon,
                                    **({"expected_return": round(exp_h, 5), "expected_1d": round(exp_1d, 5)}
                                       if exp_h is not None else {}),
+                                   **({"versions": versions} if versions else {}),
                                    **({"evidence": _json_safe(evidence)} if evidence else {})})
+    from ..review.ledger import seal
+    seal(rec)  # 예측 장부: 저장 시각 + 내용 해시
     session.add(rec)
     session.flush()
     cal = {c.analyst: c.prob_up for c in sig.contributions if c.prob_raw is not None}

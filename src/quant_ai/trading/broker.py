@@ -23,6 +23,8 @@ class MarketQuote:
     ask: float | None = None
     bid_qty: float | None = None
     ask_qty: float | None = None
+    adv: float | None = None  # 20일 평균 거래대금 (시장 충격 계산용)
+    sigma: float | None = None  # 20일 일간 변동성
 
 
 class Broker(ABC):
@@ -42,8 +44,9 @@ class PaperBroker(Broker):
         super().__init__(portfolio)
         self.costs = costs or CostModel()
 
-    def _fill(self, order: Order, ref: float, ts: datetime) -> Fill | None:
-        price = self.costs.fill_price(order.side, ref)
+    def _fill(self, order: Order, ref: float, ts: datetime, quote: MarketQuote | None = None) -> Fill | None:
+        price = self.costs.fill_price(order.side, ref, ref * order.qty, quote.adv if quote else None,
+                                      quote.sigma if quote else None)
         if order.order_type == "limit" and order.limit_price is not None:
             crosses = price <= order.limit_price if order.side is Side.BUY else price >= order.limit_price
             if not crosses:
@@ -53,7 +56,7 @@ class PaperBroker(Broker):
         return fill
 
     def submit(self, order: Order, quote: MarketQuote, ts: datetime) -> Fill | None:
-        return self._fill(order, quote.last, ts)
+        return self._fill(order, quote.last, ts, quote)
 
 
 class ShadowBroker(PaperBroker):
@@ -74,7 +77,7 @@ class ShadowBroker(PaperBroker):
             if int(avail) <= 0:
                 return None
             order = replace(order, qty=int(avail), reason=order.reason + " (호가잔량 부족: 부분체결)")
-        return self._fill(order, ref, ts)
+        return self._fill(order, ref, ts, quote)
 
 
 class LiveBroker(Broker):

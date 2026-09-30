@@ -27,6 +27,7 @@ class RiskEngine:
         self._day_start_equity = 0.0
         self._orders_today = 0
         self.adv: dict[str, float] = {}  # 종목별 20일 평균 거래대금 (없으면 유동성 한도 생략)
+        self.sectors: dict[str, str] = {}  # 종목 → 업종 (없으면 업종 한도 생략)
 
     def start_day(self, day: date, equity: float, orders_so_far: int = 0) -> None:
         """orders_so_far: 오늘 이미 낸 주문 수 (프로세스 재시작/여러 사이클에 걸쳐 한도 유지)."""
@@ -80,6 +81,11 @@ class RiskEngine:
              f"총노출 한도 {gross_cap:.0%} (국면배수 {exposure_multiplier})"),
             (portfolio.cash / 1.01, "가용 현금"),  # 수수료/세금 여유분
         ]
+        sector = self.sectors.get(order.symbol)
+        if sector and getattr(L, "max_sector_weight", 0) > 0:
+            held_sector = sum(p.qty * prices.get(s, p.avg_price) for s, p in portfolio.positions.items()
+                              if p.qty and self.sectors.get(s) == sector)
+            caps.append((L.max_sector_weight * equity - held_sector, f"업종 한도 {sector} {L.max_sector_weight:.0%}"))
         adv = self.adv.get(order.symbol)
         if adv and L.max_adv_participation > 0:
             caps.append((adv * L.max_adv_participation, f"유동성 한도 (20일 평균 거래대금의 {L.max_adv_participation:.0%})"))

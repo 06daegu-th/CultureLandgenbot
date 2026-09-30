@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import func, select
 
@@ -88,6 +89,16 @@ class QuantAI:
         self.memory = Memory(embedder)
         self.ensemble = EnsembleEngine()
         self.notifier = ops.Notifier.from_env()
+        # 알림 라우팅: 사이트 알림 중 일부 종류를 텔레그램·디스코드와 웹 푸시로도 (QUANT_NOTIFY_KINDS · QUANT_PUSH_KINDS)
+        import os as _os
+
+        from . import alerts as _alerts
+        from .webpush import sender as _push_sender
+        kinds = _os.environ.get("QUANT_NOTIFY_KINDS")
+        pkinds = _os.environ.get("QUANT_PUSH_KINDS")
+        _alerts.configure(self.notifier, {k.strip() for k in kinds.split(",") if k.strip()} if kinds else None,
+                          _push_sender(self.engine, self.settings.artifacts_dir),
+                          {k.strip() for k in pkinds.split(",") if k.strip()} if pkinds else None)
 
     # ================================================================ 데이터
     def symbols(self, include_index: bool = False) -> list[str]:
@@ -209,7 +220,7 @@ class QuantAI:
 
     # ============================================================ 모델 수명주기
     def train_candidate(self, bars=None, bench=None, sentiment=None, config: BacktestConfig | None = None,
-                        name: str | None = None):
+                        name: str | None = None, reason: str = "정기 재학습"):
         """walk-forward 백테스트로 검증 → 레지스트리 등록 → 백테스트 게이트 평가 (통과 시 shadow)."""
         if bars is None:
             bars, bench, sentiment = self.market_data()
@@ -234,6 +245,9 @@ class QuantAI:
         rec = self.registry.register_candidate(model, name, result.metrics, {
             "horizon": cfg.horizon, "model_kind": cfg.model_kind, "train_window": cfg.train_window,
             "min_prob": cfg.min_prob, "train_end": str(train.index.get_level_values(0).max()),
+            "embargo": cfg.embargo, "reason": reason,  # 계보: 왜 · 무엇에서 · 어떤 데이터로 만들었나
+            "parent": (lambda c: f"{c.name}@{c.version}" if c else None)(self.registry.champion()),
+            "train_start": str(train.index.get_level_values(0).min()), "n_train": int(len(train)),
         })
         gate = self.registry.evaluate_candidate(rec.id)
         return rec, result, gate
@@ -309,6 +323,10 @@ class QuantAI:
         if model_rec is not None and model_rec.status == "shadow":
             challenger_rec, challenger = None, None  # shadow 가 이미 메인으로 쓰이는 중
         analysts = build_analysts(self.settings, model, model_rec.version if model_rec else None, self.engine)
+        from .analysts.analysts import analyst_versions
+        versions = analyst_versions(analysts, model_rec.version if model_rec else None)
+        if as_of is not None:
+            versions["replay"] = True  # 과거 재생 예측 (저장 시각이 기준 시각보다 늦는 게 정상)
         events = self.load_events()
 
         decisions: list[Decision] = []
@@ -325,6 +343,17 @@ class QuantAI:
             macro_series = load_macro(s, [k for k in FACTORS if k != "KOSPI"], as_of=as_of or datetime.now(UTC))
             factors = {**macro_series, **({("KOSPI" if market == "KR" else "SPY"): bench["close"]} if bench is not None else {})}
             mstate = market_state(bench, bars, vix=macro_series.get("VIXCLS"))
+            from .agents import news_for_symbol
+            from .engines.knowledge import for_context as related_for_context
+            from .engines.sector import for_context as sector_for_context
+            from .engines.sector import sector_map, sector_stats
+            sector_mp = sector_map(self.engine) if as_of is None else {}
+            sector_rows = sector_stats(bars, sector_mp, bench) if sector_mp else []
+            mb, sv, nd = (ops.get_state(self.engine, k) for k in ("macro_brief", "sector_view", "news_digest"))
+            agent_common = {k: v for k, v in {
+                "macro": {x: mb.get(x) for x in ("view", "risk_level", "stance")} if mb.get("view") else None,
+                "sectors": {x: sv.get(x) for x in ("view", "leaders", "laggards")} if sv.get("view") else None,
+                "news_today": nd.get("summary")}.items() if v} if as_of is None else {}
             jobs = []
             for sym in symbols or list(bars):
                 if sym not in bars or bars[sym].empty:
@@ -337,9 +366,15 @@ class QuantAI:
                                     memory=self.memory, events=events, macro=macro, market=mstate,
                                     cross=cross_asset(bars[sym]["close"], {k: v for k, v in factors.items()
                                                                            if k != sym}, lag_us=market == "KR"))
-                if as_of is None:  # 과거 재생에는 넣지 않는다 (그때의 커뮤니티 기록이 없으므로)
+                if as_of is None:  # 과거 재생에는 넣지 않는다 (그때의 기록이 없으므로)
                     from .data.collectors.community import for_context
                     ctx.community = for_context(self.engine, sym)
+                    ctx.sector = sector_for_context(sym, sector_mp, sector_rows)
+                    ctx.related = related_for_context(self.engine, sym, bars)
+                    ctx.market_agents = {**agent_common, "news_for_this_stock": news_for_symbol(self.engine, ctx.name, sym)}
+                    if sym.isdigit():
+                        from .data.collectors.investor_flow import for_context as flow_for_context
+                        ctx.flow = flow_for_context(self.engine, sym)
                 jobs.append((sym, t, frow, rrow, ctx))
 
         # 2) AI 의견 — 공급자마다 동시에 (공급자별 분당 한도는 클라이언트가 지킨다). 서로의 의견은 모른다.
@@ -358,27 +393,46 @@ class QuantAI:
                 return Opinion.abstain(analyst.name, ctx.symbol, f"{type(e).__name__}: {e}"[:300],
                                        (backend_id(client) if client is not None else "") or "")
 
+        def batch_opinions(analyst, ctxs):
+            try:
+                return analyst.analyze_batch(ctxs)
+            except Exception as e:  # noqa: BLE001 - 묶음이 통째로 실패하면 하나씩
+                log.info("묶음 판단 실패 → 하나씩: %s", e)
+                return [opinion(analyst, c) for c in ctxs]
+
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai") as pool:
-            futures = [[pool.submit(opinion, a, ctx) for a in analysts] for *_, ctx in jobs]
+            # 종목 × AI 자리마다 (future, 묶음 안 위치). LLM 은 공급자 설정에 따라 여러 종목을 한 요청에 묶는다
+            slots: list[list] = [[None] * len(analysts) for _ in jobs]
+            for ai_i, a in enumerate(analysts):
+                b = int(getattr(a, "batch_size", 1) or 1) if hasattr(a, "analyze_batch") else 1
+                if b > 1 and len(jobs) > 1:
+                    for k in range(0, len(jobs), b):
+                        idx = list(range(k, min(k + b, len(jobs))))
+                        fut = pool.submit(batch_opinions, a, [jobs[j][4] for j in idx])
+                        for pos, j in enumerate(idx):
+                            slots[j][ai_i] = (fut, pos)
+                else:
+                    for j, job in enumerate(jobs):
+                        slots[j][ai_i] = (pool.submit(opinion, a, job[4]), None)
             # 3) 종목마다 합의 → 바로 저장 (중간에 끊겨도 끝난 종목은 남고, 화면에 진행 상황이 보인다)
-            for i, ((sym, t, frow, rrow, ctx), futs) in enumerate(zip(jobs, futures, strict=True)):
-                opinions = [f.result() for f in futs]
+            for i, (sym, t, frow, rrow, ctx) in enumerate(jobs):
+                opinions = [f.result() if pos is None else f.result()[pos] for f, pos in slots[i]]
                 sig = self.ensemble.combine(sym, opinions, board, calibrators)
                 cid = None
                 if persist:
                     with session_scope(self.engine) as s:
                         cid = self._persist_decision(s, sym, t, frow, rrow, ctx, sig, opinions, bars,
-                                                     challenger, challenger_rec, scenarios)
+                                                     challenger, challenger_rec, scenarios, versions)
                     ops.set_state(self.engine, progress_key, {"done": i + 1, "total": len(jobs), "symbol": sym,
                                                               "started_at": started, "running": i + 1 < len(jobs)})
                 decisions.append(Decision(sym, ctx.as_of, sig, opinions, ctx, cid))
         return decisions
 
     def _persist_decision(self, s, sym, t, frow, rrow, ctx, sig, opinions, bars, challenger, challenger_rec,
-                          scenarios: bool) -> int:
+                          scenarios: bool, versions: dict | None = None) -> int:
         rec = save_consensus(s, sig, opinions, ctx.as_of, self.horizon, ctx.regime.get("regime"),
-                             evidence=evidence_snapshot(ctx))
+                             evidence=evidence_snapshot(ctx), versions=versions)
         cid = rec.id
         if challenger is not None:  # 앙상블 미참여, 채점만
             ch = QuantAnalyst(challenger, challenger_rec.version, name="challenger").analyze(ctx)
@@ -506,6 +560,9 @@ class QuantAI:
         ev = {"summary": sc["summary"], "last_30d": sc["last_30d"], "by_regime": sc["by_regime"],
               "days_tracked": sc["days_tracked"], "rolling50": roll, "halted": ops.halted(self.engine),
               "live_consent": self.settings.live_consent,
+              "integrity_ok": (lambda e: None if not e else bool((e.get("ledger") or {}).get("ok", True)
+                                                             and (e.get("leakage") or {}).get("ok", True)))(
+                  ops.get_state(self.engine, "evaluation")),
               "backtest_ok": champ is not None or any(m in ("shadow", "champion", "retired") for m in models),
               "backtest_note": (f"퀀트 모델 과거 검증 통과 (Sharpe {bt.get('sharpe', 0):.2f})" if champ and bt
                                 else "퀀트 모델 과거 검증 통과" if champ else ""),
@@ -554,6 +611,142 @@ class QuantAI:
                             if self._live_capital_capped() else None, "live_cap": self.live_cap(),
                             "auto_promote": self.settings.auto_promote, "core_only": self.settings.core_only,
                             "real_money_broker": self._live_capital_capped() and self.settings.broker == "kis"}}
+
+    # ================================================================ 독립 평가 · 장부 · 누수 감사
+    def _all_bars(self) -> tuple[dict, dict]:
+        """(종목 → 일봉, 시장 → 벤치마크) 국내 + 미국."""
+        bars, bench, _ = self.market_data()
+        out, benches = dict(bars), {"KR": bench}
+        try:
+            from . import global_market
+            ub, ubench, _ = global_market.market_data(self)
+            out.update(ub)
+            benches["US"] = ubench
+        except Exception as e:  # noqa: BLE001 - 미국 데이터가 없어도 국내 평가는 계속
+            log.info("미국 일봉 없음: %s", e)
+        return out, benches
+
+    def match_outcomes(self) -> int:
+        """예측마다 1·5·20 거래일 결과 + 시장 대비 초과수익 (기간이 끝난 것만)."""
+        from .review.outcomes import match
+        bars, benches = self._all_bars()
+        n = 0
+        for mkt, bench in benches.items():
+            sub = {k: v for k, v in bars.items() if (k.isdigit() if mkt == "KR" else not k.isdigit())}
+            with session_scope(self.engine) as s:
+                n += match(s, sub, bench)
+        return n
+
+    def ledger_anchor(self) -> dict | None:
+        from .review.ledger import anchor
+        with session_scope(self.engine) as s:
+            return anchor(s)
+
+    def evaluation(self, act: bool = True, market: str | None = None) -> dict:
+        """독립 평가: 결과 재계산 · 기준선 · 유의성 · Brier 분해 · 오차 분해 + 장부 무결성 + 누수 감사."""
+        from .review.evaluator import evaluate
+        from .review.leakage import audit
+        from .review.ledger import verify
+        bars, _ = self._all_bars()
+        champ = self.registry.champion()
+        bt = {"embargo": (champ.params or {}).get("embargo", BacktestConfig().embargo),
+              "horizon": (champ.params or {}).get("horizon", self.horizon)} if champ else \
+            {"embargo": BacktestConfig().embargo, "horizon": self.horizon}
+        with session_scope(self.engine) as s:
+            led = verify(s)
+            leak = audit(s, bars, backtest_cfg=bt, pit_universe=True)  # 국내 유니버스는 월별 PIT (상장폐지 포함)
+            res = evaluate(s, bars, market, ledger=led, leakage=leak)
+        if act:
+            prev = ops.get_state(self.engine, "evaluation")
+            ops.set_state(self.engine, "evaluation", _json_ready(res))
+            if not led["ok"] and (prev.get("ledger") or {}).get("ok", True):
+                self.notifier.send(f"예측 장부 경고: {led['message']}", "critical")
+                from .alerts import push
+                push(self.engine, "guardian", "예측 장부 무결성 경고", led["message"], level="bad", link="#verify")
+            if not leak["ok"] and (prev.get("leakage") or {}).get("ok", True):
+                from .alerts import push
+                push(self.engine, "guardian", "미래 정보 누수 의심", leak["message"], level="bad", link="#verify")
+        return res
+
+    # ================================================================ 드리프트 · 재학습 후보
+    def drift(self, act: bool = True) -> dict:
+        """피처 · 예측 · 라벨 분포 변화 (PSI). 큰 변화면 알림 + 재학습 트리거."""
+        from .engines.drift import report
+        bars, _, _ = self.market_data()
+        with session_scope(self.engine) as s:
+            rep = report(bars, s)
+        if act:
+            prev = ops.get_state(self.engine, "drift")
+            ops.set_state(self.engine, "drift", _json_ready(rep))
+            if rep["status"] == "drift" and prev.get("status") != "drift":
+                from .alerts import push
+                w = rep.get("worst") or {}
+                push(self.engine, "market", "데이터 드리프트: 시장이 학습 때와 달라짐",
+                     f"{w.get('label', '')} PSI {w.get('psi')} · 재학습 후보를 만듭니다", level="warn", link="#verify")
+        return rep
+
+    def sector_fill(self, limit: int = 8) -> dict:
+        """업종 지도를 조금씩 채운다: 보유·관심·코어 → 거래대금 상위 순."""
+        from .alerts import focus_symbols
+        from .engines.sector import fill_map
+        bars, _, _ = self.market_data()
+        liq = [sym for _, sym in sorted(((float((b["close"] * b["volume"]).iloc[-20:].mean()), k)
+                                         for k, b in bars.items() if len(b) >= 20), reverse=True)]
+        order = list(dict.fromkeys([*focus_symbols(self), *liq]))
+        return fill_map(self.engine, order, limit=limit)
+
+    def build_graph(self) -> dict:
+        from .engines.knowledge import build
+        from .engines.sector import sector_map
+        bars, _, _ = self.market_data()
+        try:
+            from . import global_market
+            ub, _, _ = global_market.market_data(self)
+            bars = {**bars, **ub}
+        except Exception as e:  # noqa: BLE001
+            log.info("미국 일봉 없음: %s", e)
+        return build(self.engine, bars, sector_map(self.engine))
+
+    RETRAIN_VARIANTS = (("logistic", 750), ("logistic", 500), ("gbm", 750))
+
+    def auto_retrain(self, now: datetime | None = None, force: bool = False, max_variants: int = 2) -> dict:
+        """재학습 후보 자동 생성. 트리거: 데이터 드리프트 · champion 전진 성과 하락 · 마지막 후보 7일 경과.
+
+        후보는 바로 쓰지 않는다: 백테스트 게이트 → Shadow 전진 검증 → champion (기존 레지스트리 경로)."""
+        now = now or datetime.now(UTC)
+        reasons = []
+        if ops.get_state(self.engine, "drift").get("status") == "drift":
+            reasons.append("데이터 드리프트")
+        try:
+            fwd = self.check_champion(rollback=False)
+            if fwd.get("status") == "ok" and fwd.get("passed") is False:
+                reasons.append("champion 전진 성과 하락: " + "; ".join(fwd.get("failures", []))[:120])
+        except Exception as e:  # noqa: BLE001
+            log.info("champion 전진 점검 실패: %s", e)
+        with session_scope(self.engine) as s:
+            last = s.scalar(select(func.max(ModelRecord.created_at)))
+        if last is None or now - (last if last.tzinfo else last.replace(tzinfo=UTC)) >= timedelta(days=7):
+            reasons.append("정기 (7일)")
+        if not reasons and not force:
+            return {"trained": [], "reasons": [], "skipped": "트리거 없음"}
+        reason = " · ".join(reasons) or "수동"
+        bars, bench, sentiment = self.market_data()
+        out = []
+        for kind, window in self.RETRAIN_VARIANTS[:max_variants]:
+            cfg = BacktestConfig(horizon=self.horizon, risk=self.settings.risk, costs=self.settings.costs,
+                                 initial_cash=self.settings.initial_cash, model_kind=kind, train_window=window)
+            try:
+                rec, res, gate = self.train_candidate(bars, bench, sentiment, cfg, name=f"quant-{kind}-w{window}",
+                                                      reason=reason)
+                out.append({"id": rec.id, "version": rec.version, "kind": kind, "window": window,
+                            "passed": gate.passed, "failures": gate.failures,
+                            "sharpe": res.metrics.get("strategy", {}).get("sharpe")})
+            except Exception as e:  # noqa: BLE001 - 한 변형 실패가 다른 변형을 막지 않게
+                out.append({"kind": kind, "window": window, "error": str(e)[:200]})
+        ev = ops.get_state(self.engine, "model_events").get("events", [])
+        ev.append({"at": now.isoformat(), "kind": "retrain", "reason": reason, "candidates": out})
+        ops.set_state(self.engine, "model_events", {"events": ev[-100:]})
+        return {"trained": out, "reasons": reasons}
 
     def _live_broker(self, pf: Portfolio):
         st = self.settings
@@ -608,7 +801,9 @@ class QuantAI:
             for sym, b in bars.items():
                 if len(b):
                     px = float(b["close"].iloc[-1])
-                    quotes[sym] = MarketQuote(last=px, bid=px * 0.9995, ask=px * 1.0005)
+                    sig = float(np.log(b["close"]).diff().iloc[-20:].std()) if len(b) > 21 else None
+                    quotes[sym] = MarketQuote(last=px, bid=px * 0.9995, ask=px * 1.0005,
+                                              sigma=sig if sig and np.isfinite(sig) else None)
         prices = {k: q.last for k, q in quotes.items()}
         for sym in list(pf.positions):
             prices.setdefault(sym, pf.positions[sym].avg_price)
@@ -634,6 +829,11 @@ class QuantAI:
         except Exception as e:
             ops.record_health(self.engine, "risk_engine", False, f"{type(e).__name__}: {e}")
             raise
+        risk.sectors = ops.get_state(self.engine, "sector_map").get("map", {})  # 업종 한도 (섹터 엔진)
+        from dataclasses import replace as _dc_replace
+        for sym, q in list(quotes.items()):  # 시장 충격: 평균 거래대금을 알면 큰 주문일수록 비싸게 체결
+            if risk.adv.get(sym) and q.adv is None:
+                quotes[sym] = _dc_replace(q, adv=risk.adv[sym])
         if book is None:
             ops.record_health(self.engine, "risk_engine", True)
         journal = DBJournal(name, self.engine)
@@ -1194,6 +1394,10 @@ class QuantAI:
         bars, bench, _ = self.market_data()
         with session_scope(self.engine) as s:
             n = resolve(s, bars, bench)
+        try:
+            self.match_outcomes()  # 1·5·20 거래일 결과 + 초과수익
+        except Exception as e:  # noqa: BLE001
+            log.warning("결과 매칭 실패: %s", e)
         try:  # 미국 예측도 채점 (미국 일봉 · SPY 기준)
             from . import global_market
             us_bars, us_bench, _ = global_market.market_data(self)
@@ -1214,6 +1418,21 @@ class QuantAI:
             s.flush()
             log.info("채점 %d건, 교훈 %d개", n, len(report.lessons or []))
             return report
+
+
+def _json_ready(obj):
+    """numpy 수 · 튜플 → JSON 저장 가능한 값."""
+    if isinstance(obj, dict):
+        return {str(k): _json_ready(v) for k, v in obj.items()}
+    if isinstance(obj, list | tuple):
+        return [_json_ready(v) for v in obj]
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj) if np.isfinite(obj) else None
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    return obj
 
 
 def time_weighted_index(equity: pd.Series, flows: list[dict]) -> pd.Series:

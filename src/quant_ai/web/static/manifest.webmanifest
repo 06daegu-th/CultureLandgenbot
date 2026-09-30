@@ -1,0 +1,21 @@
+{
+  "name": "Quant AI — 24시간 AI 투자 관제",
+  "short_name": "Quant AI",
+  "description": "AI 가 24시간 시장을 관찰하고, 모든 예측을 기록·채점하고, 검증을 통과한 경우에만 실제 돈을 씁니다.",
+  "start_url": "/#dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#070d1c",
+  "theme_color": "#0b1530",
+  "lang": "ko",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ],
+  "shortcuts": [
+    {"name": "24H 관제실", "url": "/#control"},
+    {"name": "검증실", "url": "/#verify"},
+    {"name": "리포트", "url": "/#reports"}
+  ]
+}

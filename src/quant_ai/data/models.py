@@ -115,6 +115,7 @@ class Disclosure(Base):
     url: Mapped[str] = mapped_column(String(1024))
     sentiment: Mapped[float | None] = mapped_column(Float)
     events: Mapped[list | None] = mapped_column(JSONType)
+    summary: Mapped[str | None] = mapped_column(Text)  # 공시 원문 요약 (AI 또는 규칙)
 
 
 class MacroObservation(Base):
@@ -271,6 +272,21 @@ class ConsensusRecord(Base):
     payload: Mapped[dict] = mapped_column(JSONType)
     realized_return: Mapped[float | None] = mapped_column(Float)
     correct: Mapped[bool | None] = mapped_column(Boolean)
+    # 예측 장부: 저장 순간의 벽시계 시각 + 내용 해시 (결과가 나온 뒤 고쳐지지 않았음을 증명)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    row_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+class LedgerAnchor(Base):
+    """예측 장부 봉인: 새 예측들의 해시를 이전 봉인과 이어 붙인 사슬. 중간 기록을 고치거나 지우면 사슬이 끊긴다."""
+
+    __tablename__ = "ledger_anchors"
+    id: Mapped[int] = mapped_column(BigId, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    upto_id: Mapped[int] = mapped_column(BigInteger)
+    n: Mapped[int] = mapped_column(Integer)
+    digest: Mapped[str] = mapped_column(String(64))
+    prev_digest: Mapped[str | None] = mapped_column(String(64))
 
 
 class MemoryDoc(Base):
@@ -342,3 +358,18 @@ class AlertRecord(Base):
     dedupe: Mapped[str | None] = mapped_column(String(160), unique=True)  # 같은 알림 두 번 안 보내기
     data: Mapped[dict | None] = mapped_column(JSONType)
     __table_args__ = (Index("ix_alerts_ts", "ts"),)
+
+
+class AlertRule(Base):
+    """종목별 알림 기준: 목표가 · 손절가 · 등락률 · 거래량 급증."""
+
+    __tablename__ = "alert_rules"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(16))  # above / below / move / volume
+    value: Mapped[float] = mapped_column(Float)
+    note: Mapped[str | None] = mapped_column(String(200))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    repeat: Mapped[bool] = mapped_column(Boolean, default=False)  # 하루 한 번씩 계속 (기본: 한 번 울리면 끔)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

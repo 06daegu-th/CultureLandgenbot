@@ -42,6 +42,7 @@ class RiskLimits:
     min_confidence: float = 0.55  # 이 확률 미만의 매수 신호는 무시
     max_adv_participation: float = 0.05  # 1회 매수 금액 ≤ 20일 평균 거래대금 × 5% (시장 충격·유동성)
     max_var95: float = 0.04  # 계획 포트폴리오 1일 VaR95 한도 → 넘으면 전체 비중 축소
+    max_sector_weight: float = 0.40  # 한 업종 최대 비중 (업종을 아는 종목만 · 섹터 엔진이 채운다)
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,9 @@ class CostModelConfig:
     commission_bps: float = 1.5  # 증권사 수수료 (편도)
     slippage_bps: float = 5.0  # 체결 미끄러짐 가정
     sell_tax_bps: float = 20.0  # 국내 매도 거래세+농특세. 2026년 0.20% (2025년 0.15%) — 매년 세법 확인, QUANT_SELL_TAX_BPS
+    # 시장 충격 (제곱근 법칙): 비용 += 계수 × 일간 변동성 × √(주문금액 / 20일 평균 거래대금). 거래대금을 알 때만
+    impact_coef: float = 0.7
+    impact_cap_bps: float = 150.0
 
 
 def _llm_providers(e) -> dict:
@@ -65,7 +69,10 @@ def _llm_providers(e) -> dict:
             models = list(dict.fromkeys([e["QUANT_NVIDIA_MODEL"], *spec.models]))
         out[name] = {"key": key, "models": tuple(models) or spec.models,
                      "account": e.get("CLOUDFLARE_ACCOUNT_ID") if name == "cloudflare" else None,
-                     "daily": int(e.get(f"QUANT_{name.upper()}_DAILY_LIMIT") or spec.daily_requests)}
+                     "daily": int(e.get(f"QUANT_{name.upper()}_DAILY_LIMIT") or spec.daily_requests),
+                     # 묶음 호출: 여러 종목을 한 요청에 (무료 한도 절약). 분당 토큰 한도가 작은 Groq 는 기본 1(끔)
+                     "batch": max(1, int(e.get(f"QUANT_{name.upper()}_BATCH") or e.get("QUANT_LLM_BATCH")
+                                         or (1 if name == "groq" else 3)))}
     return out
 
 
@@ -132,11 +139,13 @@ class Settings:
             min_confidence=f("QUANT_MIN_CONFIDENCE", RiskLimits.min_confidence),
             max_adv_participation=f("QUANT_MAX_ADV_PARTICIPATION", RiskLimits.max_adv_participation),
             max_var95=f("QUANT_MAX_VAR95", RiskLimits.max_var95),
+            max_sector_weight=f("QUANT_MAX_SECTOR_WEIGHT", RiskLimits.max_sector_weight),
         )
         costs = CostModelConfig(
             commission_bps=f("QUANT_COMMISSION_BPS", CostModelConfig.commission_bps),
             slippage_bps=f("QUANT_SLIPPAGE_BPS", CostModelConfig.slippage_bps),
             sell_tax_bps=f("QUANT_SELL_TAX_BPS", CostModelConfig.sell_tax_bps),
+            impact_coef=f("QUANT_IMPACT_COEF", CostModelConfig.impact_coef),
         )
         raw_feeds = e.get("QUANT_NEWS_FEEDS", "").strip()
         # 비우면 기본 국내 경제·증권 RSS (키 필요 없음). 뉴스를 끄려면 QUANT_NEWS_FEEDS=none

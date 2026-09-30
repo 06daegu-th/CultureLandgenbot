@@ -129,6 +129,9 @@ def build_default_scheduler(app, mode) -> Scheduler:
             with session_scope(app.engine) as s:
                 DartCollector(st.dart_api_key).collect(s, date.today() - timedelta(days=1), date.today())
         sch.add("disclosures", dart, 600, "always")
+        # 보유·관심·코어 종목의 새 공시는 원문을 받아 요약 (한 번에 5건)
+        from .data.collectors.dart_docs import summarize_pending
+        sch.add("dart_summary", lambda now: summarize_pending(app, st.dart_api_key), 1800, "always")
     if st.fred_api_key:
         def fred(now):
             with session_scope(app.engine) as s:
@@ -233,10 +236,42 @@ def build_default_scheduler(app, mode) -> Scheduler:
             sch.add("community", lambda now: community(app.engine, list(focus_symbols(app))), 1800, "always")
         # 야간: 검증 사다리 평가 (승격은 한 칸씩 · 강등은 즉시 Shadow 로) → 다음 사이클부터 적용
         sch.add("ladder", lambda now: app.ladder(), 6 * 3600, "closed")
+        # 예측 장부 봉인(매시간) · 결과 매칭(1·5·20일, 장외) · 독립 평가(야간)
+        sch.add("ledger_anchor", lambda now: app.ledger_anchor(), 3600, "always")
+        sch.add("match_outcomes", lambda now: app.match_outcomes(), 3 * 3600, "closed")
+        sch.add("evaluation", lambda now: app.evaluation(), 12 * 3600, "closed")
+        # 시장 전체를 보는 에이전트 (한 번의 호출로 시장 정리 → 종목 AI 들의 재료) · 업종 지도 · 지식 그래프
+        from .agents import macro_agent, news_agent, sector_agent
+        sch.add("news_agent", lambda now: news_agent(app, now), 3600, "open")
+        sch.add("news_agent_offhours", lambda now: news_agent(app, now), 3 * 3600, "closed")
+        sch.add("macro_agent", lambda now: macro_agent(app, now), 12 * 3600, "always")
+        sch.add("sector_fill", lambda now: app.sector_fill(), 2 * 3600, "closed")
+        sch.add("sector_agent", lambda now: sector_agent(app, now), 12 * 3600, "always")
+        sch.add("knowledge_graph", lambda now: app.build_graph(), 6 * 3600, "closed")
+        # 외국인·기관 수급 (장 마감 후 하루 한 번, 보유·관심·코어)
+        from .alerts import focus_symbols as _focus
+        from .data.collectors.investor_flow import collect as flow_collect
+        sch.add("investor_flow", lambda now: flow_collect(app.engine, list(_focus(app))), 6 * 3600, "closed")
+        # 아침 브리핑(평일 08:30 KST) · 일일 리포트(16:10 KST) — 5분마다 시간 창을 확인하고 하루 한 번만
+        from .reports import run_if_due
+        sch.add("morning_brief", lambda now: run_if_due(app, "morning", now), 300, "always")
+        sch.add("daily_report", lambda now: run_if_due(app, "daily", now), 300, "always")
+        # KIS 실시간 체결 (웹소켓): 장중에만 연결 → 급등락·규칙 알림이 초 단위로 (QUANT_KIS_WS=false 로 끔)
+        if st.broker == "kis" and os.environ.get("QUANT_KIS_WS", "true").lower() != "false":
+            from .trading.kis_ws import ensure_running
+            sch.add("kis_ws", lambda now: ensure_running(app, sch.phases(now).get("KRX") == "open"), 60, "always")
+        # DB 자동 백업 (하루 1개 · 7개 보관 · 무결성 확인)
+        from .data.backup import backup
+        sch.add("backup", lambda now: backup(st.database_url, st.artifacts_dir), 24 * 3600, "closed")
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and hasattr(app, "ai_verdict"):
         sch.add("ai_verdict", lambda now: app.ai_verdict(), 12 * 3600, "closed")  # 추천 단계가 바뀌면 알림
     sch.add("shadow_eval", lambda now: app.evaluate_shadow_models(), 12 * 3600, "closed")
-    sch.add("retrain_candidate", lambda now: app.train_candidate(), 24 * 3600, "closed")
+    if hasattr(app, "auto_retrain"):
+        # 야간: 드리프트 점검 → (드리프트 · 성과 하락 · 7일 경과 시) 재학습 후보 변형 생성 → 게이트 → Shadow
+        sch.add("drift", lambda now: app.drift(), 12 * 3600, "closed")
+        sch.add("retrain_candidate", lambda now: app.auto_retrain(now), 24 * 3600, "closed")
+    else:
+        sch.add("retrain_candidate", lambda now: app.train_candidate(), 24 * 3600, "closed")
     return sch
 
 

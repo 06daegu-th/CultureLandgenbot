@@ -432,10 +432,43 @@ def start_action(app, name: str, params: dict | None = None) -> dict:
            "guardian": lambda say: {"state": app.guardian()["state"]}, "ai_snapshot": lambda say: ai_snapshot(app),
            "event_reactions": lambda say: {"types": len(event_reactions(app, refresh=True)["types"])},
            "ladder": lambda say: {k: v for k, v in app.ladder().items() if k in ("stage", "changed", "reasons", "ready")},
-           "price_watch": lambda say: _price_watch_now(app)}
+           "price_watch": lambda say: _price_watch_now(app),
+           "evaluation": lambda say: _brief(app.evaluation(), ("status", "verdict", "n", "hit_rate", "p_value")),
+           "drift": lambda say: _brief(app.drift(), ("status", "message")),
+           "retrain": lambda say: app.auto_retrain(force=True),
+           "agents": lambda say: _run_agents(app, say),
+           "graph": lambda say: {**app.build_graph(), "sectors": app.sector_fill(limit=12)},
+           "morning_brief": lambda say: _report(app, "morning"),
+           "daily_report": lambda say: _report(app, "daily"),
+           "backup": lambda say: _backup(app)}
     if name not in fns:
         raise ValueError(f"알 수 없는 동작: {name}")
     return _run(name, fns[name])
+
+
+def _brief(d: dict, keys) -> dict:
+    return {k: d.get(k) for k in keys}
+
+
+def _run_agents(app, say) -> dict:
+    from .agents import macro_agent, news_agent, sector_agent
+    say("뉴스 에이전트…")
+    n = news_agent(app)
+    say("매크로 에이전트…")
+    m = macro_agent(app)
+    say("섹터 에이전트…")
+    sv = sector_agent(app)
+    return {"news": n.get("source"), "macro": m.get("source"), "sector": sv.get("source")}
+
+
+def _report(app, kind: str) -> dict:
+    from .reports import run_if_due
+    return run_if_due(app, kind, force=True) or {}
+
+
+def _backup(app) -> dict:
+    from .data.backup import backup
+    return backup(app.settings.database_url, app.settings.artifacts_dir)
 
 
 def _price_watch_now(app) -> dict:

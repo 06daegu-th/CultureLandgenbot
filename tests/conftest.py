@@ -17,3 +17,8 @@ def _no_profile_network(monkeypatch):
     monkeypatch.setattr(live_quotes, "fetch_us", lambda syms: {})
     monkeypatch.setattr(community, "fetch_stocktwits", _offline)
     monkeypatch.setattr(community, "fetch_naver_board", _offline)
+    from quant_ai.data.collectors import dart_docs, investor_flow
+    from quant_ai.engines import sector
+    monkeypatch.setattr(investor_flow, "fetch_naver", _offline)
+    monkeypatch.setattr(dart_docs, "fetch_document", _offline)
+    monkeypatch.setattr(sector, "fetch_sector", _offline)

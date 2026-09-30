@@ -100,8 +100,17 @@ class Portfolio:
 class CostModel:
     cfg: CostModelConfig = CostModelConfig()
 
-    def fill_price(self, side: Side, ref_price: float) -> float:
-        slip = self.cfg.slippage_bps / 1e4
+    def impact(self, notional: float, adv_value: float | None, sigma: float | None = None) -> float:
+        """시장 충격 (분수): 계수 × σ × √(주문금액 / 평균 거래대금). 거래대금을 모르면 0 (고정 슬리피지만)."""
+        if not adv_value or adv_value <= 0 or notional <= 0:
+            return 0.0
+        sig = sigma if sigma and sigma > 0 else 0.02
+        return min(getattr(self.cfg, "impact_coef", 0.0) * sig * (notional / adv_value) ** 0.5,
+                   getattr(self.cfg, "impact_cap_bps", 150.0) / 1e4)
+
+    def fill_price(self, side: Side, ref_price: float, notional: float = 0.0, adv_value: float | None = None,
+                   sigma: float | None = None) -> float:
+        slip = self.cfg.slippage_bps / 1e4 + self.impact(notional, adv_value, sigma)
         return ref_price * (1 + slip) if side is Side.BUY else ref_price * (1 - slip)
 
     def fee(self, side: Side, price: float, qty: int) -> float:
