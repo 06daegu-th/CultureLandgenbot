@@ -75,6 +75,8 @@ JOBS = {
     "kr_consensus": ("collect", "국내 실적 컨센서스 (네이버) · 서프라이즈 이력", "장외 하루 1회", 86400),
     "bok": ("collect", "한은 금통위 일정 · 기준금리 (ECOS)", "하루 1회", 86400),
     "vkospi": ("collect", "VKOSPI (국내 옵션 내재변동성)", "12시간", 12 * 3600),
+    "truth": ("promote", "Truth Center (시계·데이터·이벤트·증권사·리스크·체결)", "매시간", 3600),
+    "gap_fill": ("collect", "2차 소스로 일봉 빈 날 채우기 (1차 지연 시)", "장외 3시간", 3 * 3600),
     "kis_validate": ("promote", "KIS 모의투자 검증 스위트 (주문·취소 · 선택: 1주 체결)", "장중 하루 1회", 86400),
 }
 STAGES = [("collect", "24H 데이터 수집"), ("organize", "AI 자동 정리"), ("analyze", "AI 독립 분석"),

@@ -20,7 +20,8 @@ def live(tmp_path, monkeypatch):
     from quant_ai.pipeline import QuantAI
     fake_marcap(tmp_path, n_codes=14, days=500)
     st = replace(Settings.from_env({}), database_url=f"sqlite:///{tmp_path}/t.db", artifacts_dir=tmp_path / "a",
-                 broker="kis", kis_env="demo", max_data_age_days=0)  # 가짜 데이터는 2021년 것
+                 broker="kis", kis_env="demo", max_data_age_days=0,  # 가짜 데이터는 2021년 것
+                 readiness_gate="off")  # 증권사 배관 테스트 — 2020년 데이터는 매매 준비 NOT READY 라 게이트는 따로 검증
     app = QuantAI(st)
     app.ingest_krx(tmp_path, years=0, top_n=10, end_year=2020)
     bars, _, _ = app.market_data()
@@ -54,6 +55,16 @@ def test_live_cycle_places_orders_and_syncs_with_broker(live):
     # 보호 지정가: 매수 주문가가 매도1호가보다 높되 0.5% 이내 + 호가단위
     for o in mock.orders.values():
         assert o["filled"] > 0
+
+
+def test_live_cycle_buys_nothing_when_not_ready(live):
+    """기본 게이트(live): 2020년 데이터 → 매매 준비 NOT READY → 증권사에 매수 주문이 한 건도 가지 않는다 (fail-closed)."""
+    app, mock = live
+    app.settings = replace(app.settings, readiness_gate="live")
+    r = app.run_core_satellite(Mode.LIVE, ts=datetime.now(UTC), cfg=cfg())
+    assert not [o for o in mock.orders.values() if o["buy"]] and not r["fills"]
+    from quant_ai import ops
+    assert ops.get_state(app.engine, "readiness")["status"] == "NOT_READY"
 
 
 def test_second_cycle_does_not_duplicate_orders(live):

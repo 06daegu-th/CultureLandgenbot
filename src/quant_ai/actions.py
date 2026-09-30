@@ -335,12 +335,14 @@ WATCH_MAX = 20
 
 
 def watch_symbols(app) -> list[str]:
-    return ops.get_state(app.engine, "watch_symbols").get("symbols", [])
+    """별표 관심종목(사용자가 고정) + 최근 본 종목(최근 20개)."""
+    star = ops.get_state(app.engine, "starred").get("symbols", [])
+    return list(dict.fromkeys([*star, *ops.get_state(app.engine, "watch_symbols").get("symbols", [])]))
 
 
 def add_watch(app, symbol: str) -> None:
     """사용자가 보거나 분석을 요청한 종목 → 매일 AI 판단·알림 대상 (최근 20개). 해외 티커는 미국 사이클이 판단."""
-    syms = [x for x in watch_symbols(app) if x != symbol] + [symbol]
+    syms = [x for x in ops.get_state(app.engine, "watch_symbols").get("symbols", []) if x != symbol] + [symbol]
     ops.set_state(app.engine, "watch_symbols", {"symbols": syms[-WATCH_MAX:]})
 
 

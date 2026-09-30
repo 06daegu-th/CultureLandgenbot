@@ -6,6 +6,8 @@ const _s = (d, extra = "") => `<svg viewBox="0 0 24 24" width="18" height="18" f
 const ICONS = {
   logo: `<svg viewBox="0 0 32 32" width="30" height="30"><defs><linearGradient id="lg-logo" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#60a5fa"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
     <path d="M16 2.5 28 9.5v13L16 29.5 4 22.5v-13Z" fill="url(#lg-logo)"/><path d="M9.5 19.5 14 14l3.5 3 5.5-6.5" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="23" cy="10.5" r="1.9" fill="#fff"/></svg>`,
+  shield: _s('<path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6Z"/><path d="m9 12 2 2 4-4"/>'),
+  compare: _s('<path d="M4 18 9 12l4 3 7-9"/><path d="M4 8l5 3 4-5 7 4" stroke-dasharray="2 2"/>'),
   home: _s('<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>'),
   market: _s('<path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/>'),
   ai: _s('<path d="M12 3v2M12 19v2M3 12h2M19 12h2"/><rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9.5 14.5 12 9l2.5 5.5M10.3 12.8h3.4"/>'),

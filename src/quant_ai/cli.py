@@ -136,6 +136,11 @@ def cmd_review(args):
     print(json.dumps({"summary": r.summary, "lessons": r.lessons}, ensure_ascii=False, indent=1, default=str))
 
 
+def cmd_watchdog(args):
+    from .watchdog import run
+    run(_app(args), args.mode)
+
+
 def cmd_power_study(args):
     from .desk import run_signal_study
     r = run_signal_study(_app(args), args.marcap_dir, args.start, top=args.top)
@@ -661,6 +666,9 @@ def main(argv: list[str] | None = None) -> None:
     r = sub.add_parser("run")
     r.add_argument("--mode", default="paper", choices=[m.value for m in Mode])
     r.set_defaults(fn=cmd_run)
+    wd = sub.add_parser("watchdog", help="24시간 스케줄러 감시: 죽거나 멈추면(심장박동 5분) 다시 띄움")
+    wd.add_argument("--mode", default="paper", choices=[m.value for m in Mode])
+    wd.set_defaults(fn=cmd_watchdog)
     sub.add_parser("review").set_defaults(fn=cmd_review)
     k = sub.add_parser("kill")
     k.add_argument("state", choices=["on", "off"])

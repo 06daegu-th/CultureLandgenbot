@@ -335,7 +335,8 @@ textarea.input { resize: vertical; min-height: 140px; }
   .view { padding: 14px 16px 30px; }
   .top { padding: 10px 16px; flex-wrap: wrap; }
   .search { flex: 1 1 100%; order: 3; }
-  .clock, .mkt-badges { display: none; }
+  .clock { display: none; }
+  .mkt-badges { gap: 4px; } .mkt-badges .pill { font-size: 11px; padding: 2px 7px; }
   .mkt, .donut-wrap { grid-template-columns: 1fr; }
   .scen { grid-template-columns: 1fr; }
   .voter { grid-template-columns: 26px 86px 1fr 48px 40px; }
@@ -798,7 +799,7 @@ table.tight td:first-child { max-width: 180px; overflow: hidden; text-overflow: 
   .vf-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); } .vf-base { grid-template-columns: 1fr; }
   .rp-grid { grid-template-columns: 1fr; }
   .bd-rows > div { grid-template-columns: minmax(0, 1fr) 80px 52px; }
-  .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; justify-content: space-around;
+  .tabbar { display: flex; flex-direction: row; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; justify-content: space-around;
     background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(14px); border-top: 1px solid var(--line);
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
   .tabbar a { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10.5px; color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: 10px; }
@@ -910,3 +911,50 @@ table.heat td { width: 38px; height: 26px; text-align: center; border: 1px solid
 .acct-form input, .acct-form select, .acct-form textarea { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); font: inherit; }
 .acct-form textarea { grid-column: 1 / -1; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
 @media (max-width: 900px) { .acct-form { grid-template-columns: 1fr; } }
+
+/* ---------- v14: 시장 시계 · Truth Center · 왜 BUY · 보유/적중 · 오늘 할 일 · 비교 · 단축키 ---------- */
+.pill.mktc { text-decoration: none; color: var(--muted); display: inline-flex; gap: 5px; align-items: baseline; }
+.pill.mktc b { color: var(--text); font-weight: 600; }
+.pill.mktc.open { color: #86efac; border-color: rgba(34,197,94,.45); }
+.pill.mktc.holiday { color: #fca5a5; border-color: rgba(239,68,68,.4); }
+.tr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.tr-grid .card { margin: 0; }
+.tr-sec.tr-bad { border-left: 3px solid var(--bad); } .tr-sec.tr-warn { border-left: 3px solid var(--warn); } .tr-sec.tr-ok { border-left: 3px solid var(--good); }
+.tr-rows { display: grid; gap: 8px; }
+.tr-row { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: start; }
+.tr-row .xs { overflow-wrap: anywhere; }
+.ck-areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 14px; }
+.ck-a { display: grid; grid-template-columns: 92px 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
+.ck-bar { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: var(--panel-3); }
+.ck-live { background: var(--good); } .ck-impl { background: color-mix(in srgb, var(--good) 45%, transparent); } .ck-setup { background: var(--dim); }
+.ck-warn { background: var(--warn); } .ck-bad { background: var(--bad); }
+.ck-table td { vertical-align: top; } .ck-area td { font: 700 12px "JetBrains Mono", monospace; color: var(--accent-3); padding-top: 14px; }
+.why-head { display: flex; gap: 8px; align-items: center; font-size: 15px; flex-wrap: wrap; }
+.why-it { margin-bottom: 9px; }
+.why-h { display: flex; justify-content: space-between; font-size: 13px; }
+.why-bar { height: 6px; background: var(--panel-3); border-radius: 99px; overflow: hidden; margin: 3px 0; }
+.why-bar span { display: block; height: 100%; border-radius: 99px; }
+.why-bar .up { background: var(--up); } .why-bar .down { background: var(--down); }
+.star-btn { margin-left: 8px; font-size: 12px; padding: 2px 10px; border-radius: 99px; border: 1px solid var(--line-2); background: transparent; color: var(--muted); cursor: pointer; }
+.star-btn.on { color: #fbbf24; border-color: rgba(245,158,11,.55); background: rgba(245,158,11,.08); }
+.hit-dots { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.hit-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--bad); } .hit-dot.ok { background: var(--good); }
+.chart-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; color: var(--muted); }
+.todo { display: grid; gap: 6px; }
+.todo-it { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); text-decoration: none; color: var(--text); border: 1px solid transparent; }
+.todo-it:hover { border-color: var(--line-2); }
+.todo-it.td-bad { border-left: 3px solid var(--bad); } .todo-it.td-warn { border-left: 3px solid var(--warn); } .todo-it.td-info { border-left: 3px solid var(--accent); }
+.glance { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+.gl-it { padding: 8px 10px; border-radius: 10px; background: var(--panel-2); }
+.gl-it b.good { color: var(--good); }
+.cmp-pick { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cmp-pick input { background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text); border-radius: 8px; padding: 5px 9px; width: 190px; max-width: 100%; }
+.cmp-pick a[data-rm] { cursor: pointer; color: var(--dim); margin-left: 4px; }
+kbd { font: 600 11px "JetBrains Mono", monospace; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line-2); background: var(--panel-3); color: var(--text); }
+.kbd-help { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 90; padding: 16px; }
+.kbd-help .card { width: min(420px, 100%); margin: 0; }
+@media (max-width: 720px) {
+  .tr-grid { grid-template-columns: 1fr; }
+  #market-badges .pill.mktc .mono { display: none; }
+  .ck-table td:nth-child(4), .ck-table th:nth-child(4) { display: none; }
+}

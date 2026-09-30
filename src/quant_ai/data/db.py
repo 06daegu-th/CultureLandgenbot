@@ -112,9 +112,10 @@ def upsert_bars(session: Session, symbol: str, bars: pd.DataFrame, interval: str
         bar = existing.get(_naive_utc(py_ts))
         if bar is None:
             new_rows.append(dict(symbol=symbol, interval=interval, ts=py_ts, source=source, **values))
-        else:  # 수정주가는 새 분할이 생기면 과거 값이 바뀐다 → 갱신
+        else:  # 수정주가는 새 분할이 생기면 과거 값이 바뀐다 → 갱신 (1차 소스가 2차로 채운 날을 덮어쓴다)
             for k, val in values.items():
                 setattr(bar, k, val)
+            bar.source = source
     if new_rows:
         session.execute(insert(PriceBar), new_rows)  # 대량 삽입
     return len(new_rows)

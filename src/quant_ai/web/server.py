@@ -171,6 +171,22 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.my_journal())
                     if url.path == "/api/accounts":
                         return self._json(api.accounts())
+                    if url.path == "/api/clock":
+                        return self._json(api.clock())
+                    if url.path == "/api/truth":
+                        return self._json(api.truth(arg("refresh", "") == "1"))
+                    if url.path == "/api/explain":
+                        return self._json(api.explain(arg("symbol", "")[:12]))
+                    if url.path == "/api/checklist":
+                        return self._json(api.checklist())
+                    if url.path == "/api/today":
+                        return self._json(api.today())
+                    if url.path == "/api/holdings":
+                        return self._json(api.holdings(arg("symbol", "")[:12]))
+                    if url.path == "/api/compare":
+                        return self._json(api.compare(arg("symbols", "")[:60]))
+                    if url.path == "/api/star":
+                        return self._json(api.starred())
                 except Exception as exc:  # noqa: BLE001
                     log.exception("API 오류")
                     return self._json({"error": str(exc)}, 500)
@@ -231,6 +247,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     return self._json(api.my_journal_write(body))
                 if url.path == "/api/accounts":
                     return self._json(api.accounts_write(body))
+                if url.path == "/api/star":
+                    return self._json(api.star(body))
                 if url.path == "/api/chat/clear":
                     from ..assistant import clear
                     clear(api.engine, str(body.get("sid", ""))[:40])

@@ -406,7 +406,8 @@ cmd_auto() {
     ok "가상매매(PAPER)로 운영 — KIS 모의투자 키를 .env 에 넣으면 다음 실행부터 모의계좌로 자동매매"
   fi
   printf '   장외에는 데이터 갱신 · 복기 · 건강검진만 합니다. 종료: Ctrl+C  (대시보드 로그: logs/web.log)\n\n'
-  qa run --mode "$mode"
+  # 감시견이 스케줄러를 띄우고 지킨다: 죽거나 심장박동이 5분 멈추면 다시 띄움 (QUANT_WATCHDOG=false 면 직접 실행)
+  if [[ "$(env_get QUANT_WATCHDOG)" == "false" ]]; then qa run --mode "$mode"; else qa watchdog --mode "$mode"; fi
 }
 
 # ------------------------------------------------------------------ 개별 명령

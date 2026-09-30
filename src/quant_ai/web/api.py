@@ -1044,6 +1044,44 @@ class DashboardAPI:
                 "heartbeat": _ops.get_state(self.engine, "heartbeat"), "notary": _ops.get_state(self.engine, "notary"),
                 "fx": self._cached("fx", 300, lambda: desk.fx(self.app))}
 
+    def clock(self) -> dict:
+        from ..clock import clock_status
+        return clock_status(datetime.now(UTC))
+
+    def truth(self, refresh: bool = False) -> dict:
+        from .. import truth
+        return self._cached("truth", 0 if refresh else 60, lambda: truth.report(self.app))
+
+    def explain(self, symbol: str) -> dict:
+        from ..explain import for_symbol
+        return for_symbol(self.app, symbol) or {"error": "판단 기록 없음"}
+
+    def checklist(self) -> dict:
+        from ..checklist import evaluate
+        return self._cached("checklist", 60, lambda: evaluate(self.app))
+
+    def today(self) -> dict:
+        from .. import ux
+        return self._cached("today", 30, lambda: ux.today(self.app))
+
+    def holdings(self, symbol: str) -> dict:
+        from .. import ux
+        return ux.holdings(self.app, symbol) | {"track": ux.track(self.app, symbol)}
+
+    def compare(self, symbols: str) -> dict:
+        from .. import ux
+        return ux.compare(self.app, symbols.split(","))
+
+    def star(self, body: dict) -> dict:
+        from .. import ux
+        syms = ux.set_star(self.app, str(body.get("symbol", ""))[:12], bool(body.get("on", True)))
+        self._risk_cache.pop("today", None)
+        return {"ok": True, "starred": syms}
+
+    def starred(self) -> dict:
+        from .. import ux
+        return {"starred": ux.starred(self.app)}
+
     def accounts(self) -> dict:
         from .. import accounts
         return self._cached("accounts", 15, lambda: accounts.summary(self.app))

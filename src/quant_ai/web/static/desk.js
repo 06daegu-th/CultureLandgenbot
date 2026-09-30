@@ -109,7 +109,8 @@ async function viewReadiness(el) {
     <div class="rd-top"><div><div class="xs muted">Trading Readiness — 지금 새로 사도 되는가 · 7개 관문 · ${esc(r.mode || "")} 장부${r.gate ? " · 게이트 적용 중" : " · 게이트 미적용(기록만)"}</div>
       <h2>${esc(RD_LABEL[r.status] || "-")}</h2>
       <div class="small muted">${asOf(r.as_of || r.at)} · ${r.real_money ? "실제 돈 계좌" : "가상/모의 계좌"}</div>
-      ${(r.blockers || []).length ? `<div class="veto" style="margin-top:8px">⛔ ${r.blockers.map(esc).join("<br>⛔ ")}</div>` : ""}</div>
+      ${(r.blockers || []).length ? `<div class="veto" style="margin-top:8px">⛔ ${r.blockers.map(esc).join("<br>⛔ ")}</div>` : ""}
+      ${(r.truth_bad || []).length ? `<div class="small" style="margin-top:6px">Truth Center 가 찾은 문제 ${r.truth_bad.length}건이 관문에 반영됨 → <a href="#truth">자세히</a></div>` : ""}</div>
       <div class="vf-act"><button class="btn-sm primary" data-run="readiness">지금 점검</button><button class="btn-sm" data-run="event_calendar">캘린더 갱신</button></div></div>
     <div class="rd-hist">${hist.map((h) => `<span class="rd-dot ${RD_CLS[h.status] || ""}" title="${esc(kst(h.at))} ${esc(h.status)} ${esc((h.reds || []).join(","))}"></span>`).join("")}<span class="xs dim">최근 점검 이력</span></div>
   </div>
@@ -339,6 +340,7 @@ async function stockDesk(sym) {
       <div class="xs dim" style="margin-top:4px">반켈리 ${R(sz.half_kelly, 1)} · 변동성 목표 ${R(sz.vol_target, 1)} · 한도 ${R(sz.cap, 0)} · 이벤트 ×${sz.event_mult}${sz.event_reason ? ` (${esc(sz.event_reason)})` : ""} · 준비 상태 ×${sz.readiness_mult} · 왕복 비용 ${p.cost_bps}bp</div>
       <div class="small" style="margin-top:8px"><b>무효화 조건</b> (하나라도 맞으면 판단을 틀렸다고 인정)</div><ul class="plain small">${(p.invalidation || []).map((i) => `<li>· ${esc(i.rule)}</li>`).join("")}</ul>`;
   }
+  chartPlanLines(sym, p);
   const er = d.event_risk;
   const evBody = `${er ? `<div class="kv-grid">${kv("이벤트 위험", `${er.score?.toFixed(2)} <span class="xs">${esc({ high: "높음", medium: "보통", low: "낮음" }[er.level] || "")}</span>`, er.level === "high" ? "bad-t" : er.level === "medium" ? "warn-t" : "")}${kv("예상 변동", er.expected_move ? "±" + R(er.expected_move) : "-")}${kv("매수 제한", er.buy_multiplier < 1 ? `×${er.buy_multiplier}` : "없음", er.buy_multiplier < 1 ? "warn-t" : "")}</div>` : ""}
     <div class="ev-mini">${(d.events || []).map((e) => `<div><span>${CAL_ICON[e.kind] || "•"}</span> <b>${esc(e.title)}</b> <span class="xs dim">${esc(e.date)} · ${esc(e.d_label)}${e.estimated ? " · 추정" : ""}</span></div>`).join("") || '<span class="xs dim">예정된 종목 이벤트 없음</span>'}</div>

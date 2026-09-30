@@ -289,6 +289,11 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("kr_consensus", lambda now: _krc.collect(app.engine, list(_f13(app))), 24 * 3600, "closed")
         sch.add("bok", lambda now: (_bok.schedule(app.engine), _bok.base_rate(app.engine, st.ecos_api_key)), 24 * 3600, "always")
         sch.add("vkospi", lambda now: _vk.get(app.engine, app.market_data()[1]), 12 * 3600, "always")
+        # Truth Center (매시간) · 1차(KRX) 일봉이 늦으면 2차(Yahoo)로 빈 날만 채움
+        from . import truth as _truth
+        from .data.sources import gap_fill as _gap
+        sch.add("truth", lambda now: _truth.report(app, mode.value if mode.value in ("paper", "shadow", "live") else None, now), 3600, "always")
+        sch.add("gap_fill", lambda now: _gap(app, list(_f13(app))), 3 * 3600, "closed")
         if st.broker == "kis":
             # 하루 한 번 장중: KIS 검증 스위트 (모의 = 주문·취소 경로까지 · QUANT_KIS_FILL_TEST=true 면 1주 실제 체결로 슬리피지 실측)
             fill_test = os.environ.get("QUANT_KIS_FILL_TEST", "").lower() == "true" and st.kis_env == "demo"

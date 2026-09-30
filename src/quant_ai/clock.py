@@ -131,6 +131,59 @@ CALENDAR_SOURCE = "holidays 패키지 (XKRX · XNYS)" if HOLIDAY_NAMES["KRX"] el
 MARKETS = {"KRX": KRX, "US": US}
 
 
+def next_open(cal: MarketCalendar, now: datetime) -> datetime:
+    """지금 이후 처음 열리는 시각 (장중이면 다음 거래일 개장)."""
+    t = cal.local(now)
+    d = t.date()
+    for _ in range(30):
+        if cal.is_trading_day(d):
+            o, _c, _n = cal.session(d)
+            dt = datetime.combine(d, o, cal.tz)
+            if dt > t:
+                return dt
+        d += timedelta(days=1)
+    raise RuntimeError("30일 안에 개장일 없음 — 캘린더 확인")
+
+
+def next_close(cal: MarketCalendar, now: datetime) -> datetime:
+    """지금 이후 처음 닫히는 시각 (장중이면 오늘 폐장)."""
+    t = cal.local(now)
+    d = t.date()
+    for _ in range(30):
+        if cal.is_trading_day(d):
+            _o, c, _n = cal.session(d)
+            dt = datetime.combine(d, c, cal.tz)
+            if dt > t:
+                return dt
+        d += timedelta(days=1)
+    raise RuntimeError("30일 안에 폐장 없음 — 캘린더 확인")
+
+
+def clock_status(now: datetime, markets: dict[str, MarketCalendar] | None = None) -> dict:
+    """시장 시계: 시장별 단계 · 현지 시각 · 오늘 세션 · 다음 개장/폐장 · 남은 시간 · 휴장 이름 · 특이사항."""
+    from zoneinfo import ZoneInfo
+    kst = ZoneInfo("Asia/Seoul")
+    out = {}
+    for key, cal in (markets or MARKETS).items():
+        t = cal.local(now)
+        d = t.date()
+        trading = cal.is_trading_day(d)
+        o, c, note = cal.session(d)
+        no, nc = next_open(cal, now), next_close(cal, now)
+        ph = cal.phase(now)
+        nxt = nc if ph is Phase.OPEN else no
+        out[key] = {
+            "name": "한국 (KRX)" if key == "KRX" else "미국 (NYSE·Nasdaq)", "tz": str(cal.tz), "phase": ph.value,
+            "local_time": t.strftime("%Y-%m-%d %H:%M"), "trading_day": trading, "holiday": None if trading else cal.holiday_name(d) or "주말",
+            "session": {"open": o.strftime("%H:%M"), "close": c.strftime("%H:%M"), "note": note} if trading else None,
+            "next_open": no.isoformat(), "next_open_kst": no.astimezone(kst).strftime("%m-%d %H:%M KST"),
+            "next_close": nc.isoformat(), "next_close_kst": nc.astimezone(kst).strftime("%m-%d %H:%M KST"),
+            "next_event": "폐장" if ph is Phase.OPEN else "개장", "seconds_to_next": int((nxt - t).total_seconds()),
+        }
+    return {"now": now.isoformat(), "now_kst": now.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S KST"), "markets": out,
+            "calendar_source": CALENDAR_SOURCE, "calendar_ok": bool(HOLIDAY_NAMES.get("KRX")) and bool(HOLIDAY_NAMES.get("US"))}
+
+
 def any_market_open(now: datetime, markets: dict[str, MarketCalendar] = MARKETS) -> bool:
     return any(m.phase(now) is Phase.OPEN for m in markets.values())
 

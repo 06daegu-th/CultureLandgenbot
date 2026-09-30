@@ -114,7 +114,7 @@ def check_risk(app, mode: str, prisk: dict | None) -> dict:
 
 def check_event(cal: dict | None, holdings: list[str]) -> dict:
     if not cal:
-        return _chk("EVENT", "yellow", "이벤트 캘린더 없음")
+        return _chk("EVENT", "red", "이벤트 캘린더 없음 — 실적·FOMC 직전인지 알 수 없음 (fail-closed)")
     today = [e for e in cal.get("events", []) if e.get("d_day") == 0 and e["kind"] in ("fomc", "cpi", "nfp", "quad_witching", "bok")]
     near = [r for r in (cal.get("risk") or []) if r["symbol"] in holdings and r.get("buy_multiplier", 1) < 1]
     vk = cal.get("vkospi") or {}
@@ -172,12 +172,13 @@ def evaluate(app, mode: str | None = None, now: datetime | None = None, prisk: d
         holdings = []
     checks = [check_data(fr), check_broker(app, mode, now), check_model(app, mode, real_money), check_risk(app, mode, prisk),
               check_event(cal, holdings), check_drift(app), check_calibration(app)]
+    truth_bad = escalate_from_truth(app, mode, now, checks)
     worst = max(RANK[c["status"]] for c in checks)
     status = ["READY", "CAUTION", "NOT_READY"][worst]
     reds = [c for c in checks if c["status"] == "red"]
     out = {"status": status, "mode": mode, "real_money": real_money, "at": now.isoformat(), "as_of": label(now),
            "checks": checks, "blockers": [f"{c['title']}: {c['detail']}" for c in reds],
-           "gate": gate_applies(st, mode), "freshness": fr}
+           "gate": gate_applies(st, mode), "freshness": fr, "truth_bad": truth_bad}
     if act:
         prev = ops.get_state(app.engine, "readiness")
         hist = (prev.get("history") or [])[-47:]
@@ -191,21 +192,56 @@ def evaluate(app, mode: str | None = None, now: datetime | None = None, prisk: d
     return out
 
 
+TRUTH_TO_GATE = {"clock": "EVENT", "data": "DATA", "event": "EVENT", "broker": "BROKER", "risk": "RISK", "execution": "BROKER"}
+
+
+def escalate_from_truth(app, mode: str, now: datetime, checks: list[dict]) -> list[str]:
+    """Truth Center 의 bad 항목 → 해당 관문을 빨강으로 (예: 휴장일 캘린더 없음 → EVENT · 미확정 주문 → BROKER)."""
+    from . import truth
+    try:
+        rep = truth.report(app, mode, now)
+    except Exception as e:  # noqa: BLE001 - 사실 확인 자체가 실패하면 fail-closed
+        c = next(x for x in checks if x["key"] == "DATA")
+        c.update(status="red", detail=f"Truth Center 점검 실패 ({type(e).__name__}) — fail-closed")
+        return [c["detail"]]
+    bad = []
+    by = {c["key"]: c for c in checks}
+    for sec in rep["sections"]:
+        for c in sec["checks"]:
+            if c["status"] != "bad":
+                continue
+            g = by[TRUTH_TO_GATE[sec["key"]]]
+            msg = f"{sec['title']} · {c['label']}: {c['detail']}"
+            bad.append(msg)
+            if g["status"] != "red":
+                g.update(status="red", detail=msg[:200])
+            else:
+                g.setdefault("items", []).append(msg[:200])
+    return bad
+
+
 def gate_applies(settings, mode: str) -> bool:
     """QUANT_READINESS_GATE: live(기본 — live·shadow 장부) · all · off."""
     g = getattr(settings, "readiness_gate", "live")
     return g == "all" or (g == "live" and mode in ("live", "shadow"))
 
 
-def buy_block(app, mode: str) -> str | None:
-    """RiskEngine.buy_block 용 — 최근 점검이 NOT_READY 이고 게이트가 적용되는 장부면 사유."""
+def buy_block(app, mode: str, max_age: timedelta = timedelta(hours=2)) -> str | None:
+    """RiskEngine.buy_block 용 (fail-closed).
+
+    게이트가 적용되는 장부(live·shadow 기본)에서: 최근 점검이 없거나 오래됐거나 다른 장부 기준이면 지금 다시 점검하고,
+    점검 자체가 실패하면 매수를 막는다. NOT READY 면 사유를 돌려준다."""
     if not gate_applies(app.settings, mode):
         return None
     r = ops.get_state(app.engine, "readiness")
-    if r.get("status") == "NOT_READY" and r.get("mode") in (mode, None):
-        at = r.get("at")
-        if at and datetime.now(UTC) - datetime.fromisoformat(at) < timedelta(hours=6):
-            return "NOT READY — " + "; ".join(r.get("blockers") or [])[:200]
+    fresh = r.get("at") and datetime.now(UTC) - datetime.fromisoformat(r["at"]) < max_age and r.get("mode") == mode
+    if not fresh:
+        try:
+            r = evaluate(app, mode)
+        except Exception as e:  # noqa: BLE001
+            return f"매매 준비 점검 실패 ({type(e).__name__}) — fail-closed: 신규 매수 중단"
+    if r.get("status") == "NOT_READY":
+        return "NOT READY — " + "; ".join(r.get("blockers") or [])[:200]
     return None
 
 
