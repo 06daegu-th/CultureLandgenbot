@@ -67,8 +67,10 @@ def _scored(app, sym, n=40, now=None, prob=0.62, up_every=3, action="BUY"):
 
 
 # ------------------------------------------------------------------ 홈: 오늘 할 일 3개 · 처음 안내 · 화면 설정
-def test_today3_priorities_and_start_guide(app):
+def test_today3_priorities_and_start_guide(app, monkeypatch):
     from quant_ai import center, prefs
+    # 시험 데이터는 2021년이라 '운영 꺼짐·데이터 밀림'이 늘 맨 위로 온다 — 이 시험은 그 아래 순서를 본다 (운영 알림은 test_v20)
+    monkeypatch.setattr(center, "ops_status", lambda a, now=None: {"issues": []})
     from quant_ai.ux import set_star
     a, b = _syms(app)[:2]
     g = center.start_guide(app)

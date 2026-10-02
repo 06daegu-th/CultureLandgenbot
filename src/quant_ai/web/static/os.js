@@ -25,14 +25,35 @@ async function osApplyWidgets() {
   osNav(hidden, w.order || []);
 }
 
+// v20: 종목 페이지 탭 — 긴 한 페이지 대신 '전체 / 차트 / 뉴스·공시 / 실적·재무 / AI / 위험·주문 / 내 보유'
+const OS_TABS = [["all", "전체", null], ["chart", "차트", ["pf-chart"]], ["news", "뉴스·공시", ["pf-news", "pf-disc", "pf-flow"]],
+  ["earn", "실적·재무", ["pf-earn", "pf-fin"]], ["ai", "AI 판단", ["pf-ai"]], ["risk", "위험·주문", ["pf-risk"]], ["mine", "내 보유", ["pf-mine"]]];
+function osTab(key, hidden) {
+  const body = $("#pf-body");
+  if (!body) return;
+  S.stockTab = key;
+  const grp = (OS_TABS.find(([k]) => k === key) || OS_TABS[0])[2];
+  hidden = hidden || S.stockHidden || new Set();
+  body.querySelectorAll(":scope > [data-w]").forEach((e) => { e.style.display = hidden.has(e.dataset.w) || (grp && !grp.includes(e.dataset.w)) ? "none" : ""; });
+  $("#pf-nav")?.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === key));
+  const c = $("#an-chart");  // 숨겨진 채로 그려진 차트는 폭이 0 → 보일 때 다시 맞춤
+  if (c?._chart && c.clientWidth) c._chart.applyOptions({ width: c.clientWidth });
+}
+function osShow(w) {  // 다른 곳(타일·'지금 가장 중요한 것')에서 섹션으로 이동 — 그 섹션이 있는 탭으로 바꾼 뒤 스크롤
+  const t = OS_TABS.find(([, , g]) => g && g.includes(w));
+  if (t && S.stockTab !== "all" && S.stockTab !== t[0]) osTab(t[0]);
+  document.querySelector(`#pf-body > [data-w="${w}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 function osNav(hidden, order) {
   const nav = $("#pf-nav");
   if (!nav) return;
-  let list = OS_SECTIONS.filter(([k]) => !hidden.has(k));
-  if (order.length) list = [...list].sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99));
-  nav.innerHTML = list.map(([k, l]) => `<button class="chip" data-w="${k}">${l}</button>`).join("") + '<button class="chip" id="pf-wedit" title="섹션 숨기기·순서 (서버 저장)">⚙</button>';
-  nav.querySelectorAll("[data-w]").forEach((b) => b.onclick = () => document.querySelector(`#pf-body > [data-w="${b.dataset.w}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  S.stockHidden = hidden;
+  const tabs = OS_TABS.filter(([, , g]) => !g || g.some((k) => !hidden.has(k)));
+  nav.innerHTML = `<div class="pf-tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" class="pf-tab" data-tab="${k}">${l}</button>`).join("")}</div>`
+    + '<button class="chip" id="pf-wedit" title="섹션 숨기기·순서 (서버 저장)">⚙</button>';
+  nav.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { osTab(b.dataset.tab, hidden); nav.scrollIntoView({ block: "nearest" }); });
   $("#pf-wedit").onclick = osWidgetEditor;
+  osTab(tabs.some(([k]) => k === S.stockTab) ? S.stockTab : "all", hidden);
 }
 
 async function osWidgetEditor() {
@@ -119,7 +140,7 @@ function osHeader(sym, h, pos) {
   box.innerHTML = `${banner}${today}<div class="os-grid">${tiles.join("")}</div>${hz}${fx}${discs ? `<div class="os-disc xs"><span class="muted">최근 공시</span> ${discs}</div>` : ""}`;
   const tg = $("#ccy-tg");
   if (tg) tg.onclick = () => { S.ccy = S.ccy === "KRW" ? "USD" : "KRW"; safeSet("qa_ccy", S.ccy); osHeader(sym, h, pos); };
-  box.querySelectorAll("[data-jump]").forEach((t) => t.onclick = () => document.querySelector(`#pf-body > [data-w="${t.dataset.jump}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  box.querySelectorAll("[data-jump]").forEach((t) => t.onclick = () => osShow(t.dataset.jump));
 }
 
 // ------------------------------------------------------------ 신선도 (1초마다 다시 셈)
@@ -318,11 +339,12 @@ async function osOverlay(sym) {
     const s = el._series;
     const LC = { support: ["#14b8a6", 1], resistance: ["#f472b6", 1], avg_cost: ["#facc15", 0], high52: ["#94a3b8", 3], low52: ["#94a3b8", 3],
       range_hi: ["#60a5fa", 2], range_lo: ["#60a5fa", 2] };
+    const LP = { avg_cost: 9, support: 5, resistance: 5, range_hi: 4, range_lo: 4, high52: 3, low52: 3 };
     (o.lines || []).filter((l) => LC[l.kind]).forEach((l) =>
-      s.createPriceLine({ price: l.price, color: LC[l.kind][0], lineWidth: l.kind === "avg_cost" ? 2 : 1, lineStyle: LC[l.kind][1], axisLabelVisible: true, title: l.title }));
+      chartLine(el, { price: l.price, color: LC[l.kind][0], width: l.kind === "avg_cost" ? 2 : 1, style: LC[l.kind][1], title: l.title, pri: LP[l.kind] }));
     const times = el._times || [];
     const at = (d) => { const t = Date.parse(d + "T00:00:00Z") / 1000; return times.find((x) => x >= t); };
-    const seen = new Set(), mk = [...(el._markers || [])];
+    const seen = new Set(), mk = (el._markers || []).map((m) => ({ ...m }));
     (o.marks || []).forEach((m) => {
       const t = at(m.date);
       if (t == null) return;
@@ -334,11 +356,12 @@ async function osOverlay(sym) {
       else if (m.kind === "volume") mk.push({ time: t, position: "belowBar", shape: "circle", color: "#a78bfa", text: `거래량 ${m.ratio}배` });
       else if (m.kind === "macro") mk.push({ time: t, position: "aboveBar", shape: "square", color: "#38bdf8", text: { fomc: "FOMC", cpi: "CPI", nfp: "고용", pce: "PCE" }[m.event] || "지표" });
       else if (m.kind === "move") mk.push({ time: t, position: m.chg > 0 ? "aboveBar" : "belowBar", shape: m.chg > 0 ? "arrowUp" : "arrowDown", color: m.chg > 0 ? "#f0474f" : "#3b8cff", text: `${m.chg > 0 ? "+" : ""}${(m.chg * 100).toFixed(0)}%` });
-      else if (m.kind === "ai_change") mk.push({ time: t, position: "belowBar", shape: "arrowUp", color: m.to === "BUY" ? "#22c55e" : m.to === "SELL" ? "#ef4444" : "#94a3b8", text: `AI ${m.to}` });
+      else if (m.kind === "ai_change") mk.push({ time: t, position: m.to === "SELL" ? "aboveBar" : "belowBar", shape: m.to === "SELL" ? "arrowDown" : m.to === "BUY" ? "arrowUp" : "circle",
+        color: m.to === "BUY" ? "#22c55e" : m.to === "SELL" ? "#ef4444" : "#94a3b8", text: `AI ${{ BUY: "매수", SELL: "매도", HOLD: "관망", NO_TRADE: "쉼" }[m.to] || m.to}` });
       else if (m.kind === "news" && m.tone !== "중립") mk.push({ time: t, position: "belowBar", shape: "circle", color: m.tone === "긍정" ? "#22c55e" : "#ef4444", text: "" });
     });
     mk.sort((a, b) => a.time - b.time);
-    try { s.setMarkers(mk); } catch { /* 표시 실패는 무시 */ }
+    try { s.setMarkers(declutterMarkers(mk, times)); } catch { /* 표시 실패는 무시 */ }
     const leg = document.createElement("div");
     leg.className = "chart-legend xs";
     leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#22c55e">● 긍정</span>/<span style="color:#ef4444">●</span> 부정 뉴스 <span style="color:#f0474f">▲</span>/<span style="color:#3b8cff">▼</span> 급등락 <span style="color:#94a3b8">↑ AI 신호 변화</span> <span style="color:#a78bfa">● 거래량 급증</span> <span style="color:#38bdf8">■ FOMC·CPI·고용</span> <span style="color:#facc15">━ 내 평균 매수가</span> <span style="color:#60a5fa">┄ 5일 보통 범위</span> <span style="color:#94a3b8">┄ 52주 고/저</span> <span class="dim">· ${esc(o.note)}</span>`;

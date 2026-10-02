@@ -321,8 +321,38 @@ def ai_state(app) -> dict:
         pl = {"n": 0, "headline": f"성적 계산 실패: {type(e).__name__}"}
     easy = {"headline": pl.get("headline"), "money": (pl.get("money") or {}).get("text"), "earned": (pl.get("money") or {}).get("earned"),
             "beat_base": pl.get("beat_base"), "strong": pl.get("strong"), "weak": pl.get("weak"), "n": pl.get("n", 0)}
+    # v20 알파 채점: 시장이 다 같이 오를 때 '오른다' 고 한 적중은 실력이 아니다 → 시장 대비로 다시 채점
+    try:
+        from .alphascore import alpha_card
+        ac = alpha_card(app)
+    except Exception:  # noqa: BLE001 - 보조 지표
+        ac = {"n": 0}
+    if ac.get("n"):
+        easy["alpha"] = {"n": ac["n"], "hit": ac["hit_excess"], "base": ac["base_excess"], "market_share": ac["market_share"],
+                         "verdict": ac["verdict"], "worse": "낮음" in ac["verdict"], "proven": "있음" in ac["verdict"],
+                         "text": f"시장 대비로 채점하면 {ac['hit_excess']:.0%} (기준 {max(0.5, ac['base_excess']):.0%}) — {ac['verdict']}"}
+        if key == "verified" and not easy["alpha"]["proven"]:
+            key = "checking"  # 방향 적중은 넘었어도 종목 선택력이 증명되지 않았으면 🟢 를 주지 않는다
+            icon, name, why = AI_STATE[key]
+            why = "방향 적중은 기준을 넘었지만 시장 대비로는 아직 증명 안 됨 — 참고만"
     return {"key": key, "icon": icon, "label": name, "why": why, "level": lv, "demoted": dem, "easy": easy,
             "accuracy": last.get("accuracy"), "base": last.get("base"), "n": last.get("n"), "reasons": t["trust"].get("reasons") or []}
+
+
+def _equity_spark(app, mode: str, now_eq: float, n: int = 90) -> list[list]:
+    """홈 '내 자산' 미니 차트: 최근 n 개 평가일의 [날짜, 평가금액] (하루 마지막 값) + 지금 값."""
+    from .data.db import session_scope
+    from .data.models import PortfolioSnapshot
+    with session_scope(app.engine) as s:
+        rows = s.execute(select(PortfolioSnapshot.ts, PortfolioSnapshot.equity).where(PortfolioSnapshot.mode == mode)
+                         .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()).limit(n * 8)).all()
+    by_day: dict[str, float] = {}
+    for ts, e in rows:
+        by_day.setdefault(str(ts.date()), float(e))  # 내림차순이라 처음 본 것이 그날 마지막 값
+    out = [[d, round(v)] for d, v in sorted(by_day.items())][-n:]
+    if out and abs(out[-1][1] - now_eq) > 0.5:
+        out.append(["now", round(now_eq)])
+    return out
 
 
 def _d_word(dd: int) -> str:
@@ -345,6 +375,12 @@ def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) ->
         add(100, "⛔", "자동 정지 중 — 이유를 확인하세요", "#safety", "안전장치가 모든 신규 매수를 막았습니다", kind="halt")
     elif ops.kill_switch_on(app.engine):
         add(90, "⏸️", "긴급 정지(수동) 켜져 있음 — 계속 둘지 확인", "#safety", "신규 매수가 멈춰 있습니다", kind="kill")
+    try:
+        for it in ops_status(app, now)["issues"]:
+            if it["level"] == "bad":
+                add(95 if it["key"] == "scheduler" else 92, "🔌" if it["key"] == "scheduler" else "🗓️", it["text"], "#server", it["fix"], kind="ops_" + it["key"])
+    except Exception:  # noqa: BLE001, S110 - 상태 확인 실패가 할 일을 막지 않게
+        pass
     a = action_center(app, mode, now)
     br = breaches(app)[:2]
     if br:
@@ -399,6 +435,47 @@ def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) ->
     empty_hint = a.get("empty_hint")
     return {"items": out[:n], "more": max(0, len(out) - n), "total": len(out), "empty_hint": empty_hint,
             "calm": "오늘 꼭 할 일은 없습니다 — 기다리는 것도 투자입니다" if not out and not empty_hint else None, "as_of": label(now)}
+
+
+def ops_status(app, now: datetime | None = None) -> dict:
+    """'지금 제대로 돌고 있나' — 24시간 운영(심장박동) · 주가 데이터 날짜 · 오늘 뉴스 · 최근 작업 실패."""
+    from sqlalchemy import func
+
+    from .asof import stamp
+    from .data.db import session_scope
+    from .data.models import JobRun, NewsArticle, PriceBar
+    from .watchdog import heartbeat_age
+    now = now or datetime.now(UTC)
+    hb = heartbeat_age(app.engine, now)
+    with session_scope(app.engine) as s:
+        last_bar = s.scalar(select(func.max(PriceBar.ts)).where(PriceBar.symbol.like("0%") | PriceBar.symbol.like("1%")
+                                                                  | PriceBar.symbol.like("2%") | PriceBar.symbol.like("3%")))
+        news24 = s.scalar(select(func.count()).select_from(NewsArticle).where(NewsArticle.published_at >= now - timedelta(days=1))) or 0
+        fails = s.scalar(select(func.count()).select_from(JobRun).where(JobRun.ok.is_(False), JobRun.started_at >= now - timedelta(days=1))) or 0
+        kr_syms = set(s.scalars(select(PriceBar.symbol).where(PriceBar.ts >= last_bar - timedelta(days=10)).distinct())) if last_bar else set()
+    kr_syms = {x for x in kr_syms if x[:1].isdigit()}
+    from .engines.sector import sector_map
+    mapped = sum(1 for x in kr_syms if x in sector_map(app.engine))
+    sector_cov = mapped / len(kr_syms) if kr_syms else None
+    bar = stamp(last_bar, "bar_kr", now) if last_bar else {"status": "none", "lag_days": None, "label": None}
+    running = hb is not None and hb < 15 * 60
+    issues = []
+    if not running:
+        issues.append({"key": "scheduler", "level": "bad", "text": "24시간 운영이 꺼져 있습니다" + (f" (마지막 신호 {hb / 3600:.0f}시간 전)" if hb else " (한 번도 안 켜짐)"),
+                       "fix": "터미널에서 ./run.sh — PC 를 켤 때 자동으로: ./run.sh install-service"})
+    if bar.get("lag_days") and bar["lag_days"] >= 2:
+        issues.append({"key": "data", "level": "bad", "text": f"주가 데이터가 {bar['lag_days']}거래일 밀렸습니다 ({bar['label']})",
+                       "fix": "24시간 운영을 켜면 장 마감 뒤 자동으로 받습니다 — 지금 바로: ./run.sh data"})
+    if running and news24 == 0:
+        issues.append({"key": "news", "level": "warn", "text": "최근 하루 저장된 뉴스 0건 — 뉴스 AI 가 빈손으로 판단합니다",
+                       "fix": "./run.sh doctor 로 뉴스 소스 연결 확인 (회사망·방화벽이면 RSS 주소가 막힐 수 있음) · 지금 바로: qa collect news"})
+    if sector_cov is not None and len(kr_syms) >= 10 and sector_cov < 0.5:
+        issues.append({"key": "sector", "level": "warn", "text": f"업종 분류가 {1 - sector_cov:.0%} 비어 있습니다 ({len(kr_syms) - mapped}/{len(kr_syms)}종목)",
+                       "fix": "업종 집중 위험·섹터 비교가 부정확합니다 — 지금 바로: qa collect sectors (24시간 운영 중이면 장 마감 뒤 자동)"})
+    if fails >= 3:
+        issues.append({"key": "jobs", "level": "warn", "text": f"최근 하루 작업 실패 {fails}건", "fix": "서버 · DB 화면에서 실패한 작업 확인"})
+    return {"running": running, "heartbeat_age_s": hb, "bar": {k: bar.get(k) for k in ("label", "status", "lag_days")},
+            "news_24h": news24, "job_failures_24h": fails, "sector_coverage": None if sector_cov is None else round(sector_cov, 3), "issues": issues, "ok": not issues, "as_of": label(now)}
 
 
 def start_guide(app) -> dict:
@@ -471,8 +548,11 @@ def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
         px = {s_: float(bars[s_]["close"].iloc[-1]) for s_ in pf.positions if s_ in bars and len(bars[s_])}
         eq = pf.equity(px) if px or pf.cash else pf.cash
         rk = risk_simple(app, mode)
-        base = app.settings.initial_cash
+        flows = app.cashflows(mode)
+        paid = sum(float(x["amount"]) for x in flows)
+        base = app.settings.initial_cash + paid  # 월 적립 등 입금은 수익이 아니다 → 원금에 더한다
         return {"mode": mode, "equity": round(eq), "cash": round(pf.cash), "n": len(pf.positions), "pnl_pct": round(eq / base - 1, 4) if base else None,
+                "pnl": round(eq - base), "paid_in": round(paid), "spark": _equity_spark(app, mode, eq),
                 "risk": {"level": rk.get("level"), "headline": rk.get("headline")}}
 
     def news():
@@ -491,5 +571,10 @@ def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
     safe("ai", lambda: ai_state(app))
     safe("news", news)
     safe("todo", todo)
+
+    def goal_():
+        from .goal import progress
+        return progress(app, now)
+    safe("goal", goal_)
     return out
 

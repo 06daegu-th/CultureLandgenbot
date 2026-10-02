@@ -160,6 +160,13 @@ ITEMS = [
     ("UX", "US stock AI", "미국 종목도 일봉+지수를 받아 같은 AI 합의로 분석 (주문 없음)", "actions.analyze_symbol", "test_us_ticker_can_be_analyzed"),
     ("OPERATIONS", "Offline · local chart lib", "서버 연결 실패 안내 화면(자동 재연결) · 차트 라이브러리 서버 직접 제공 · 2단계 인증 설정 오류 표시", "easy.js · web/static/vendor", "test_totp_without_password_is_warned_and_assets_are_local"),
     ("EVENT", "Weekly holdings schedule", "이번 주 보유·관심 종목 일정 + 월요일 알림 · 동종업체 실적 · 락업 공시", "center.py", "test_weekly_schedule_alert_and_lockup_strip"),
+    # v20
+    ("AI", "Quant v2 rank model", "'시장보다 더 오를까'(excess) 라벨 · 날짜별 순위 피처(cs_*) · 장기 팩터(12-1·6-1·3-1 모멘텀·52주 고점·변동성·비유동성) · 비교 종목 20개 미만이면 기권", "engines/features · analysts.QuantAnalyst", "test_quant_analyst_excess_wording_and_small_universe"),
+    ("AI", "Alpha scoring for 🟢", "AI 적중을 시장 대비로 다시 채점 · 종목 선택력이 증명 안 되면 🟢 실전 가능을 주지 않음", "center.ai_state · scorecard.plain", "test_ai_state_needs_alpha_for_green"),
+    ("PORTFOLIO", "Core vs index ETF baseline", "16년 연구(코어 vs KOSPI) + 실제 장부 vs 같은 돈·같은 입금의 'ETF 그림자 장부' · 고정 규칙 권고", "baseline.py", "test_baseline_compare_and_route"),
+    ("PORTFOLIO", "Goal plan · monthly DCA", "목표(예: 500만→1억)를 몬테카를로 확률로 · 방식별/적립액별 비교 · 필요한 월 적립 · 월 적립 자동 입금(모의)/알림(실계좌)", "goal.py", "test_goal_plan_honesty_and_compare"),
+    ("OPERATIONS", "Always-on service · ops status", "./run.sh install-service(launchd/systemd 자동 재시작) · status · update · 24시간 운영 꺼짐·데이터 밀림·뉴스 0건·업종 미분류를 '오늘 할 일' 맨 위에", "run.sh · center.ops_status", "test_ops_status_flags_stopped_scheduler_and_stale_data"),
+    ("UX", "Stock tabs · chart declutter", "종목 페이지 탭(전체·차트·뉴스·공시·실적·재무·AI·위험·내 보유) · 차트 가격 라벨 겹침 정리 · 표시 글자 겹침 정리 · 홈 자산 미니 차트", "os.js · app.js · easy.js", "test_stock_tabs_and_chart_declutter_static"),
 ]
 
 

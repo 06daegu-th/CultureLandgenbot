@@ -266,12 +266,22 @@ def plain(app, n: int = 100, symbol: str | None = None) -> dict:
     good = [x for x in regimes if x["n"] >= 10]
     strong = good[0] if good and good[0]["hit"] >= 0.55 else None
     weak = good[-1] if good and good[-1]["hit"] < 0.5 and good[-1] is not strong else None
+    alpha = None
+    xs = [((r.payload or {}).get("outcomes") or {}).get("excess") for r in rows]
+    pairs = [(r.prob_up >= 0.5, float(x)) for r, x in zip(rows, xs, strict=True) if x is not None]
+    if pairs:  # v20: 시장 대비 채점 — '지수보다 더 오른다' 를 맞혔나 (시장 방향 덕분의 적중을 걷어낸다)
+        ahit = sum(1 for up, x in pairs if up == (x > 0))
+        abase = sum(1 for _, x in pairs if x > 0)
+        alpha = {"n": len(pairs), "hits": ahit, "base_hits": abase, "hit_rate": round(ahit / len(pairs), 3),
+                 "beat_base": ahit > max(abase, len(pairs) - abase),
+                 "text": f"시장 대비로 채점하면 {len(pairs)}회 중 {ahit}회 적중 (그냥 '지수보다 더 오른다'고만 했으면 {abase}회 · "
+                         f"반대로만 했으면 {len(pairs) - abase}회)"}
     by_mkt = {}
     for r in rows:
         by_mkt.setdefault("한국" if r.symbol[:1].isdigit() else "미국", []).append(bool(r.correct))
     return {"n": len(rows), "hits": hits, "base_hits": ups, "hit_rate": round(hits / len(rows), 3), "base_rate": round(ups / len(rows), 3),
             "headline": f"최근 {len(rows)}회 중 {hits}회 방향 적중" + (f" (그냥 '오른다'고만 했으면 {ups}회)" if ups else ""),
-            "beat_base": hits > ups, "money": money, "failures": fails, "regimes": regimes,
+            "beat_base": hits > ups, "money": money, "alpha": alpha, "failures": fails, "regimes": regimes,
             "strong": None if not strong else f"{strong['regime']}에서 잘함 — 적중 {strong['hit']:.0%} ({strong['n']}회)",
             "weak": None if not weak else f"{weak['regime']}에서 약함 — 적중 {weak['hit']:.0%} ({weak['n']}회)",
             "markets": [{"market": k, "n": len(v), "hit": round(sum(v) / len(v), 3)} for k, v in by_mkt.items()],

@@ -74,6 +74,8 @@ nav a .nbadge { margin-left: auto; font-size: 10px; font-weight: 700; padding: 2
 .kill-big { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 11px; border-radius: 12px; cursor: pointer; font-weight: 700; font-size: 13px; font-family: inherit;
   color: #fca5a5; background: linear-gradient(180deg, rgba(127,29,29,.55), rgba(69,10,10,.6)); border: 1px solid rgba(239,68,68,.45); }
 .kill-big:hover { filter: brightness(1.15); }
+:root[data-theme="light"] .kill-big:not(.on) { color: #b91c1c; background: #fff1f2; border-color: #fca5a5; }
+:root[data-theme="light"] .kill-big:not(.on):hover { background: #ffe4e6; filter: none; }
 .kill-big.on { color: #fff; background: linear-gradient(180deg, #dc2626, #991b1b); box-shadow: 0 0 0 4px rgba(239,68,68,.2); }
 .quote { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--card-bg); color: var(--muted); font-size: 11.5px; line-height: 1.6; }
 .ver { color: var(--dim); font-size: 11px; padding: 2px 6px; }
@@ -1240,3 +1242,31 @@ img.lg { border-radius: 50%; vertical-align: middle; object-fit: contain; backgr
   .start-guide .sg-step:not(.cur) { padding: 6px 10px; }
 }
 .sr-none { padding: 10px 12px; line-height: 1.6; border-bottom: 1px solid var(--line); }
+
+/* v19: 내 목표 */
+.goal-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 6px 0; }
+.goal-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.goal-form .chk-row { justify-content: flex-start; }
+.goal-form .chk-row > span:last-child { display: flex; align-items: center; gap: 8px; min-height: 36px; color: var(--text); font-size: 14px; }
+.goal-form .chk-row input[type=checkbox] { width: 18px; height: 18px; padding: 0; margin: 0; accent-color: var(--accent); }
+.goal-form input, .goal-form select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); font-size: 14px; }
+.goal-head { display: flex; gap: 16px; align-items: center; margin: 10px 0; }
+.goal-p { font-size: 44px; font-weight: 900; min-width: 110px; text-align: center; }
+.goal-bar { height: 12px; border-radius: 999px; background: var(--panel-2); overflow: hidden; margin: 6px 0; }
+.goal-bar i { display: block; height: 100%; background: linear-gradient(90deg, #3b82f6, #22c55e); }
+.goal-strip { display: block; margin-bottom: 12px; padding: 12px 14px; color: inherit; text-decoration: none; }
+.goal-strip.empty { display: flex; gap: 10px; align-items: center; border-style: dashed; }
+tr.sel td { background: rgba(59,130,246,.10); }
+@media (max-width: 640px) { .goal-form { grid-template-columns: 1fr 1fr; } .goal-head { flex-direction: column; align-items: flex-start; } }
+
+
+/* v20: 관심종목 표 — 별표 안 한 '최근 본 종목'은 흐리게 */
+tr.wl-recent td { opacity: .72; }
+tr.wl-recent:hover td { opacity: 1; }
+.spark { display: block; margin: 6px 0 2px; }
+/* v20: 종목 페이지 탭 */
+.pf-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line-2); flex: 0 0 auto; }
+.pf-tab { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; padding: 7px 12px; border-radius: 9px; cursor: pointer; white-space: nowrap; }
+.pf-tab:hover { color: var(--text); }
+.pf-tab.on { background: var(--accent); color: #fff; box-shadow: 0 2px 8px rgba(59,130,246,.35); }
+@media (max-width: 640px) { .pf-tab { padding: 6px 9px; font-size: 12px; } }

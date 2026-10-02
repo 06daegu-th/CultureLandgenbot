@@ -210,13 +210,26 @@ class QuantAnalyst(Analyst):
         for col in self.predictor.features:
             if col not in row:
                 row[col] = np.nan
+        target = getattr(self.predictor, "target", "up")  # v20 이전에 저장된 모델은 up
+        if target == "excess":
+            from ..engines.features import MIN_CROSS
+            n = ctx.features.get("n_cross") or 0
+            if n < MIN_CROSS:
+                return Opinion.abstain(self.name, ctx.symbol, f"비교할 종목이 {int(n)}개뿐 — 순위 모델은 {MIN_CROSS}개 이상 필요",
+                                       f"sklearn:{self.predictor.kind}")
         pred = self.predictor.predict(row)[0]
         trend = math.tanh(10 * (ctx.features.get("dist_ma60") or 0))
+        reasons = [f"{k}: z={v:+.1f}" for k, v in pred.rationale.get("unusual_features", {}).items()]
+        if target == "excess":
+            # '시장보다 더 오를 확률' — 시장 전체가 빠지면 이 종목도 빠질 수 있다 (방향이 아니라 상대 순위)
+            summary = f"{self.predictor.kind} 순위 모델 · 시장 대비 더 오를 확률 {pred.prob_up:.2f} ({int(ctx.features.get('n_cross') or 0)}종목 중)"
+            reasons = ["상대 순위 예측 — 시장 방향은 국면 분석이 따로 본다", *reasons]
+        else:
+            summary = f"{self.predictor.kind} 모델 P(up)={pred.prob_up:.2f}"
         return Opinion(
             analyst=self.name, symbol=ctx.symbol, prob_up=pred.prob_up, confidence=pred.confidence,
-            reasons=[f"{k}: z={v:+.1f}" for k, v in pred.rationale.get("unusual_features", {}).items()],
-            sub_scores={TREND: trend}, summary=f"{self.predictor.kind} 모델 P(up)={pred.prob_up:.2f}",
-            backend=f"sklearn:{self.predictor.kind}", meta={"model_version": self.version},
+            reasons=reasons, sub_scores={TREND: trend}, summary=summary,
+            backend=f"sklearn:{self.predictor.kind}", meta={"model_version": self.version, "target": target},
         )
 
 

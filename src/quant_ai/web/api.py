@@ -979,6 +979,37 @@ class DashboardAPI:
         sym = symbol.strip().upper()[:12]
         return self._cached(f"ai_plain:{sym}", 120, lambda: plain(self.app, 100, sym or None))
 
+    def baseline(self, mode: str = "paper") -> dict:
+        """코어(이 시스템) vs '그냥 지수 ETF 를 샀다면' — 16년 연구 + 실제 장부 그림자 비교."""
+        from .. import baseline
+        mode = mode if mode in ("paper", "live", "shadow") else "paper"
+        return self._cached(f"baseline:{mode}", 300, lambda: baseline.compare(self.app, mode))
+
+    def goal(self, q: dict | None = None) -> dict:
+        """저장된 목표(또는 화면에서 바꿔 본 값)로 확률 계획 + 진행률."""
+        from .. import goal
+        g = goal.get(self.app)
+        q = {k: v for k, v in (q or {}).items() if v not in (None, "")}
+        inp = {"principal": 5_000_000, "monthly": 500_000, "goal": 100_000_000, "target_years": 10, "strategy": "core", "raise_pct": 0.0} | \
+              {k: g[k] for k in ("principal", "monthly", "goal", "target_years", "strategy", "raise_pct") if k in g}
+        for k in ("principal", "monthly", "goal", "raise_pct"):
+            if k in q:
+                inp[k] = float(str(q[k]).replace(",", ""))
+        if "target_years" in q:
+            inp["target_years"] = int(q["target_years"])
+        if "strategy" in q:
+            inp["strategy"] = str(q["strategy"])
+        key = "goal:" + ":".join(str(inp[k]) for k in sorted(inp))
+        p = self._cached(key, 600, lambda: goal.plan(**inp))
+        return p | {"saved": g or None, "progress": goal.progress(self.app), "presets": goal.PRESETS}
+
+    def goal_save(self, body: dict) -> dict:
+        from .. import goal
+        g = goal.save(self.app, body)
+        self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5"))}
+        self._audit("goal", f"목표 {g['goal']:,.0f} · 월 {g['monthly']:,.0f}" + (f" · 적립 {'켬' if g.get('dca', {}).get('on') else '끔'}" if g.get("dca") else ""))
+        return {"ok": True, "saved": g}
+
     def start_guide(self) -> dict:
         from ..center import start_guide
         return self._cached("start_guide", 10, lambda: start_guide(self.app))

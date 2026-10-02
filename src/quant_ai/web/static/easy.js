@@ -2,8 +2,8 @@
 "use strict";
 
 // 쉬운 화면에서 보이는 메뉴 6개 (나머지는 '고급 메뉴'에 접혀 있다)
-const NAV_EASY = [["dashboard", "home", "홈"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["news", "news", "뉴스 · 공시"],
-  ["calendar", "bell", "일정"], ["pos", "portfolio", "내 자산"]];
+const NAV_EASY = [["dashboard", "home", "홈"], ["analysis", "ai", "종목"], ["watch", "star", "관심종목"], ["news", "news", "뉴스 · 공시"],
+  ["calendar", "calendar", "일정"], ["pos", "portfolio", "내 자산"], ["goal", "target", "내 목표"]];
 
 function uiMode() { return S.uiMode || safeGet("qa_ui") || "easy"; }
 function setUiMode(m) {
@@ -75,6 +75,7 @@ async function homeTop(root) {
     <div class="small">${esc(ai.why || "")}</div>
     ${ez.n ? `<div class="small" style="margin-top:4px">${esc(ez.headline)}</div>` : '<div class="xs dim">채점된 기록이 아직 부족합니다</div>'}
     ${ez.money ? `<div class="small ${ez.earned ? "up" : ez.earned === false ? "down" : ""}">${esc(ez.money)}</div>` : ""}
+    ${ez.alpha ? `<div class="small ${ez.alpha.proven ? "up" : ez.alpha.worse ? "down" : "muted"}">📏 ${esc(ez.alpha.text)}</div>` : ""}
     ${ez.strong ? `<div class="xs muted">👍 ${esc(ez.strong)}</div>` : ""}${ez.weak ? `<div class="xs muted">👎 ${esc(ez.weak)}</div>` : ""}
     <a class="xs" href="#scorecard">AI 성적표 (틀린 사례 포함) →</a>`;
   const mk = m.error ? err(m) : `
@@ -84,7 +85,8 @@ async function homeTop(root) {
     ${m.event ? `<a class="small" href="${esc(m.event.link || "#calendar")}">${IC[m.event.level] || "📅"} ${esc(m.event.text)}</a>` : ""}`;
   const as = a.error ? err(a) : `
     <div class="h5-big num">${moneyShort(a.equity, "KRW")}</div>
-    <div class="small">${a.pnl_pct == null ? "" : `<b class="num ${a.pnl_pct >= 0 ? "up" : "down"}">${P(a.pnl_pct, 1)}</b> 시작 대비 · `}${a.n}종목 · 현금 ${moneyShort(a.cash, "KRW")}</div>
+    <div class="small">${a.pnl_pct == null ? "" : `<b class="num ${a.pnl_pct >= 0 ? "up" : "down"}">${P(a.pnl_pct, 1)}</b> ${a.paid_in ? "낸 돈 대비" : "시작 대비"} · `}${a.n}종목 · 현금 ${moneyShort(a.cash, "KRW")}</div>
+    ${sparkSvg(a.spark)}
     ${a.risk?.headline ? `<div class="small">${IC[a.risk.level] || "•"} ${esc(a.risk.headline)}</div>` : ""}
     <a class="xs" href="#pos">${a.mode === "live" ? "실계좌" : "모의투자"} 자세히 →</a>`;
   const nwB = nw.error ? err(nw) : (nw.items || []).length ? nw.items.map((n) => `<div class="h5-news" data-news="${esc(n.id)}" role="button" tabindex="0">
@@ -92,7 +94,10 @@ async function homeTop(root) {
       <div class="xs dim">${(n.symbols || []).map((x) => `${stockLogo(x.symbol, x.name, 14)} ${esc(x.name)}`).join(" · ")}${n.first ? ` · ${esc(n.first)}` : ""}</div></div>`).join("")
       + `<a class="xs" href="#news">뉴스 ${nw.n}건 모두 보기 →</a>` : empty("최근 2일 저장된 뉴스 없음");
   const showGuide = g && !g.done && !(p?.ui?.guide_hidden);
-  box.innerHTML = `${showGuide ? guideCard(g) : ""}<div class="h5-grid">
+  const gp = h.goal || {};
+  const goalCard = gp.set ? `<a class="card goal-strip" href="#goal"><div class="h5-h">🎯 내 목표</div>${goalBar(gp)}</a>`
+    : `<a class="card goal-strip empty" href="#goal"><span class="h5-h">🎯 내 목표</span> <span class="small">아직 없음 — 목표를 정하면 '몇 년 안에 몇 % 확률'로 보여 드립니다 (예: 500만원 → 1억) →</span></a>`;
+  box.innerHTML = `${showGuide ? guideCard(g) : ""}${goalCard}<div class="h5-grid">
     <div class="h5 card h5-todo"><div class="h5-h">오늘 내가 할 일 <span class="xs dim">${esc(td.as_of || "")}</span></div>${todo}</div>
     <div class="h5 card h5-ai ai-${esc(ai.key || "")}"><div class="h5-h">AI 지금 믿을 만한가?</div>${aiB}</div>
     <div class="h5 card"><div class="h5-h">오늘 시장</div>${mk}</div>
@@ -213,8 +218,23 @@ async function plainScore(box, sym) {
     <div class="small muted">${r.beat_base ? "그냥 '오른다'고만 한 것보다 많이 맞혔습니다" : "그냥 '오른다'고만 한 것보다 적게 맞혔습니다 — 아직 AI 를 믿고 거래할 단계가 아닙니다"}</div>
     ${m ? `<div class="ps-money ${m.earned ? "up" : m.earned === false ? "down" : ""}">💰 ${esc(m.text)}</div>
       <div class="xs dim">${m.earned ? "지수를 이겼습니다 (비용 뒤)" : m.earned === false ? "지수에 졌습니다 — 그냥 지수를 산 것보다 못했습니다 (주가가 올랐어도 AI 가 돈을 번 것은 아님)" : ""}</div>` : ""}
+    ${r.alpha ? `<div class="small ${r.alpha.beat_base ? "up" : "down"}" style="margin-top:6px">📏 ${esc(r.alpha.text)}</div>
+      <div class="xs dim">시장이 다 같이 오를 때 '오른다'고 하면 쉽게 맞습니다 — 그래서 '지수보다 더 오를지'로 다시 채점한 것이 진짜 실력입니다</div>` : ""}
     ${fails ? `<div class="small b" style="margin-top:10px">크게 틀린 사례</div><ul class="ps-fail">${fails}</ul>` : ""}
     ${reg ? `<div class="small b" style="margin-top:8px">시장 분위기별 적중</div><div>${reg}</div>` : ""}
     ${r.strong ? `<div class="xs">👍 ${esc(r.strong)}</div>` : ""}${r.weak ? `<div class="xs">👎 ${esc(r.weak)}</div>` : ""}
     <div class="xs dim" style="margin-top:6px">${esc(r.note)}</div>`);
+}
+
+// v20: 홈 '내 자산' 미니 차트 (최근 90일 평가금액) — 오르면 빨강, 내리면 파랑 (국내 관례)
+function sparkSvg(pts) {
+  if (!pts || pts.length < 2) return '<div class="xs dim">자산 추이는 하루 이상 운용하면 나옵니다</div>';
+  const v = pts.map((p) => p[1]), lo = Math.min(...v), hi = Math.max(...v), W = 260, H = 46;
+  const x = (i) => (i / (v.length - 1)) * W, y = (a) => hi === lo ? H / 2 : H - 3 - ((a - lo) / (hi - lo)) * (H - 6);
+  const d = v.map((a, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(a).toFixed(1)}`).join("");
+  const c = v[v.length - 1] >= v[0] ? "var(--up)" : "var(--down)";
+  const first = pts[0][0], ch = v[v.length - 1] / v[0] - 1;
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" height="${H}" role="img" aria-label="최근 자산 추이">
+    <path d="${d}L${W},${H}L0,${H}Z" fill="${c}" opacity=".08"/><path d="${d}" fill="none" stroke="${c}" stroke-width="1.8" vector-effect="non-scaling-stroke"/></svg>
+    <div class="xs dim">${esc(first)} 이후 ${P(ch, 1)} (입금 포함 평가금액)</div>`;
 }

@@ -73,6 +73,8 @@
 | ✓ Event strategy forward ledger | 실적 서프라이즈(PEAD) 신호를 결과 전에 봉인 · 전진/사후 분리 채점 · 주문엔 안 씀 | `pead.py` | `test_pead_forward_ledger_seal_and_scoring` |
 | ✓ Final verdict · NO TRADE first | AI 별 의견 → FINAL 하나 · 데이터 부족/오래됨/장중 가격 20분 지연/실적 D-1/변동성 과다/AI 사용 금지면 BUY 막음 · 판단에 쓴 데이터 시각 | `explain.verdict` | `test_verdict_final_votes_no_trade_gates_and_data_used` |
 | ✓ Plain scorecard | 최근 100회 중 n회 적중 · 비용 뒤 · 지수 대비 초과수익 · 틀린 사례(원인 후보) · 상승/횡보/하락장별 | `scorecard.plain` | `test_plain_scorecard_counts_money_vs_index_failures_and_regimes` |
+| ✓ Quant v2 rank model | '시장보다 더 오를까'(excess) 라벨 · 날짜별 순위 피처(cs_*) · 장기 팩터(12-1·6-1·3-1 모멘텀·52주 고점·변동성·비유동성) · 비교 종목 20개 미만이면 기권 | `engines/features · analysts.QuantAnalyst` | `test_quant_analyst_excess_wording_and_small_universe` |
+| ✓ Alpha scoring for 🟢 | AI 적중을 시장 대비로 다시 채점 · 종목 선택력이 증명 안 되면 🟢 실전 가능을 주지 않음 | `center.ai_state · scorecard.plain` | `test_ai_state_needs_alpha_for_green` |
 
 ## MODEL
 
@@ -104,6 +106,8 @@
 | ✓ Portfolio OS | 내 자산·주식/현금·업종 집중·최대 위험 한 문장 · 전략·위기 시뮬레이션 | `portfolio_os.py` | `test_lab_validation_portfolio_personal_failure` |
 | ✓ Holdings × AI | 보유종목 옆 AI 마지막 판단 (🟢 BUY 64%) | `web/api._portfolio` | `test_portfolio_rows_show_ai_badge` |
 | ✓ Themes · same bet | 테마 집중도('반도체·AI 집중 43% — 사실상 같은 베팅') · 보유 종목 AI·중요 뉴스·실적 D-day | `portfolio_os.themes/holding_extras` | `test_portfolio_themes_and_holding_extras` |
+| ✓ Core vs index ETF baseline | 16년 연구(코어 vs KOSPI) + 실제 장부 vs 같은 돈·같은 입금의 'ETF 그림자 장부' · 고정 규칙 권고 | `baseline.py` | `test_baseline_compare_and_route` |
+| ✓ Goal plan · monthly DCA | 목표(예: 500만→1억)를 몬테카를로 확률로 · 방식별/적립액별 비교 · 필요한 월 적립 · 월 적립 자동 입금(모의)/알림(실계좌) | `goal.py` | `test_goal_plan_honesty_and_compare` |
 
 ## TRADING
 
@@ -156,6 +160,7 @@
 | ✓ Validation tracker | KIS 모의·WebSocket·실측 슬리피지·Forward·장기 — 진행률과 다음 할 일 | `validation.py` | `test_lab_validation_portfolio_personal_failure` |
 | ✓ Sentinel | 데이터 수집·AI 작업·스케줄러·DB·증권사 5분 감시 · 나빠짐/회복 알림 | `sentinel.py` | `test_sentinel_and_briefing_text` |
 | ✓ Offline · local chart lib | 서버 연결 실패 안내 화면(자동 재연결) · 차트 라이브러리 서버 직접 제공 · 2단계 인증 설정 오류 표시 | `easy.js · web/static/vendor` | `test_totp_without_password_is_warned_and_assets_are_local` |
+| ✓ Always-on service · ops status | ./run.sh install-service(launchd/systemd 자동 재시작) · status · update · 24시간 운영 꺼짐·데이터 밀림·뉴스 0건·업종 미분류를 '오늘 할 일' 맨 위에 | `run.sh · center.ops_status` | `test_ops_status_flags_stopped_scheduler_and_stale_data` |
 
 ## UX
 
@@ -192,3 +197,4 @@
 | ✓ Home 5 · AI state | 오늘 시장·내 자산·AI 상태(🟢검증됨/🟡검증 중/🔴사용 금지)·중요한 뉴스·오늘 할 일 | `center.home5` | `test_home5_sections_and_route` |
 | ✓ Easy mode · start guide | 쉬운 화면(메뉴 6개 + 고급 접기) · 처음 안내(데이터→한도→관심 3개→오늘 할 일) · 홈 맨 위 '오늘 할 일 3개' | `center.today3/start_guide · easy.js` | `test_today3_priorities_and_start_guide` |
 | ✓ US stock AI | 미국 종목도 일봉+지수를 받아 같은 AI 합의로 분석 (주문 없음) | `actions.analyze_symbol` | `test_us_ticker_can_be_analyzed` |
+| ✓ Stock tabs · chart declutter | 종목 페이지 탭(전체·차트·뉴스·공시·실적·재무·AI·위험·내 보유) · 차트 가격 라벨 겹침 정리 · 표시 글자 겹침 정리 · 홈 자산 미니 차트 | `os.js · app.js · easy.js` | `test_stock_tabs_and_chart_declutter_static` |

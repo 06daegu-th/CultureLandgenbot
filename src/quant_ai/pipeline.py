@@ -251,11 +251,11 @@ class QuantAI:
         result.metrics["n_trials"] = n_trials
         result.metrics["dsr"] = deflated_sharpe(result.metrics.pop("daily_returns"), n_trials)
         # 최종 모델은 전체(라벨 확정) 데이터로 재학습
-        data = build_dataset(bars, cfg.horizon, regime=regime_series(bench)["score"], sentiment=sentiment)
+        data = build_dataset(bars, cfg.horizon, regime=regime_series(bench)["score"], sentiment=sentiment, target=cfg.target)
         train = data.dropna(subset=["label"])
-        model = Predictor(cfg.model_kind, cfg.horizon).fit(train[feature_columns(data)], train["label"])
+        model = Predictor(cfg.model_kind, cfg.horizon, target=cfg.target).fit(train[feature_columns(data, cfg.target)], train["label"])
         rec = self.registry.register_candidate(model, name, result.metrics, {
-            "horizon": cfg.horizon, "model_kind": cfg.model_kind, "train_window": cfg.train_window,
+            "horizon": cfg.horizon, "model_kind": cfg.model_kind, "train_window": cfg.train_window, "target": cfg.target,
             "min_prob": cfg.min_prob, "train_end": str(train.index.get_level_values(0).max()),
             "embargo": cfg.embargo, "reason": reason,  # 계보: 왜 · 무엇에서 · 어떤 데이터로 만들었나
             "parent": (lambda c: f"{c.name}@{c.version}" if c else None)(self.registry.champion()),
@@ -328,8 +328,8 @@ class QuantAI:
         if not bars:
             return []
         reg = regime_series(bench)
-        data = build_dataset(bars, self.horizon, regime=reg["score"], sentiment=sentiment)
-        feats = feature_columns(data)
+        data = build_dataset(bars, self.horizon, regime=reg["score"], sentiment=sentiment)  # cs_*(순위) 도 함께 — 종목 선택 모델용
+        feats = [c for c in data.columns if c not in ("fwd_ret", "label")]
         model_rec, model = self.active_model()
         challenger_rec, challenger = self._load_model("shadow")
         if model_rec is not None and model_rec.status == "shadow":

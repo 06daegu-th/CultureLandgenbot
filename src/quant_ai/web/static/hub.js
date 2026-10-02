@@ -54,18 +54,21 @@ async function viewWatch(el) {
   S.wlGroup = S.wlGroup || "전체"; S.wlType = S.wlType || "전체";
   const rows = (w.rows || []).filter((r) => (S.wlGroup === "전체" || r.group === S.wlGroup) && (S.wlType === "전체" || r.type === S.wlType));
   const tabs = (id, list, cur) => `<div class="tabs" id="${id}">${["전체", ...list].map((g) => `<button data-k="${esc(g)}" class="${cur === g ? "on" : ""}">${esc(g)}</button>`).join("")}</div>`;
-  const tr = rows.map((r) => `<tr><td><button class="star-btn on" data-unstar="${esc(r.symbol)}" title="관심 해제">★</button></td>
+  const tr = rows.map((r) => `<tr class="${r.starred ? "" : "wl-recent"}"><td>${r.starred ? `<button class="star-btn on" data-unstar="${esc(r.symbol)}" title="관심 해제">★</button>`
+      : `<button class="star-btn" data-star="${esc(r.symbol)}" title="최근 본 종목 — 눌러서 관심종목에 담기">☆</button>`}</td>
     <td>${stockLogo(r.symbol, r.name)} <a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name)}</b></a> <span class="xs dim">${esc(r.symbol)}</span>${r.held ? ' <span class="chip xs">보유</span>' : ""}</td>
     <td class="small">${esc(r.type)}</td><td class="r num">${r.last != null ? num(r.last, r.last < 1000 ? 2 : 0) : "-"}</td>
     <td class="r ${r.chg_pct >= 0 ? "up" : "down"}">${P(r.chg_pct, 2)}</td><td>${badge(r.ai)} <span class="xs num">${R(r.prob_up, 0)}</span></td>
     <td class="small">${r.change ? `<span class="${r.change_dir > 0 ? "up" : r.change_dir < 0 ? "down" : ""}">${esc(r.change)}</span>` : '<span class="dim">-</span>'}</td>
-    <td><select data-grp="${esc(r.symbol)}" class="mini-sel">${[...new Set([...(w.groups || []), "기본"])].map((g) => `<option ${g === r.group ? "selected" : ""}>${esc(g)}</option>`).join("")}<option value="__new">+ 새 그룹</option></select></td></tr>`).join("");
-  el.innerHTML = card(`관심종목 <span class="small dim">★ ${w.n_star}개 · 최근 검색은 검색창(/)에서</span>`, `
+    <td>${r.starred ? `<select data-grp="${esc(r.symbol)}" class="mini-sel">${[...new Set([...(w.groups || []).filter((g) => g !== "최근 본 종목"), "기본"])].map((g) => `<option ${g === r.group ? "selected" : ""}>${esc(g)}</option>`).join("")}<option value="__new">+ 새 그룹</option></select>`
+      : '<span class="xs dim">최근 본 종목</span>'}</td></tr>`).join("");
+  el.innerHTML = card(`관심종목 <span class="small dim">★ ${w.n_star}개 · ☆ 는 최근 본 종목 (눌러서 담기)</span>`, `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">${tabs("wl-grp", w.groups || [], S.wlGroup)}${tabs("wl-type", w.types || [], S.wlType)}</div>
     ${tr ? `<div class="scroll"><table class="tight"><thead><tr><th></th><th>종목</th><th>구분</th><th class="r">현재가</th><th class="r">등락</th><th>AI</th><th>신호 변화</th><th>그룹</th></tr></thead><tbody>${tr}</tbody></table></div>` : empty("관심종목이 없습니다 — 종목 화면에서 ☆ 를 누르세요 (단축키 s)")}`);
   el.querySelectorAll("#wl-grp button").forEach((b) => b.onclick = () => { S.wlGroup = b.dataset.k; render(); });
   el.querySelectorAll("#wl-type button").forEach((b) => b.onclick = () => { S.wlType = b.dataset.k; render(); });
   el.querySelectorAll("[data-unstar]").forEach((b) => b.onclick = async () => { await post("/api/star", { symbol: b.dataset.unstar, on: false }); render(); });
+  el.querySelectorAll("[data-star]").forEach((b) => b.onclick = async () => { await post("/api/star", { symbol: b.dataset.star, on: true }); render(); });
   el.querySelectorAll("[data-grp]").forEach((s) => s.onchange = async () => {
     let g = s.value;
     if (g === "__new") { g = (prompt("새 그룹 이름 (20자 이내)") || "").trim(); if (!g) { render(); return; } }

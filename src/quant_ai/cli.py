@@ -71,6 +71,18 @@ def cmd_collect(args):
             sys.exit("--marcap-dir 필요 (FinanceData/marcap 의 data 폴더)")
         r = app.ingest_krx(args.marcap_dir, years=args.years, top_n=args.top)
         print(f"KRX: 종목 {r['symbols']} · 봉 {r['bars']:,} · 월별 유니버스 {r['months']}개월 · 마지막 {r['last_date']}")
+    elif args.what == "sectors":
+        from . import desk
+        from .engines.sector import fill_map, sector_map
+        w = desk.wics(app, force=True)
+        print(f"WICS 공식 업종: {w.get('mapped', 0)}종목" + (f" (실패: {w['error']})" if w.get("error") else ""))
+        bars, _, _ = app.market_data()
+        todo = [s_ for s_ in bars if s_ not in sector_map(app.engine)]
+        if todo:
+            r = fill_map(app.engine, todo, limit=min(len(todo), 120), pause=0.5)
+            print(f"나머지 (Yahoo 업종 → 한국어): {len(r['new'])}/{r['tried']}종목")
+        mp = sector_map(app.engine)
+        print(f"업종 분류: {sum(1 for s_ in bars if s_ in mp)}/{len(bars)}종목")
     elif args.what == "news":
         from .data.collectors.news import NewsCollector
         with session_scope(app.engine) as s:
@@ -607,6 +619,19 @@ def cmd_logos(args):
         print("  → 인터넷 연결 확인 후 ./run.sh logos --retry · 원하는 그림은 artifacts/logos/custom/<종목코드>.png 로 직접 넣기")
 
 
+def cmd_ops_status(args):
+    """./run.sh status 가 부른다 — 24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패."""
+    from .center import ops_status
+    st = ops_status(_app(args))
+    hb = st["heartbeat_age_s"]
+    print(f"{'✔' if st['running'] else '⚠'} 24시간 운영: {'켜짐' if st['running'] else '꺼짐'}" + (f" (마지막 신호 {hb / 60:.0f}분 전)" if hb is not None else ""))
+    b = st["bar"]
+    print(f"{'✔' if not b.get('lag_days') else '⚠'} 주가 데이터: {b.get('label') or '없음'}" + (f" · {b['lag_days']}거래일 밀림" if b.get("lag_days") else " · 최신"))
+    print(f"  최근 24시간 뉴스 {st['news_24h']}건 · 작업 실패 {st['job_failures_24h']}건")
+    for it in st["issues"]:
+        print(f"  → {it['text']}: {it['fix']}")
+
+
 def cmd_db_ping(args):
     """run.sh 용: 0 = 연결 + 주가 데이터 있음, 3 = 연결되지만 비어 있음, 1 = 연결 실패. 스키마를 만들지 않는다."""
     import os
@@ -737,7 +762,7 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--port", type=int, default=8050)
     s.set_defaults(fn=cmd_serve)
     c = sub.add_parser("collect")
-    c.add_argument("what", choices=["prices", "krx", "news", "disclosures", "macro"])
+    c.add_argument("what", choices=["prices", "krx", "news", "disclosures", "macro", "sectors"])
     c.add_argument("--marcap-dir", default="")
     c.add_argument("--top", type=int, default=100)
     c.add_argument("--source", default="yahoo", choices=["yahoo", "synthetic"])
@@ -789,6 +814,7 @@ def main(argv: list[str] | None = None) -> None:
     rd.set_defaults(fn=cmd_readiness)
     sub.add_parser("health").set_defaults(fn=cmd_health)
     sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
+    sub.add_parser("ops-status", help="운영 상태 (24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패)").set_defaults(fn=cmd_ops_status)
     lg = sub.add_parser("logos", help="종목 로고 미리 받기 (관심·보유·주요 종목)")
     lg.add_argument("--symbols", help="쉼표로 구분한 종목 (생략하면 관심·보유·주요 종목)")
     lg.add_argument("--top", type=int, default=100, help="주요 종목 몇 개까지 (기본 100)")

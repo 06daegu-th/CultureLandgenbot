@@ -21,6 +21,10 @@
 #   ./run.sh us               미국 장부 (일봉 받기 + 코어·AI 가상매매 한 사이클)
 #   ./run.sh warmup           빈 화면 채우기 (뉴스·공시·거시 · AI 판단 1회)
 #   ./run.sh logos [--retry]  종목 로고 미리 받기 (관심·보유·주요 종목 · 실제 회사 로고, 못 받으면 이니셜)
+#   ./run.sh install-service  PC 를 켜면 자동으로 24시간 운영 시작 (macOS launchd · Linux systemd) — 꺼져 있으면 데이터가 밀린다
+#   ./run.sh uninstall-service  자동 시작 해제
+#   ./run.sh status           지금 돌고 있나 (대시보드 · 24시간 운영 · 데이터 날짜 · 자동 시작)
+#   ./run.sh update           새 버전 받기 (git) → 설치 · DB 갱신 → 자동 시작이면 다시 시작
 #   ./run.sh db-clean [--yes] DB 정리 (기본 미리보기 · 주문·판단 기록은 보존)
 #   ./run.sh up | down | logs Docker 로 상시 운영 (PostgreSQL + 스케줄러 + 대시보드)
 #   ./run.sh clean-old        옛 버전 폴더의 설치 파일·데이터 정리 (디스크 확보 · .env·DB 는 보존)
@@ -301,8 +305,10 @@ cmd_data() {
       die "KRX 데이터 받기 실패 ($repo) — 폴더를 확인하거나 .env 의 QUANT_MARCAP_DIR 을 비우고 ./run.sh data"
     fi
   fi
-  say "DB 적재 (시가총액 상위 100, 최근 3년) — 1~2분"
-  QUANT_MARCAP_DIR="$mdir" qa collect krx --marcap-dir "$mdir" --years 3 --top 100
+  say "DB 적재 (시가총액 상위 100, 최근 5년 — 12개월 모멘텀 · 순위 모델 학습용) — 2~4분"
+  QUANT_MARCAP_DIR="$mdir" qa collect krx --marcap-dir "$mdir" --years 5 --top 100
+  say "업종 분류 받기 (WICS) — 실패해도 계속"
+  qa collect sectors || warn "업종 분류는 다음에 다시 받습니다 (24시간 운영 중이면 장 마감 뒤 자동)"
   mkdir -p "$DATA_DIR" && touch "$DATA_DIR/.last_sync"
 }
 
@@ -409,6 +415,104 @@ stop_other_server() {  # 포트가 비어 있으면 0 · 옛 Quant AI 서버면 
     sleep 0.5
   done
   return 1
+}
+
+# ------------------------------------------------------------------ 상시 운영 (v20): 자동 시작 · 상태 · 업데이트
+SERVICE_NAME="quant-ai"
+LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.quantai.run.plist"
+SYSTEMD_UNIT="$HOME/.config/systemd/user/$SERVICE_NAME.service"
+
+cmd_install_service() {
+  local os; os="$(uname -s)"
+  mkdir -p "$LOG_DIR"
+  if [[ "$os" == "Darwin" ]]; then
+    mkdir -p "$(dirname "$LAUNCHD_PLIST")"
+    cat >"$LAUNCHD_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.quantai.run</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>$ROOT/run.sh</string></array>
+  <key>WorkingDirectory</key><string>$ROOT</string>
+  <key>EnvironmentVariables</key><dict><key>QUANT_NO_BROWSER</key><string>1</string><key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$LOG_DIR/service.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIR/service.log</string>
+</dict></plist>
+PLIST
+    launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
+    launchctl load -w "$LAUNCHD_PLIST" || die "launchd 등록 실패"
+    ok "자동 시작 등록 (macOS) — 로그인하면 24시간 운영이 시작되고, 멈추면 다시 띄웁니다 · 로그: logs/service.log"
+    warn "Mac 이 잠자기에 들어가면 멈춥니다 — 시스템 설정 → 배터리/에너지에서 '잠자기 방지'(전원 연결 시)를 켜 두세요"
+  elif [[ "$os" == "Linux" ]] && command -v systemctl >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$SYSTEMD_UNIT")"
+    cat >"$SYSTEMD_UNIT" <<UNIT
+[Unit]
+Description=Quant AI (대시보드 + 24시간 운영)
+After=network-online.target
+
+[Service]
+WorkingDirectory=$ROOT
+Environment=QUANT_NO_BROWSER=1
+ExecStart=/bin/bash $ROOT/run.sh
+Restart=always
+RestartSec=30
+StandardOutput=append:$LOG_DIR/service.log
+StandardError=append:$LOG_DIR/service.log
+
+[Install]
+WantedBy=default.target
+UNIT
+    systemctl --user daemon-reload && systemctl --user enable --now "$SERVICE_NAME" || die "systemd 등록 실패"
+    ok "자동 시작 등록 (Linux systemd) — 멈추면 30초 뒤 다시 띄웁니다 · 로그: logs/service.log"
+    if command -v loginctl >/dev/null 2>&1 && ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
+      warn "로그아웃해도 계속 돌게 하려면 한 번: sudo loginctl enable-linger $USER"
+    fi
+  else
+    warn "이 운영체제는 자동 등록을 지원하지 않습니다 ($os)."
+    cat <<'TXT'
+  · Windows: 작업 스케줄러 → 기본 작업 만들기 → '컴퓨터 시작 시' → 프로그램: wsl.exe 또는 Git Bash, 인수: 이 폴더의 run.sh
+  · 어디서나: Docker 로 상시 운영 — ./run.sh up (재부팅·오류 뒤 자동 재시작)
+TXT
+  fi
+}
+
+cmd_uninstall_service() {
+  if [[ -f "$LAUNCHD_PLIST" ]]; then launchctl unload -w "$LAUNCHD_PLIST" >/dev/null 2>&1 || true; rm -f "$LAUNCHD_PLIST"; ok "macOS 자동 시작 해제"; fi
+  if [[ -f "$SYSTEMD_UNIT" ]]; then systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true; rm -f "$SYSTEMD_UNIT"; systemctl --user daemon-reload >/dev/null 2>&1 || true; ok "systemd 자동 시작 해제"; fi
+  [[ -f "$LAUNCHD_PLIST" || -f "$SYSTEMD_UNIT" ]] || ok "등록된 자동 시작 없음"
+}
+
+service_installed() { [[ -f "$LAUNCHD_PLIST" || -f "$SYSTEMD_UNIT" ]]; }
+
+cmd_status() {
+  if running_server_is_mine; then ok "대시보드: 켜짐 (http://127.0.0.1:$PORT · 이 폴더 · v$(health_field version))"
+  elif curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then warn "대시보드: 다른 폴더(옛 버전)의 서버가 켜져 있음 — ./run.sh stop 후 ./run.sh"
+  else warn "대시보드: 꺼짐 — ./run.sh"; fi
+  if service_installed; then ok "자동 시작: 등록됨"; else warn "자동 시작: 없음 — PC 를 다시 켜면 멈춥니다 (./run.sh install-service)"; fi
+  ensure_installed >/dev/null 2>&1 || true
+  qa ops-status 2>/dev/null || warn "운영 상태를 읽지 못했습니다 (설치·DB 확인: ./run.sh doctor)"
+}
+
+cmd_update() {
+  if [[ ! -d "$ROOT/.git" ]]; then
+    warn "이 폴더는 git 으로 받은 것이 아닙니다 (zip). 새 zip 을 새 폴더에 풀고 그 폴더에서 ./run.sh 를 실행하세요 — .env 는 옛 폴더에서 복사"
+    return 0
+  fi
+  command -v git >/dev/null 2>&1 || die "git 이 필요합니다"
+  if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]]; then die "직접 고친 파일이 있어 자동 업데이트를 멈춥니다 — git status 로 확인"; fi
+  say "새 버전 받는 중 (git pull)"
+  git -C "$ROOT" pull --ff-only || die "업데이트 실패 — 인터넷 연결 확인 또는 git status"
+  ensure_installed
+  ensure_db
+  if service_installed; then
+    say "자동 시작 서비스 다시 시작"
+    if [[ -f "$SYSTEMD_UNIT" ]]; then systemctl --user restart "$SERVICE_NAME"; else launchctl unload "$LAUNCHD_PLIST" && launchctl load -w "$LAUNCHD_PLIST"; fi
+  else
+    cmd_stop >/dev/null 2>&1 || true
+    ok "업데이트 완료 — ./run.sh 로 다시 시작하세요"
+  fi
 }
 
 cmd_stop() {  # 이 PC 에서 떠 있는 Quant AI 대시보드 종료
@@ -543,6 +647,10 @@ main() {
     serve)      ensure_db; running_server_is_mine && { ok "이미 이 폴더의 대시보드가 떠 있습니다 (http://127.0.0.1:$PORT)"; exit 0; }
                 stop_other_server || die "포트 $PORT 를 다른 프로그램이 쓰고 있습니다"; qa serve "$@" ;;
     stop)       cmd_stop ;;
+    install-service)   cmd_install_service ;;
+    uninstall-service) cmd_uninstall_service ;;
+    status)     cmd_status ;;
+    update)     cmd_update ;;
     orders)     qa orders "$@" ;;
     checkup)    qa checkup "$@" ;;
     cashflow)   qa cashflow "$@" ;;

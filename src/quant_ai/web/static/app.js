@@ -176,7 +176,7 @@ async function candleChart(el, symbol, n = 260) {
   const krw = isKR(symbol);
   candles.applyOptions({ priceFormat: { type: "price", precision: krw ? 0 : 2, minMove: krw ? 1 : 0.01 } });
   candles.setData(d.bars);
-  el._series = candles; el.dataset.sym = symbol;  // 매매 구간선(truth.js chartPlanLines)
+  el._series = candles; el._chart = chart; el.dataset.sym = symbol;  // 매매 구간선(truth.js chartPlanLines)
   [["ma5", "#f59e0b"], ["ma20", "#a78bfa"], ["ma60", "#38bdf8"]].forEach(([k, c]) => {
     const s = chart.addLineSeries({ color: c, lineWidth: 1.4, priceLineVisible: false, lastValueVisible: false });
     s.setData(d[k]);
@@ -185,13 +185,53 @@ async function candleChart(el, symbol, n = 260) {
   chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
   vol.setData(d.bars.map((b) => ({ time: b.time, value: b.volume, color: (b.close >= b.open ? up : down) + "66" })));
   el._times = d.bars.map((b) => b.time);
+  el._bars = d.bars; el._lines = [];
   el._markers = d.markers.map((m) => ({
     time: m.time, position: m.action === "BUY" ? "belowBar" : "aboveBar", shape: m.action === "BUY" ? "arrowUp" : "arrowDown",
     color: m.action === "BUY" ? "#22c55e" : "#fb7185", text: `${m.action} ${Math.round(m.confidence)}`,
   }));
-  candles.setMarkers(el._markers);  // v16: 뉴스·공시·실적 표시는 os.js 가 여기에 합친다
+  candles.setMarkers(declutterMarkers(el._markers.map((m) => ({ ...m })), el._times));  // v16: 뉴스·공시·실적 표시는 os.js 가 여기에 합친다
   chart.timeScale().fitContent();
   chartRangeBar(el, chart, d.bars);
+}
+
+// v20: 차트 가격선 정리 — 여러 곳(매매 구간·지지/저항·평단·52주)이 그린 선의 오른쪽 라벨이 겹치지 않게.
+// 선은 모두 그리고, 서로 가까운(가격 폭의 3% 안) 라벨은 중요한 것만 남긴다 (손절 > 내 평단 > 진입 > 목표 > 추격 금지 > 지지/저항 > 범위 > 52주).
+function chartLine(el, o) {
+  if (!el?._series || !o.price) return;
+  const line = el._series.createPriceLine({ price: o.price, color: o.color, lineWidth: o.width || 1, lineStyle: o.style ?? 2, axisLabelVisible: true, title: o.title || "" });
+  (el._lines = el._lines || []).push({ ...o, line });
+  clearTimeout(el._lineT);
+  el._lineT = setTimeout(() => declutterLines(el), 30);
+}
+function declutterLines(el) {
+  const ls = el._lines || [];
+  if (!ls.length) return;
+  const ps = ls.map((l) => l.price), bars = el._bars || [];
+  const lo = Math.min(...ps, ...bars.slice(-130).map((b) => b.low)), hi = Math.max(...ps, ...bars.slice(-130).map((b) => b.high));
+  const gap = Math.max((hi - lo) * 0.03, 1e-9);
+  const kept = [];
+  [...ls].sort((a, b) => (b.pri || 0) - (a.pri || 0)).forEach((l) => {
+    const show = !kept.some((k) => Math.abs(k.price - l.price) < gap);
+    if (show) kept.push(l);
+    l.line.applyOptions({ axisLabelVisible: show, title: show ? (l.title || "") : "" });
+    l.hidden = !show;
+  });
+}
+// 같은 구간에 글자 표시가 몰리면 덜 중요한 것은 모양만 남긴다 (글자 겹침 방지)
+const MARK_PRI = { 실적: 9, BUY: 8, SELL: 8, AI: 7, 공시: 6, move: 5, 거래량: 4, macro: 3 };
+function declutterMarkers(mk, times) {
+  const span = Math.max(3, Math.ceil((times?.length || 260) / 45));
+  const idx = new Map((times || []).map((t, i) => [t, i]));
+  const pri = (m) => MARK_PRI[(m.text || "").split(" ")[0]] ?? (/^[+-]\d/.test(m.text || "") ? MARK_PRI.move : m.text ? MARK_PRI.macro : 0);
+  const taken = { aboveBar: [], belowBar: [] };
+  [...mk].sort((a, b) => pri(b) - pri(a)).forEach((m) => {
+    if (!m.text) return;
+    const i = idx.get(m.time) ?? 0, side = taken[m.position] || (taken[m.position] = []);
+    if (side.some((j) => Math.abs(j - i) < span)) m.text = "";
+    else side.push(i);
+  });
+  return mk;
 }
 
 // v18: 차트 기간 버튼 — 1D(분봉)는 실시간 시세 연결 때만
@@ -654,6 +694,7 @@ async function viewAnalysis(el) {
   const d = S.data;
   const sym = S.symbol || d.watchlist[0]?.symbol;
   if (!sym) { el.innerHTML = card("AI 종목 분석", empty()); return; }
+  if (S.stockTabSym !== sym) { S.stockTab = "all"; S.stockTabSym = sym; }  // v20: 다른 종목으로 가면 탭은 '전체'부터
   const a = await api(`/api/analysis?symbol=${encodeURIComponent(sym)}`);
   const selList = [...(d.all_symbols || d.watchlist)];
   if (!selList.some((w) => w.symbol === sym)) selList.unshift({ symbol: sym, name: a.name || sym });
@@ -1201,6 +1242,7 @@ async function render() {
     else if (S.view === "pead") await viewPead(el);
     else if (S.view === "usorder") await viewUSOrder(el);
     else if (S.view === "replay") await viewReplay(el);
+    else if (S.view === "goal") await viewGoal(el);  // v19: 내 목표 (goal.js)
     else el.innerHTML = card("페이지 없음", empty(`'${esc(S.view)}' 화면이 없습니다`));
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
