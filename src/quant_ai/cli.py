@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 import sys
 from datetime import UTC, datetime, timedelta
 
@@ -604,26 +603,32 @@ def cmd_kill(args):
     print(f"킬스위치 {args.state.upper()}")
 
 
-def load_dotenv(path: str = ".env") -> None:
-    """의존성 없이 .env 를 읽어 환경변수 기본값으로 설정 (이미 있는 값은 유지)."""
-    import os
+def cmd_keys(args):
+    """.env 의 DART·FRED·ECOS 키 진단 (+ --probe: 실제 연결 시험). 키 값은 출력하지 않는다."""
+    from .keys import diagnose, probe
+    app = _app(args)
+    d = diagnose(app)
+    print(f".env: {d['env_file'] or '찾지 못함 (프로젝트 폴더에 .env 필요)'}")
+    for x in d["issues"]:
+        print(f"  ⚠ {x}")
+    icon = {"ok": "✔", "warn": "⚠", "bad": "✖", "missing": "○"}
+    for k in d["keys"]:
+        print(f"{icon[k['status']]} {k['key']:<14} {k['title']} · {'불러옴' if k['loaded'] else '안 불러옴'}"
+              + (f" · 길이 {k['length']}" if k["length"] else ""))
+        for t in k["tips"]:
+            print(f"    - {t}")
+    if args.probe:
+        for name, r in probe(app)["results"].items():
+            print(f"{'✔' if r['ok'] else '○' if r['status'] == 'missing' else '✖'} 연결 {name.upper()}: {r['message']} ({r.get('ms', 0)}ms)")
+
+
+def load_dotenv(path: str | None = None) -> None:
+    """의존성 없이 .env 를 읽어 환경변수로 (이미 값이 있으면 유지, 빈 값은 채움 · export/BOM/따옴표/주석 처리 ·
+    프로젝트 폴더의 .env 도 찾음 · OPENDART_API_KEY 같은 다른 이름도 인식) — keys.load_into_environ."""
     from pathlib import Path
 
-    p = Path(path)
-    if not p.exists():
-        return
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        v = v.strip()
-        if v[:1] in ('"', "'"):
-            v = v[1:].split(v[0], 1)[0]  # 따옴표 안은 그대로 (# 포함 가능)
-        else:
-            v = re.split(r"\s+#", v, maxsplit=1)[0].strip()  # 줄 끝 주석 제거: KIS_ENV=demo  # 모의투자
-        if v:
-            os.environ.setdefault(k.strip(), v)
+    from .keys import load_into_environ
+    load_into_environ(Path(path) if path else None)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -661,6 +666,9 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--years", type=int, default=5)
     c.add_argument("--days", type=int, default=7)
     c.set_defaults(fn=cmd_collect)
+    k = sub.add_parser("keys", help="DART·FRED·ECOS 키 진단 (--probe: 실제 연결 시험)")
+    k.add_argument("--probe", action="store_true")
+    k.set_defaults(fn=cmd_keys)
     sub.add_parser("train").set_defaults(fn=cmd_train)
     sub.add_parser("decide").set_defaults(fn=cmd_decide)
     r = sub.add_parser("run")

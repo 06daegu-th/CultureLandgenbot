@@ -1059,3 +1059,5 @@ kbd { font: 600 11px "JetBrains Mono", monospace; padding: 1px 6px; border-radiu
 .bad-row td { background: color-mix(in srgb, var(--bad) 7%, transparent); }
 .lg-filter { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
 #pf-body > section { scroll-margin-top: 120px; }
+/* v17 — 키 도움말 */
+.key-help { margin: 10px 0 6px; padding: 10px 12px; border-radius: 10px; background: var(--panel-2); border-left: 3px solid var(--warn); }

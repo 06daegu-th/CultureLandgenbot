@@ -286,10 +286,38 @@ function setupBanner(s) {
   return `<div class="card setup-card"><div class="setup-h"><div><b>시작 체크리스트</b><span class="small muted"> — 비어 있는 화면은 아래 항목이 채워지면 자동으로 채워집니다</span></div>
     <button class="btn-sm primary" id="warmup-btn" ${act.running ? "disabled" : ""}>${act.running ? "채우는 중…" : "지금 채우기"}</button></div>
     <div class="setup-steps">${s.steps.map((x) => `<div class="ss ${x.done ? "done" : x.optional ? "opt" : ""}"><span class="ssi">${x.done ? "✓" : x.optional ? "○" : "!"}</span><div><b>${esc(x.label)}</b>${x.optional ? ' <span class="xs dim">선택</span>' : ""}<div class="xs muted">${esc(x.detail)}</div>${x.done ? "" : `<div class="xs" style="color:var(--accent-3)">${esc(x.fix)}</div>`}</div></div>`).join("")}</div>
+    ${keyHelp(s)}
     <div class="small dim" id="warmup-msg">${act.running ? esc(act.progress || "") : act.error ? "실패: " + esc(act.error) : act.finished_at ? "마지막 채우기 " + time(act.finished_at, true) : ""}</div></div>`;
 }
 
+// v17: 키를 넣었는데 '키 없음'일 때 — 이유(.env 줄·형식·중복·마지막 오류)와 [키 다시 읽기] [연결 시험]
+function keyHelp(s) {
+  const ks = (s.steps || []).filter((x) => x.keys && !x.done);
+  if (!ks.length) return "";
+  return `<div class="key-help"><div class="small"><b>🔑 API 키</b> <span class="xs muted">.env 를 고치면 자동 반영 (서버 재시작 불필요) · 키 값은 화면에 표시하지 않음</span></div>
+    ${ks.map((x) => `<div class="xs" style="margin-top:4px"><b>${esc(x.label)}</b> ${(x.tips || []).map((t) => `<div class="muted">· ${esc(t)}</div>`).join("")}</div>`).join("")}
+    <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn-sm" id="keys-reload">키 다시 읽기</button><button class="btn-sm" id="keys-probe">연결 시험</button><a class="btn-sm" href="#datahealth">자세히</a></div>
+    <div class="xs" id="keys-msg"></div></div>`;
+}
+async function bindKeyHelp() {
+  const r = $("#keys-reload"), p = $("#keys-probe"), m = $("#keys-msg");
+  if (r) r.onclick = async () => {
+    r.disabled = true;
+    const x = await post("/api/keys/reload", {});
+    m.textContent = x.error ? `실패: ${x.error}` : x.changed.length ? `반영됨: ${x.changed.join(", ")} → '지금 채우기'를 누르세요` : "바뀐 키 없음 — .env 를 저장했는지, 키 이름이 정확한지 확인";
+    r.disabled = false;
+    if (x.changed?.length) { await refresh(); render(); }
+  };
+  if (p) p.onclick = async () => {
+    p.disabled = true; m.textContent = "DART · FRED · ECOS 에 작은 요청 1번씩 보내는 중…";
+    const x = await post("/api/keys/probe", {});
+    m.innerHTML = x.error ? `실패: ${esc(x.error)}` : Object.entries(x.results).map(([k, v]) => `${v.ok ? "🟢" : v.status === "missing" ? "⚪" : "🔴"} ${k.toUpperCase()}: ${esc(v.message)}`).join(" · ");
+    p.disabled = false;
+  };
+}
+
 function bindSetup() {
+  bindKeyHelp();
   const b = $("#warmup-btn");
   if (!b) return;
   b.onclick = async () => {

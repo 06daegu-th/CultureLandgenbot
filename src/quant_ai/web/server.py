@@ -143,6 +143,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.ensure_symbol(arg("symbol", "")[:20]))
                     if url.path == "/api/setup":
                         return self._json(api.setup())
+                    if url.path == "/api/keys":
+                        return self._json(api.keys())
                     if url.path == "/api/server":
                         return self._json(api.server())
                     if url.path == "/api/db":
@@ -316,6 +318,10 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     return self._json(api.star(body))
                 if url.path == "/api/prefs":
                     return self._json(api.prefs_write(body))
+                if url.path == "/api/keys/reload":
+                    return self._json(api.keys_reload())
+                if url.path == "/api/keys/probe":
+                    return self._json(api.keys_probe(body))
                 if url.path == "/api/stock/digest":
                     return self._json(api.stock_digest(body))
                 if url.path == "/api/watch-group":

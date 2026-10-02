@@ -165,6 +165,30 @@ async function viewDataHealth(el) {
     ${card("장애가 나도 돈은 안전 (Fail-Closed)", `<table class="tight"><thead><tr><th>장애</th><th>기존 포지션</th><th>신규 매수</th><th>매도</th></tr></thead><tbody>${(g.failmode || []).map((m) => `<tr><td class="small b">${esc(m.part)}</td><td class="small">${esc(m.positions)}</td><td class="small ${/차단|제한/.test(m.new_buys) ? "bad-t" : ""}">${esc(m.new_buys)}</td><td class="small">${esc(m.sells)}</td></tr>`).join("")}</tbody></table>`)}
   </div>`;
   $("#dh-re").onclick = async (e) => { e.target.disabled = true; await api("/api/data-health?refresh=1"); render(); };
+  keysCard(el);
+}
+
+// v17: API 키 진단 (DART · FRED · ECOS) — 값은 끝 4자리만
+async function keysCard(el) {
+  const box = document.createElement("div");
+  el.appendChild(box);
+  let k;
+  try { k = await api("/api/keys"); } catch { box.remove(); return; }
+  const ST = { ok: "🟢", warn: "🟡", bad: "🔴", missing: "⚪" };
+  box.innerHTML = card(`API 키 진단 <span class="small dim">${esc(k.env_file || ".env 를 찾지 못함")}</span>`, `
+    ${(k.issues || []).map((x) => `<div class="xs warn-t">⚠ ${esc(x)}</div>`).join("")}
+    <div class="tr-rows">${k.keys.map((x) => `<div class="tr-row"><span class="tr-ic">${ST[x.status]}</span><div><div class="small b">${esc(x.title)} <span class="xs mono dim">${esc(x.key)}${x.masked ? " " + esc(x.masked) : ""}</span></div>
+      <div class="xs muted">${x.loaded ? "서버에 반영됨" : "서버에 없음"}${x.lines.length ? ` · .env ${x.lines.join(", ")}번째 줄` : ""}${x.length ? ` · 길이 ${x.length}` : ""}</div>
+      ${(x.tips || []).map((t) => `<div class="xs">· ${esc(t)}</div>`).join("")}</div></div>`).join("")}</div>
+    <div style="margin-top:8px;display:flex;gap:6px"><button class="btn-sm" id="kc-reload">키 다시 읽기</button><button class="btn-sm" id="kc-probe">연결 시험</button></div>
+    <div class="xs" id="kc-msg" style="margin-top:6px"></div><div class="xs dim" style="margin-top:4px">${esc(k.note)} · 터미널: <code>./run.sh keys --probe</code></div>`);
+  const m = $("#kc-msg");
+  $("#kc-reload").onclick = async () => { const r = await post("/api/keys/reload", {}); m.textContent = r.changed?.length ? `반영됨: ${r.changed.join(", ")}` : "바뀐 키 없음"; if (r.changed?.length) render(); };
+  $("#kc-probe").onclick = async () => {
+    m.textContent = "시험 중…";
+    const r = await post("/api/keys/probe", {});
+    m.innerHTML = r.error ? esc(r.error) : Object.entries(r.results).map(([n, v]) => `${v.ok ? "🟢" : v.status === "missing" ? "⚪" : "🔴"} ${n.toUpperCase()}: ${esc(v.message)}${v.ms ? ` (${v.ms}ms)` : ""}`).join("<br>");
+  };
 }
 
 // ------------------------------------------------------------ Portfolio OS (위험 · 시뮬레이션)

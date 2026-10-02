@@ -36,11 +36,18 @@ class FredCollector:
 
     def collect(self, session: Session, start: date) -> int:
         n = 0
+        self.errors: dict[str, str] = {}
         for sid in self.series:
-            payload = self.fetch_json(FRED_URL, {
-                "series_id": sid, "api_key": self.api_key, "file_type": "json",
-                "observation_start": start.isoformat(),
-            })
+            try:
+                payload = self.fetch_json(FRED_URL, {
+                    "series_id": sid, "api_key": self.api_key, "file_type": "json",
+                    "observation_start": start.isoformat(),
+                })
+            except Exception as e:  # noqa: BLE001 - 한 시리즈 실패가 나머지를 막지 않게
+                self.errors[sid] = str(e)[:300]
+                if len(self.errors) >= 3 and not n:  # 처음 셋이 다 실패 = 키·네트워크 문제 → 더 시도하지 않음
+                    raise RuntimeError(f"FRED 수집 실패: {next(iter(self.errors.values()))}") from e
+                continue
             have = set(session.scalars(
                 select(MacroObservation.ts).where(MacroObservation.series_id == sid, MacroObservation.ts >= start)
             ))

@@ -41,7 +41,10 @@ STARTED_AT = datetime.now(UTC)
 def setup_status(app) -> dict:
     """'데이터 없음' 대신: 무엇이 준비됐고 무엇이 비었는지, 어떻게 채우는지."""
     from .analytics import data_confidence
+    from .keys import diagnose, refresh
+    refresh(app)
     st = app.settings
+    diag = {k["key"]: k for k in diagnose(app)["keys"]}
     conf = data_confidence(app)
     items = {i["key"]: i for i in conf["items"]}
     with session_scope(app.engine) as s:
@@ -69,12 +72,8 @@ def setup_status(app) -> dict:
          "action": "warmup"},
         {"key": "book", "label": "운용 장부 (가상/모의)", "done": n_snap > 0, "detail": f"스냅샷 {n_snap}개",
          "fix": "./run.sh 로 사이클 1회 (리밸런싱 날이 아니면 주문 없음)"},
-        {"key": "disclosures", "label": "공시 (DART)", "done": items["disclosures"]["status"] == "ok",
-         "detail": items["disclosures"]["last"] or ("키 없음" if not st.dart_api_key else "아직 없음"),
-         "fix": "DART_API_KEY (무료) 후 '지금 채우기'", "optional": True, "action": "warmup" if st.dart_api_key else None},
-        {"key": "macro", "label": "거시·해외지수 (FRED)", "done": items["macro"]["status"] == "ok",
-         "detail": items["macro"]["last"] or ("키 없음" if not st.fred_api_key else "아직 없음"),
-         "fix": "FRED_API_KEY (무료) 후 '지금 채우기'", "optional": True, "action": "warmup" if st.fred_api_key else None},
+        _key_step("disclosures", "공시 (DART)", items["disclosures"], st.dart_api_key, diag["DART_API_KEY"], "DART_API_KEY"),
+        _key_step("macro", "거시·해외지수 (FRED)", items["macro"], st.fred_api_key, diag["FRED_API_KEY"], "FRED_API_KEY"),
         {"key": "scheduler", "label": "24시간 스케줄러", "done": bool(last_job and last_job.replace(tzinfo=last_job.tzinfo or UTC)
                                                                     > datetime.now(UTC) - timedelta(hours=1)),
          "detail": f"마지막 작업 {str(last_job)[:16]}" if last_job else "실행 기록 없음", "fix": "./run.sh (자동 모드) 가 함께 실행"},
@@ -82,6 +81,22 @@ def setup_status(app) -> dict:
     need = [x for x in steps if not x["done"] and not x.get("optional")]
     return {"ready": not need, "steps": steps, "confidence": conf["score"], "confidence_label": conf["label"],
             "action": get_action("warmup")}
+
+
+def _key_step(key: str, label: str, item: dict, has_key, diag: dict, env: str) -> dict:
+    """키가 필요한 선택 항목: '키 없음/아직 없음' 대신 왜 그런지 (.env 줄 · 형식 · 마지막 수집 오류)."""
+    done = item["status"] == "ok"
+    if done:
+        detail = item["last"]
+    elif not has_key:
+        detail = "키 없음 — " + (diag["tips"][0] if diag["tips"] else f".env 에 {env}= 값 필요")
+    elif diag.get("last_error"):
+        detail = next((t for t in diag["tips"] if t.startswith("마지막 수집 실패")), "수집 실패")
+    else:
+        detail = (item["last"] and f"마지막 {item['last']} (오래됨)") or "키 확인됨 · 아직 수집 전 → '지금 채우기'"
+    return {"key": key, "label": label, "done": done, "detail": detail, "tips": diag["tips"], "key_status": diag["status"],
+            "fix": f"{env} (무료) 후 '지금 채우기' · 넣은 뒤 재시작 불필요", "optional": True,
+            "action": "warmup" if has_key else None, "keys": True}
 
 
 # ====================================================================== 워밍업
@@ -98,22 +113,30 @@ def warmup(app, progress=None) -> dict:
                 out["news"] = NewsCollector(st.news_feeds).collect(s)
         except Exception as e:  # noqa: BLE001
             out["news_error"] = str(e)[:200]
+    from .keys import explain_error, note_error, refresh
+    refresh(app, force=True)  # 방금 .env 에 넣은 키도 반영 (서버 재시작 불필요)
+    st = app.settings
     if st.dart_api_key:
         say("공시 수집 중…")
         try:
             from .data.collectors.disclosures import DartCollector
             with session_scope(app.engine) as s:
                 out["disclosures"] = DartCollector(st.dart_api_key).collect(s, date.today() - timedelta(days=14), date.today())
+            note_error(app.engine, "dart", None)
         except Exception as e:  # noqa: BLE001
-            out["disclosures_error"] = str(e)[:200]
+            out["disclosures_error"] = explain_error("dart", str(e))
+            note_error(app.engine, "dart", str(e))
     if st.fred_api_key:
         say("거시 지표 수집 중…")
         try:
             from .data.collectors.macro import FredCollector
+            fc = FredCollector(st.fred_api_key)
             with session_scope(app.engine) as s:
-                out["macro"] = FredCollector(st.fred_api_key).collect(s, date.today() - timedelta(days=400))
+                out["macro"] = fc.collect(s, date.today() - timedelta(days=400))
+            note_error(app.engine, "fred", None if not fc.errors else f"일부 시리즈 실패: {', '.join(fc.errors)}")
         except Exception as e:  # noqa: BLE001
-            out["macro_error"] = str(e)[:200]
+            out["macro_error"] = explain_error("fred", str(e))
+            note_error(app.engine, "fred", str(e))
     with session_scope(app.engine) as s:
         has_bars = s.scalar(select(PriceBar.id).limit(1)) is not None
     if has_bars:

@@ -857,7 +857,31 @@ class DashboardAPI:
     # ------------------------------------------------------------------ 준비 상태 · 서버 · 동작 · 채팅
     def setup(self) -> dict:
         from ..actions import setup_status
+        from ..keys import refresh
+        if refresh(self.app).get("changed"):  # .env 를 고쳤으면 캐시를 버리고 바로 보여준다
+            self._risk_cache.pop("setup", None)
         return self._cached("setup", 15, lambda: setup_status(self.app))
+
+    def keys(self) -> dict:
+        from ..keys import diagnose, refresh
+        refresh(self.app)
+        return diagnose(self.app)
+
+    def keys_reload(self) -> dict:
+        from ..keys import diagnose, refresh
+        r = refresh(self.app, force=True)
+        self._risk_cache.pop("setup", None)
+        self._audit("keys_reload", ", ".join(r.get("changed") or []) or "변경 없음")
+        return {"changed": r.get("changed") or [], **diagnose(self.app)}
+
+    def keys_probe(self, body: dict) -> dict:
+        from ..keys import probe, refresh
+        refresh(self.app, force=True)
+        which = body.get("which") or None
+        if which not in (None, "dart", "fred", "ecos"):
+            raise ValueError("which 는 dart / fred / ecos")
+        self._risk_cache.pop("setup", None)
+        return probe(self.app, which)
 
     def server(self) -> dict:
         from ..actions import server_status

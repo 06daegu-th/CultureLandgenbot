@@ -124,19 +124,40 @@ def build_default_scheduler(app, mode) -> Scheduler:
                 NewsCollector(st.news_feeds).collect(s)
         sch.add("news", news, 300, "open")
         sch.add("news_offhours", news, 1800, "closed")
-    if st.dart_api_key:
-        def dart(now):
+    # 키는 실행 중에 .env 에서 다시 읽힌다 (keys.refresh) → 작업은 항상 등록하고, 키가 없을 때만 건너뛴다
+    from .keys import note_error
+    from .keys import refresh as _keys_refresh
+
+    def dart(now):
+        key = app.settings.dart_api_key
+        if not key:
+            return
+        try:
             with session_scope(app.engine) as s:
-                DartCollector(st.dart_api_key).collect(s, date.today() - timedelta(days=1), date.today())
-        sch.add("disclosures", dart, 600, "always")
-        # 보유·관심·코어 종목의 새 공시는 원문을 받아 요약 (한 번에 5건)
-        from .data.collectors.dart_docs import summarize_pending
-        sch.add("dart_summary", lambda now: summarize_pending(app, st.dart_api_key), 1800, "always")
-    if st.fred_api_key:
-        def fred(now):
+                DartCollector(key).collect(s, date.today() - timedelta(days=1), date.today())
+            note_error(app.engine, "dart", None)
+        except Exception as e:
+            note_error(app.engine, "dart", str(e))
+            raise
+    sch.add("disclosures", dart, 600, "always")
+    # 보유·관심·코어 종목의 새 공시는 원문을 받아 요약 (한 번에 5건)
+    from .data.collectors.dart_docs import summarize_pending
+    sch.add("dart_summary", lambda now: summarize_pending(app, app.settings.dart_api_key) if app.settings.dart_api_key else None, 1800, "always")
+
+    def fred(now):
+        key = app.settings.fred_api_key
+        if not key:
+            return
+        fc = FredCollector(key)
+        try:
             with session_scope(app.engine) as s:
-                FredCollector(st.fred_api_key).collect(s, date.today() - timedelta(days=30))
-        sch.add("macro", fred, 3 * 3600, "closed")
+                fc.collect(s, date.today() - timedelta(days=30))
+            note_error(app.engine, "fred", f"일부 시리즈 실패: {', '.join(fc.errors)}" if fc.errors else None)
+        except Exception as e:
+            note_error(app.engine, "fred", str(e))
+            raise
+    sch.add("macro", fred, 3 * 3600, "closed")
+    sch.add("keys_reload", lambda now: _keys_refresh(app), 60, "always")  # .env 를 고치면 1분 안에 반영
 
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and st.strategy == "core_satellite":
         # 코어는 20거래일마다, AI 거부권·긴급청산·위성은 매 사이클 점검 (일봉 기반이라 한 시간에 한 번이면 충분)
@@ -287,7 +308,7 @@ def build_default_scheduler(app, mode) -> Scheduler:
         from .data.collectors import kr_consensus as _krc
         from .data.collectors import vkospi as _vk
         sch.add("kr_consensus", lambda now: _krc.collect(app.engine, list(_f13(app))), 24 * 3600, "closed")
-        sch.add("bok", lambda now: (_bok.schedule(app.engine), _bok.base_rate(app.engine, st.ecos_api_key)), 24 * 3600, "always")
+        sch.add("bok", lambda now: (_bok.schedule(app.engine), _bok.base_rate(app.engine, app.settings.ecos_api_key)), 24 * 3600, "always")
         sch.add("vkospi", lambda now: _vk.get(app.engine, app.market_data()[1]), 12 * 3600, "always")
         # Truth Center (매시간) · 1차(KRX) 일봉이 늦으면 2차(Yahoo)로 빈 날만 채움
         from . import truth as _truth
