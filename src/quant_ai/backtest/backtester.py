@@ -46,6 +46,15 @@ class BacktestConfig:
     costs: CostModelConfig = field(default_factory=CostModelConfig)
 
 
+def effective_config(cfg: BacktestConfig, bars_by_symbol: dict) -> BacktestConfig:
+    """종목 선택(excess) 모델은 같은 날 비교할 종목이 MIN_CROSS 개 이상일 때만 의미가 있다 → 적으면 '오를까'(up) 로."""
+    from ..engines.features import MIN_CROSS
+    if cfg.target == "excess" and len(bars_by_symbol) < MIN_CROSS:
+        from dataclasses import replace as _replace
+        return _replace(cfg, target="up")
+    return cfg
+
+
 @dataclass
 class BacktestResult:
     equity: pd.Series
@@ -86,6 +95,7 @@ class Backtester:
         """eligible: index=일자, columns=종목, bool. 그 시점에 실제로 투자 대상이었던 종목만
         학습·예측·신규매수에 쓴다 (생존편향·선택편향 제거). None 이면 전 종목."""
         cfg = self.cfg
+        cfg = effective_config(cfg, bars_by_symbol)
         bench = benchmark if benchmark is not None else equal_weight_index(bars_by_symbol)
         reg = regime_series(bench)
         data = build_dataset(bars_by_symbol, cfg.horizon,
@@ -151,8 +161,9 @@ class Backtester:
                     continue
                 top = sorted(prob_map, key=lambda s_: -prob_map[s_])[:cfg.rank_k]
                 w = min(1.0 / max(len(top), 1), cfg.risk.max_position_weight)
-                signals = [Signal(s_, w, prob_map[s_], "상위 점수") for s_ in top] + \
-                          [Signal(s_, 0.0, prob_map.get(s_, 0.5), "상위 밖") for s_, pos in pf.positions.items() if pos.qty and s_ not in top]
+                # 순위로 고르는 모델이라 '확률 0.55 이상' 검사는 하지 않는다 (코어와 같음 — 확률은 0.5 근처가 정상)
+                signals = [Signal(s_, w, None, f"상위 점수 {prob_map[s_]:.3f}") for s_ in top] + \
+                          [Signal(s_, 0.0, None, "상위 밖") for s_, pos in pf.positions.items() if pos.qty and s_ not in top]
             else:
                 signals = signals_from_probs(prob_map, cfg.min_prob, cfg.risk.max_position_weight, cfg.top_k)
             for s in signals:

@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from http.client import HTTPConnection
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -82,7 +83,7 @@ def test_today3_priorities_and_start_guide(app, monkeypatch):
     now = datetime.now(UTC)
     set_star(app, a, True)
     ops.set_state(app.engine, "event_calendar", {"events": [
-        {"date": (now + timedelta(days=1)).date().isoformat(), "kind": "earnings", "symbol": a, "title": "3분기 실적", "market": "KR"}]})
+        {"date": (now.astimezone(ZoneInfo("Asia/Seoul")) + timedelta(days=1)).date().isoformat(), "kind": "earnings", "symbol": a, "title": "3분기 실적", "market": "KR"}]})
     ops.set_kill_switch(app.engine, True, "테스트", halt=True)
     try:
         t = center.today3(app, now=now)

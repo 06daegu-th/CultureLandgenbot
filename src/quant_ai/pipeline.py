@@ -238,6 +238,8 @@ class QuantAI:
             bars, bench, sentiment = self.market_data()
         cfg = config or BacktestConfig(horizon=self.horizon, risk=self.settings.risk, costs=self.settings.costs,
                                        initial_cash=self.settings.initial_cash)
+        from .backtest.backtester import effective_config
+        cfg = effective_config(cfg, bars)  # 종목이 20개 미만이면 순위 모델 대신 '오를까' 모델
         name = name or f"quant-{cfg.model_kind}"
         result = Backtester(cfg).run(bars, bench, sentiment)
         if result.model is None:
