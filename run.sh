@@ -11,6 +11,7 @@
 #   ./run.sh kis-check        KIS 연결 + 모의 1주 주문→취소 (모의투자에서만)
 #   ./run.sh cycle            코어 1회 실행
 #   ./run.sh serve            대시보드만 http://127.0.0.1:8050
+#   ./run.sh stop             떠 있는 대시보드 종료 (옛 버전 폴더에서 띄운 것 포함)
 #   ./run.sh orders --cash 30000000 --holdings my.csv   수동 매매용 주문표
 #   ./run.sh checkup          전략 건강검진
 #   ./run.sh cashflow 5000000 입금 기록 (출금은 음수)
@@ -361,6 +362,59 @@ cleanup() {
   if [[ -n "${WARM_PID:-}" ]] && kill -0 "$WARM_PID" 2>/dev/null; then kill "$WARM_PID" 2>/dev/null || true; fi
 }
 
+# ------------------------------------------------------------------ 이미 떠 있는 대시보드 확인
+# 옛 버전 폴더에서 띄운 서버가 포트를 잡고 있으면, 새 버전을 실행해도 화면은 옛 코드·옛 .env 로 나온다
+# (예: .env 에 DART 키를 넣었는데 '키 없음'). → 이 폴더·이 버전 서버가 아니면 멈추고 새로 띄운다.
+health_field() {  # /api/health JSON 의 한 필드 (없으면 빈 값)
+  curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" 2>/dev/null | "$VENV/bin/python" -c \
+    'import json,sys
+try: print(json.load(sys.stdin).get(sys.argv[1]) or "")
+except Exception: print("")' "$1" 2>/dev/null || true
+}
+
+my_instance() {
+  "$VENV/bin/python" -c 'import hashlib,os,sys; print(hashlib.sha256(os.path.realpath(sys.argv[1]).encode()).hexdigest()[:12])' "$ROOT"
+}
+
+my_version() {
+  PYTHONPATH="$ROOT/src" "$VENV/bin/python" -c 'import quant_ai; print(quant_ai.__version__)' 2>/dev/null || true
+}
+
+running_server_is_mine() {  # 떠 있고 + 같은 폴더 + 같은 버전이면 0
+  curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || return 1
+  [[ "$(health_field instance)" == "$(my_instance)" && "$(health_field version)" == "$(my_version)" ]]
+}
+
+port_pid() {  # 포트를 잡고 있는 프로세스
+  local p="$(health_field pid)"
+  if [[ -z "$p" ]] && command -v lsof >/dev/null 2>&1; then p="$(lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1)"; fi
+  if [[ -z "$p" ]] && command -v fuser >/dev/null 2>&1; then p="$(fuser "$PORT/tcp" 2>/dev/null | awk '{print $1}')"; fi
+  printf '%s' "$p"
+}
+
+stop_other_server() {  # 포트가 비어 있으면 0 · 옛 Quant AI 서버면 멈추고 0 · 다른 프로그램이면 1
+  curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || return 0
+  local pid ver root
+  pid="$(port_pid)"; ver="$(health_field version)"; root="$(health_field root)"
+  if [[ -z "$pid" ]] || ! ps -o command= -p "$pid" 2>/dev/null | grep -qiE 'quant[_-]ai|quant_ai\.cli'; then
+    warn "포트 $PORT 의 서버를 확인할 수 없습니다 (PID ${pid:-?})"
+    return 1
+  fi
+  warn "포트 $PORT 에 다른 버전/폴더의 대시보드가 떠 있습니다 (버전 ${ver:-옛 버전} · ${root:-폴더 모름} · PID $pid)"
+  warn "  → 그 서버는 그 폴더의 코드와 .env 를 씁니다 (새 .env 의 키가 '없음'으로 보이는 원인). 멈추고 이 폴더로 다시 띄웁니다"
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    curl -fsS -m 1 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || { ok "옛 대시보드 종료"; return 0; }
+    sleep 0.5
+  done
+  return 1
+}
+
+cmd_stop() {  # 이 PC 에서 떠 있는 Quant AI 대시보드 종료
+  if ! curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then ok "포트 $PORT 에 떠 있는 대시보드 없음"; return 0; fi
+  stop_other_server || die "포트 $PORT 의 프로그램을 멈추지 못했습니다"
+}
+
 cmd_auto() {
   say "1/5 설치 확인"
   ensure_env
@@ -382,9 +436,10 @@ cmd_auto() {
   say "5/5 대시보드 + 24시간 운영 시작"
   mkdir -p "$LOG_DIR"
   trap cleanup EXIT INT TERM
-  if curl -fsS -m 2 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
-    warn "포트 $PORT 에 이미 대시보드가 떠 있어 그대로 씁니다"
+  if running_server_is_mine; then
+    ok "포트 $PORT 의 대시보드가 이 폴더·이 버전이라 그대로 씁니다"
   else
+    stop_other_server || die "포트 $PORT 를 다른 프로그램이 쓰고 있습니다 — 그 프로그램을 끄거나 QUANT_WEB_PORT=8060 ./run.sh"
     qa serve --port "$PORT" >"$LOG_DIR/web.log" 2>&1 &
     WEB_PID=$!
     wait_http || warn "대시보드 시작 확인 실패 — logs/web.log 확인"
@@ -476,7 +531,9 @@ main() {
     doctor)     ensure_db; qa doctor "$@" ;;
     kis-check)  qa kis-check --test-order "$@" ;;
     cycle)      ensure_db; cmd_cycle "$@" ;;
-    serve)      ensure_db; qa serve "$@" ;;
+    serve)      ensure_db; running_server_is_mine && { ok "이미 이 폴더의 대시보드가 떠 있습니다 (http://127.0.0.1:$PORT)"; exit 0; }
+                stop_other_server || die "포트 $PORT 를 다른 프로그램이 쓰고 있습니다"; qa serve "$@" ;;
+    stop)       cmd_stop ;;
     orders)     qa orders "$@" ;;
     checkup)    qa checkup "$@" ;;
     cashflow)   qa cashflow "$@" ;;

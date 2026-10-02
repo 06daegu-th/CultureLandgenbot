@@ -103,6 +103,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 return self._json(auth.info() | {"role": self._role(qs)})
             if url.path == "/api/health":  # 인증 없이 최소 정보 (로드밸런서/모니터링용)
                 h = api.health()
+                if (self.client_address[0] if self.client_address else "") in ("127.0.0.1", "::1"):
+                    h |= api.instance()  # 같은 PC 에서만: 버전·폴더·PID (run.sh 가 옛 서버를 알아보게)
                 return self._json(h, 200 if h["ok"] else 503)
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):

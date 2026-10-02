@@ -287,6 +287,8 @@ function setupBanner(s) {
     <button class="btn-sm primary" id="warmup-btn" ${act.running ? "disabled" : ""}>${act.running ? "채우는 중…" : "지금 채우기"}</button></div>
     <div class="setup-steps">${s.steps.map((x) => `<div class="ss ${x.done ? "done" : x.optional ? "opt" : ""}"><span class="ssi">${x.done ? "✓" : x.optional ? "○" : "!"}</span><div><b>${esc(x.label)}</b>${x.optional ? ' <span class="xs dim">선택</span>' : ""}<div class="xs muted">${esc(x.detail)}</div>${x.done ? "" : `<div class="xs" style="color:var(--accent-3)">${x.link ? `<a href="${esc(x.link)}">${esc(x.fix)}</a>` : esc(x.fix)}</div>`}</div></div>`).join("")}</div>
     ${keyHelp(s)}
+    ${s.server ? `<div class="xs dim" style="margin-top:6px">이 화면을 보내는 서버: 버전 ${esc(s.server.version)} · 폴더 ${esc(s.server.root)} · 읽는 .env: ${esc(s.server.env_file || "못 찾음")}
+      — 키를 넣은 .env 와 다르면 옛 서버가 떠 있는 것입니다: 터미널에서 <code>./run.sh stop</code> 후 새 폴더에서 <code>./run.sh</code></div>` : ""}
     <div class="small dim" id="warmup-msg">${act.running ? esc(act.progress || "") : act.error ? "실패: " + esc(act.error) : act.finished_at ? "마지막 채우기 " + time(act.finished_at, true) : ""}</div></div>`;
 }
 

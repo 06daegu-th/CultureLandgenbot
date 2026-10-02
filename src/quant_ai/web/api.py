@@ -865,7 +865,9 @@ class DashboardAPI:
         from ..keys import refresh
         if refresh(self.app).get("changed"):  # .env 를 고쳤으면 캐시를 버리고 바로 보여준다
             self._risk_cache.pop("setup", None)
-        return self._cached("setup", 15, lambda: setup_status(self.app))
+        out = self._cached("setup", 15, lambda: setup_status(self.app))
+        inst = self.instance()
+        return out | {"server": {k: inst[k] for k in ("version", "root", "env_file")}}
 
     def news_board(self, days: int = 3, only: str = "", symbol: str = "") -> dict:
         from ..board import news_board
@@ -1043,6 +1045,19 @@ class DashboardAPI:
                     "kill_switch": self.app.kill_switch_on()}
         except Exception:  # noqa: BLE001
             return {"ok": False, "db": "error"}
+
+    def instance(self) -> dict:
+        """이 서버가 '어느 폴더의 어느 버전' 코드인지 — run.sh 가 옛 버전 서버를 재사용하지 않게 (로컬 요청에만 공개)."""
+        import hashlib
+        import os
+        from pathlib import Path
+
+        from .. import __version__
+        from ..keys import env_file
+        root = Path(__file__).resolve().parents[3]  # src/quant_ai/web/api.py → 프로젝트 폴더
+        f = env_file()
+        return {"version": __version__, "instance": hashlib.sha256(os.path.realpath(root).encode()).hexdigest()[:12],
+                "pid": os.getpid(), "root": str(root), "env_file": str(f) if f else None}
 
     def ops(self) -> dict:
         from ..analysts.guard import llm_usage_summary
