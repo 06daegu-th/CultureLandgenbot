@@ -54,6 +54,8 @@ LICENSES = [
      "commercial": "크롤링 기반 — 상용 제공 불가로 봐야 함 · 공식 계약/대체 소스 필요", "risk": "high"},
     {"source": "DART OpenAPI (금융감독원)", "used": "공시 목록 · 원문", "personal": "가능 (API 키)",
      "commercial": "공공데이터 — 이용약관·출처 표기 준수 시 활용 가능한 편, 호출 한도 확인", "risk": "low"},
+    {"source": "SEC EDGAR (미국 증권거래위원회)", "used": "미국 공시 (8-K·10-Q·10-K 등 · 실적 발표 8-K 2.02)", "personal": "가능 (키 없음 · 연락처 User-Agent)",
+     "commercial": "미국 정부 공공 데이터 — 활용 가능 · 초당 10회 제한 · 공정 사용 정책 준수", "risk": "low"},
     {"source": "FRED (세인트루이스 연준)", "used": "거시지표 · 발표 일정", "personal": "가능 (API 키)",
      "commercial": "일부 시리즈는 원 저작권자 제한 — 시리즈별 확인", "risk": "medium"},
     {"source": "ECOS (한국은행)", "used": "기준금리 · 금통위", "personal": "가능 (API 키)", "commercial": "공공데이터 — 약관·출처 표기", "risk": "low"},
@@ -78,10 +80,12 @@ def licenses(app) -> dict:
 # ------------------------------------------------------------------ 라이선스 가드 (상용 모드에서 상용 불가 소스 자동 차단)
 # 소스 → 상용(서비스) 사용 가능 여부. personal 이 아니면 False 인 소스는 수집·조회를 하지 않는다 (기존에 저장된 값은 그대로 표시)
 COMMERCIAL_OK = {"krx_marcap": False, "yahoo": False, "naver": False, "stocktwits": False, "wiseindex": False,
-                 "wiki": False, "datalab": False, "dart": True, "fred": True, "ecos": True, "kis": True, "rss": True}
+                 "wiki": False, "datalab": False, "dart": True, "fred": True, "ecos": True, "kis": True, "rss": True,
+                 "sec": True}
 JOB_SOURCES = {"price_watch": ("naver", "yahoo"), "community": ("naver", "stocktwits"), "investor_flow": ("naver",),
                "kr_consensus": ("naver",), "gap_fill": ("yahoo",), "us_cycle": ("yahoo",), "wics": ("wiseindex",),
-               "altdata": ("wiki", "datalab"), "sector_fill": ("yahoo",), "vkospi": ("krx_marcap",)}
+               "altdata": ("wiki", "datalab"), "sector_fill": ("yahoo",), "vkospi": ("krx_marcap",),
+               "sec_filings": ("sec",)}
 
 
 def source_allowed(settings, source: str) -> bool:

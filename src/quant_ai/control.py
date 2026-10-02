@@ -70,6 +70,8 @@ JOBS = {
     "ai_track": ("score", "AI 성적 기록 · 자동 SHADOW 강등", "하루", 24 * 3600),
     "news_extract": ("organize", "뉴스 구조화 (이벤트·방향·확신도·요약) · 같은 소식 묶기", "30분", 1800),
     "pead_scan": ("predict", "실적 이벤트 전략 장부 (서프라이즈 → 봉인)", "6시간", 6 * 3600),
+    "sec_filings": ("collect", "미국 공시 (SEC EDGAR · 8-K 실적 발표 포함)", "6시간", 6 * 3600),
+    "pead_notary": ("score", "이벤트 전략 장부 외부 공증 (OpenTimestamps)", "하루", 24 * 3600),
     "weekly_schedule": ("organize", "이번 주 보유 종목 일정 알림 (월요일)", "6시간", 6 * 3600),
     "keys_reload": ("collect", ".env 키 다시 읽기", "1분", 60),
     "model_decay": ("score", "모델 노후 감지", "야간 12시간", 12 * 3600),

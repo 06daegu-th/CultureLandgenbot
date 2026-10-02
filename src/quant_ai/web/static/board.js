@@ -48,7 +48,7 @@ async function viewNewsBoard(el) {
   $("#nb-ex").onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = "분석 중…";
     const r = await post("/api/news-extract", {});
-    toast({ title: "뉴스 분석", body: r.error || `규칙 ${r.rule}건 · AI ${r.llm}건 · 묶음 ${r.clustered}건`, level: r.error ? "warn" : "good" });
+    toast({ title: "뉴스 분석", body: `규칙 ${r.rule ?? 0}건 · AI ${r.llm ?? 0}건${r.bad ? ` · AI 응답 해석 실패 ${r.bad}건(규칙 결과 유지)` : ""} · 묶음 ${r.clustered ?? 0}건${r.error ? ` · AI 오류: ${r.error}` : ""}`, level: r.error ? "warn" : "good" });
     render();
   };
 }
@@ -89,19 +89,21 @@ async function viewPead(el) {
   const r = await api("/api/pead");
   const f = r.forward || {}, b = r.backfill || {};
   const st = (x, lbl, cls = "") => `<div class="kpi ${cls}"><div class="xs muted">${lbl}</div><div class="big num">${x.n || 0}건</div>
-    <div class="xs">평균 초과수익(방향 반영) <b class="${(x.mean_signed_excess || 0) >= 0 ? "up" : "down"}">${P(x.mean_signed_excess, 2)}</b> · 적중 ${R(x.hit, 0)} · t ${x.t ?? "-"}</div></div>`;
+    <div class="xs">비용 후 초과수익(방향 반영) <b class="${(x.mean_signed_excess || 0) >= 0 ? "up" : "down"}">${P(x.mean_signed_excess, 2)}</b> <span class="dim">(비용 전 ${P(x.mean_gross, 2)})</span> · 적중 ${R(x.hit, 0)}</div>
+    <div class="xs">t ${x.t ?? "-"} <span class="dim">(진입 월 ${x.months || 0}개로 묶음 · 묶지 않으면 ${x.t_naive ?? "-"})</span></div></div>`;
   const prog = Math.min(1, (f.n || 0) / 30);
   const row = (x) => `<tr><td><a href="#analysis/${esc(x.symbol)}"><b>${esc(x.symbol)}</b></a></td><td class="small">${esc(x.date)}</td>
     <td class="r num ${x.surprise >= 0 ? "up" : "down"}">${x.surprise >= 0 ? "+" : ""}${x.surprise}%</td><td>${x.direction > 0 ? "▲ 사기" : "▼ 피하기"}</td>
-    <td class="r num">${P(x.ret, 1)}</td><td class="r num dim">${P(x.bench, 1)}</td><td class="r num ${x.signed >= 0 ? "up" : "down"}"><b>${P(x.signed, 1)}</b></td>
+    <td class="r num">${P(x.ret, 1)}</td><td class="r num dim">${P(x.bench, 1)} <span class="xs">β${x.beta}</span></td><td class="r num ${x.signed >= 0 ? "up" : "down"}"><b>${P(x.signed, 1)}</b></td>
     <td>${x.forward ? '<span class="chip xs good">전진</span>' : '<span class="chip xs">사후</span>'}${x.intact ? "" : ' <span class="chip xs warn">봉인 깨짐</span>'}</td></tr>`;
   el.innerHTML = `
   <div class="card"><div class="card-h"><h3>실적 이벤트 전략 <span class="small dim">PEAD · 결과 나오기 전에 봉인한 신호만 센다</span></h3><div class="right xs dim">${esc(r.as_of)}</div></div>
     <div class="lesson small"><b>판정: ${esc(r.decision)}</b><div class="xs muted" style="margin-top:4px">규칙(고정, ${esc(r.version)}): ${esc(r.rule)}</div></div>
     <div class="xs muted" style="margin:8px 0 4px">전진 기록 진행 ${f.n || 0} / 30건</div><div class="hbar"><i style="width:${prog * 100}%"></i></div>
     <div class="grid g-2" style="margin-top:10px">${st(f, "전진 기록 (판정에 쓰는 것)", "hi")}${st(b, "사후 채움 (참고만 — 가설을 만든 데이터)")}</div>
+    <div class="xs" style="margin-top:6px">${r.external?.status === "bad" ? "⛔" : r.external?.status === "ok" ? "🔏" : "○"} ${esc(r.external?.text || "")} · 왕복 비용 ${R(r.cost, 2)} 차감</div>
     <div class="xs dim" style="margin-top:6px">이벤트 ${r.n_events}건 · 신호 ${r.n_signals}건${r.tampered ? ` · <span class="warn-t">봉인 불일치 ${r.tampered}건</span>` : ""} · ${esc(r.note)}</div></div>
-  ${card("최근 채점된 신호 <span class='small dim'>진입 = 발표 다음 거래일 종가 · 20거래일 뒤 · 성과 = 종목 − 지수</span>", (r.recent || []).length ? `<div class="scroll"><table class="tight"><thead><tr><th>종목</th><th>발표일</th><th class="r">서프라이즈</th><th>신호</th><th class="r">종목</th><th class="r">지수</th><th class="r">방향×초과</th><th></th></tr></thead><tbody>${r.recent.map(row).join("")}</tbody></table></div>` : empty("아직 20거래일이 지난 신호가 없습니다 — 실적 데이터가 쌓이면 자동으로 채점됩니다"))}
+  ${card("최근 채점된 신호 <span class='small dim'>진입 = 발표 다음 거래일 종가 · 20거래일 뒤 · 성과 = 종목 − 베타×지수 − 비용</span>", (r.recent || []).length ? `<div class="scroll"><table class="tight"><thead><tr><th>종목</th><th>발표일</th><th class="r">서프라이즈</th><th>신호</th><th class="r">종목</th><th class="r">지수</th><th class="r">방향×초과−비용</th><th></th></tr></thead><tbody>${r.recent.map(row).join("")}</tbody></table></div>` : empty("아직 20거래일이 지난 신호가 없습니다 — 실적 데이터가 쌓이면 자동으로 채점됩니다"))}
   ${card("결과 대기 중", (r.pending || []).length ? `<ul class="plain small">${r.pending.map((x) => `<li><a href="#analysis/${esc(x.symbol)}"><b>${esc(x.symbol)}</b></a> ${esc(x.date)} · 서프라이즈 ${x.surprise >= 0 ? "+" : ""}${x.surprise}% · ${x.direction > 0 ? "▲" : "▼"} ${x.forward ? '<span class="chip xs good">전진</span>' : '<span class="chip xs">사후</span>'}</li>`).join("")}</ul>` : empty("대기 중인 신호 없음"))}`;
 }
 
@@ -115,7 +117,7 @@ async function viewUSOrder(el) {
     <div class="grid g-3" style="margin-top:10px">
       <label class="small">보유 (한 줄에 <code>종목,수량</code>)<textarea id="us-h" rows="5" placeholder="AAPL,10&#10;MSFT,3">${esc(u.holdings)}</textarea></label>
       <label class="small">목표 비중 (비우면 시스템 미국 가상 장부를 따라감)<textarea id="us-t" rows="5" placeholder="AAPL,0.3&#10;MSFT,0.3&#10;NVDA,0.4">${esc(u.targets)}</textarea></label>
-      <label class="small">평균 단가 USD (매도 이익·세금 계산용)<textarea id="us-a" rows="5" placeholder="AAPL,150">${esc(u.avg)}</textarea></label></div>
+      <label class="small">평균 단가 (매도 이익·세금) <code>종목,평단USD,취득환율</code> — 환율을 넣으면 환차익까지<textarea id="us-a" rows="5" placeholder="AAPL,150,1310">${esc(u.avg)}</textarea></label></div>
     <label class="small">가격 직접 입력 (선택 · 앱에서 보이는 지금 가격 <code>종목,가격</code> — 비우면 마지막 종가)<textarea id="us-p" rows="2" placeholder="AAPL,195.3">${esc(u.prices)}</textarea></label>
     <div class="grid g-3">
       <label class="small">달러 현금 (USD)<input id="us-cu" inputmode="decimal" value="${esc(u.cash_usd)}" placeholder="0"></label>
@@ -130,7 +132,7 @@ async function viewUSOrder(el) {
     box.innerHTML = skeleton();
     let r;
     try {
-      r = await post("/api/us-sheet", { holdings: pairs(u.holdings), targets: u.targets.trim() ? pairs(u.targets) : null, avg_cost: u.avg.trim() ? pairs(u.avg) : null, prices: u.prices.trim() ? pairs(u.prices) : null,
+      r = await post("/api/us-sheet", { holdings: pairs(u.holdings), targets: u.targets.trim() ? pairs(u.targets) : null, avg_cost: u.avg.trim() || null, prices: u.prices.trim() ? pairs(u.prices) : null,
         cash_usd: u.cash_usd, cash_krw: u.cash_krw, ytd_gain_krw: u.ytd });
     } catch (e) { r = { error: e.message }; }
     if (r.error) { box.innerHTML = card("", `<div class="veto">${esc(r.error)}</div>`); return; }
@@ -152,6 +154,8 @@ async function viewUSOrder(el) {
       ${r.missing.length ? `<div class="xs warn-t">가격 없음(제외): ${r.missing.map(esc).join(", ")} — ${esc(r.missing_hint)}</div>` : ""}
       <div class="xs dim">가격: ${esc(r.price_source)}</div>`,
       `<button class="btn-sm" id="us-csv">CSV 받기</button>`)}
+    ${(r.tax_warnings || []).map((w) => `<div class="veto small" style="margin-top:6px">⚠ ${esc(w)}</div>`).join("")}
+    <div class="xs muted" style="margin-top:6px">세금 기준: ${esc(r.tax_basis)}</div>
     <div class="xs dim">${esc(r.note)}</div>`;
     $("#us-csv").onclick = () => {
       const a = document.createElement("a");
@@ -180,12 +184,15 @@ async function viewReplay(el) {
       ${b.n ? `<div><div class="xs muted">시장 분위기</div><div class="xs">상승 <span class="up">${b.up}</span> · 하락 <span class="down">${b.down}</span> / ${b.n}종목</div>
         <div class="nb-bar" style="width:160px"><i style="flex:${b.up};background:var(--up)"></i><i style="flex:${b.n - b.up - b.down};background:var(--dim)"></i><i style="flex:${b.down};background:var(--down)"></i></div></div>` : ""}
       ${r.book ? `<div><div class="xs muted">가상 장부 (${esc(r.book.at)})</div><div class="b num">${num(r.book.equity)}원</div><div class="xs">보유 ${r.book.n}종목</div></div>` : ""}</div></div>
-  ${r.trading ? `<div class="grid g-2">${card("그날 많이 오른 종목", r.gainers.map(mv).join("") || empty())}${card("그날 많이 내린 종목", r.losers.map(mv).join("") || empty())}</div>` : ""}
+  ${r.trading ? `<div class="grid g-2">${card("🇰🇷 그날 많이 오른 종목", r.gainers.map(mv).join("") || empty())}${card("🇰🇷 그날 많이 내린 종목", r.losers.map(mv).join("") || empty())}</div>` : ""}
+  ${r.us?.trading ? card(`🇺🇸 미국 ${esc(r.date)} 장 <span class="small dim">한국 시간 그날 밤~다음 날 새벽 · 상승 ${r.us.breadth.up} · 하락 ${r.us.breadth.down} / ${r.us.breadth.n}종목${r.us.index ? ` · 지수 ${P(r.us.index.chg, 2)}` : ""}</span>`,
+    `<div class="grid g-2"><div>${r.us.gainers.map(mv).join("") || empty()}</div><div>${r.us.losers.map(mv).join("") || empty()}</div></div>`)
+    : r.us?.holiday ? `<div class="xs muted">🇺🇸 미국 휴장 · ${esc(r.us.holiday)}</div>` : ""}
   <div class="grid g-2">
     ${card(`그날 AI 판단 <span class="small dim">${r.ai_n}건${r.ai_hit_later != null ? ` · 나중에 맞은 비율 ${R(r.ai_hit_later, 0)}` : ""}</span>`, r.ai.length ? `<div class="scroll" style="max-height:420px"><table class="tight"><thead><tr><th>종목</th><th>판단</th><th class="r">P(상승)</th><th class="r">신뢰</th><th class="r">나중 결과</th></tr></thead><tbody>${r.ai.map(aiRow).join("")}</tbody></table></div>` : empty("그날 AI 판단 기록 없음"))}
     ${card(`그날 뉴스 <span class="small dim">${r.news.length}건</span>`, r.news.length ? r.news.map((n) => `<div class="nw-it"><a href="${esc(n.url || "#")}" target="_blank" rel="noopener noreferrer"><span style="color:${TONE_COLOR[n.sent > 0.2 ? "긍정" : n.sent < -0.2 ? "부정" : "중립"]}">●</span> ${esc(n.title)}</a>
       <div class="xs dim">${esc(n.source || "")} · ${esc(n.at)}${n.symbols.length ? ` · ${n.symbols.map(esc).join(", ")}` : ""}</div>${n.summary ? `<div class="xs muted">🤖 ${esc(n.summary)}</div>` : ""}</div>`).join("") : empty("그날 저장된 뉴스 없음"))}</div>
-  <div class="grid g-2">${card("그날 일정", r.events.length ? `<ul class="plain small">${r.events.map((e) => `<li>${CAL_ICON?.[e.kind] || "•"} ${esc(e.title)}</li>`).join("")}</ul>` : empty("일정 없음"))}
+  <div class="grid g-2">${card("그날 일정 <span class='small dim'>보관된 종목 일정 + 규칙으로 만든 시장 일정</span>", r.events.length ? `<ul class="plain small">${r.events.map((e) => `<li>${CAL_ICON?.[e.kind] || "•"} ${esc(e.title)}${e.market ? ` <span class="xs dim">${esc(e.market)}</span>` : ""}${e.estimated ? ' <span class="xs dim">추정</span>' : ""}</li>`).join("")}</ul>` : empty("일정 없음 (종목 일정은 이 기능이 생긴 뒤부터 보관됩니다)"))}
     ${card("그날 알림", r.alerts.length ? `<ul class="plain small">${r.alerts.map((a) => `<li><span class="xs dim">${esc(a.at)}</span> ${esc(a.title)}</li>`).join("")}</ul>` : empty("알림 없음"))}</div>`;
   const go = (d) => { S.replayDate = d; location.hash = `#replay/${d}`; };
   $("#rp-prev").onclick = () => go(r.prev);

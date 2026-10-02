@@ -57,7 +57,11 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             return self._role(qs) is not None
 
         def _ip(self) -> str:
-            return self.client_address[0] if self.client_address else "?"
+            remote = self.client_address[0] if self.client_address else "?"
+            if auth is None:
+                return remote
+            from ..auth import client_ip
+            return client_ip(remote, self.headers.get("X-Forwarded-For"), auth.trusted_proxies)
 
         def _host_ok(self) -> bool:
             """DNS rebinding 방어: 허용된 Host 로 들어온 요청만 처리."""
@@ -187,10 +191,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.replay(arg("date", "")[:10]))
                     if url.path == "/api/weekly":
                         return self._json(api.weekly())
+                    if url.path == "/api/conflicts":
+                        return self._json(api.conflicts())
                     if url.path == "/api/oneline":
                         return self._json(api.oneline(arg("mode", "") or None))
                     if url.path == "/api/budget":
-                        return self._json(api.budget(arg("principal", "")[:15], arg("max_loss", "")[:15]))
+                        return self._json(api.budget(arg("principal", "")[:15], arg("max_loss", "")[:15], arg("on_stop", "")[:10]))
                     if url.path == "/api/server":
                         return self._json(api.server())
                     if url.path == "/api/db":
@@ -336,7 +342,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 api._audit("login" if sid else "login_fail", f"{self._ip()} · {msg}")
                 if not sid:
                     return self._json({"error": msg}, 401)
-                secure = "; Secure" if (self.headers.get("X-Forwarded-Proto") or "").lower() == "https" else ""
+                secure = "; Secure" if auth.is_secure(self.client_address[0] if self.client_address else "", self.headers.get("X-Forwarded-Proto")) else ""
                 return self._json_cookie({"ok": True, "role": "admin"},
                                          f"qa_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={12 * 3600}{secure}")
             if url.path == "/api/logout":
@@ -421,8 +427,13 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
 def serve(app, host: str = "127.0.0.1", port: int = 8050) -> None:
     token = os.environ.get("QUANT_WEB_TOKEN") or None
     auth = Auth()
+    if auth.config_errors():
+        raise SystemExit("로그인 설정 오류: " + " · ".join(auth.config_errors()))
     if host not in ("127.0.0.1", "localhost") and not (token or auth.pw_hash):
         raise SystemExit("외부 바인딩 시 로그인(./run.sh auth-setup) 또는 QUANT_WEB_TOKEN 설정이 필요합니다")
+    if host not in ("127.0.0.1", "localhost") and not (auth.secure_cookie or auth.trusted_proxies):
+        log.warning("외부 접속을 여는데 HTTPS 설정이 없습니다 — 비밀번호·세션이 평문으로 오갑니다. "
+                    "HTTPS 리버스 프록시(Caddy·nginx) 뒤에 두고 QUANT_TRUSTED_PROXIES · QUANT_WEB_SECURE_COOKIE=1 을 설정하세요")
     allowed = {"127.0.0.1", "localhost", "::1", host.lower()}
     allowed |= {h.strip().lower() for h in os.environ.get("QUANT_WEB_ALLOWED_HOSTS", "").split(",") if h.strip()}
     api = DashboardAPI(app)

@@ -908,8 +908,17 @@ class DashboardAPI:
         px = body.get("prices")
         if isinstance(px, str):
             px = dict(x.split(",", 1) for x in px.strip().splitlines() if "," in x)
+        ac = body.get("avg_cost")
+        if isinstance(ac, str):  # "AAPL,170" 또는 "AAPL,170,1300"(취득 환율)
+            rows = [[y.strip() for y in x.split(",")] for x in ac.strip().splitlines() if "," in x]
+            try:
+                ac = {r[0].upper()[:10]: (float(r[1]), float(r[2]) if len(r) > 2 and r[2] else None) for r in rows if r[0] and r[1]}
+            except ValueError:
+                raise ValueError("평단은 '종목,평단USD' 또는 '종목,평단USD,취득환율' 숫자로") from None
+        elif ac:
+            ac = nums(ac, float)
         return sheet(self.app, nums(h, lambda v: int(float(v))), cu, ck, nums(t, float) if t else None,
-                     nums(body.get("avg_cost"), float) if body.get("avg_cost") else None, yg, nums(px, float) if px else None)
+                     ac or None, yg, nums(px, float) if px else None)
 
     def replay(self, d: str) -> dict:
         from datetime import date as _date
@@ -926,11 +935,15 @@ class DashboardAPI:
         m = self._mode(mode)
         return self._cached(f"oneline:{m}", 60, lambda: oneline(self.app, m))
 
+    def conflicts(self) -> dict:
+        from ..conflicts import detect
+        return self._cached("conflicts", 120, lambda: detect(self.app))
+
     def weekly(self) -> dict:
         from ..center import weekly_schedule
         return self._cached("weekly", 300, lambda: weekly_schedule(self.app))
 
-    def budget(self, principal: str = "", max_loss: str = "") -> dict:
+    def budget(self, principal: str = "", max_loss: str = "", on_stop: str = "") -> dict:
         from .. import budget
         cur = budget.get(self.app)
         out = {"saved": cur or None, "current": {"live_max_capital": self.app.settings.live_max_capital,
@@ -939,11 +952,19 @@ class DashboardAPI:
                                                                                                     "max_order_value", "max_var95", "max_sector_weight")}}}
         if principal and max_loss:
             try:
-                out["preview"] = budget.plan(float(principal), float(max_loss))
+                vol, src = budget.effective_vol(self.app)
+                out["preview"] = budget.plan(float(principal), float(max_loss), daily_vol=vol, on_stop=on_stop or "hold")
+                out["preview"]["vol_source"] = src
             except (TypeError, ValueError) as e:
                 raise ValueError(str(e)) from None
         mode = self.app.settings.mode.value if self.app.settings.mode.value in ("paper", "shadow", "live") else "paper"
         out["usage"] = budget.total_loss(self.app, mode)
+        p = out.get("preview") or cur
+        out["replay"] = self._cached(f"budget_replay:{p.get('loss_pct')}:{(p.get('limits') or {}).get('max_daily_loss_pct')}", 300,
+                                     lambda: budget.replay(self.app, p)) if p.get("limits") else None
+        out["policies"] = budget.STOP_POLICIES
+        out["stop_sheet"] = _ops.get_state(self.app.engine, f"stop_sheet:{mode}") or None
+        out["cashflows"] = self.app.cashflows(mode)[-10:]
         return out
 
     def budget_write(self, body: dict) -> dict:

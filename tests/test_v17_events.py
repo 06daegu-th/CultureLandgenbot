@@ -49,29 +49,82 @@ def test_budget_plan_apply_and_total_loss_guard(app):
     from quant_ai.data.db import session_scope
     from quant_ai.data.models import PortfolioSnapshot
     from quant_ai.trading.guardian import check_total_loss
-    p = budget.plan(10_000_000, 1_000_000)
+    p = budget.plan(10_000_000, 1_000_000, daily_vol=0.004)  # 조용한 시장: 최대 손실 ÷ 8 이 더 큼
     lim = p["limits"]
     assert lim["max_daily_loss_pct"] == 0.0125 and lim["max_position_weight"] == 0.10 and lim["max_var95"] == 0.02
     assert lim["live_small_capital"] == 1_000_000 and lim["max_order_value"] == 1_000_000
     assert lim["max_position_weight"] * 0.5 <= p["loss_pct"]  # 한 종목 반토막이 최대 손실 안
     assert any(x.startswith("QUANT_MAX_DAILY_LOSS_PCT=") for x in p["env_lines"])
-    small = budget.plan(10_000_000, 200_000)["limits"]
-    assert small["max_position_weight"] == 0.04 and small["max_daily_loss_pct"] == 0.005
+    # 평소 하루 변동 1% → 일 손실 한도 2.5% (정상적인 나쁜 날엔 안 걸리게) · 킬스위치 3.75%
+    v = budget.plan(10_000_000, 1_000_000, daily_vol=0.01)
+    assert v["limits"]["max_daily_loss_pct"] == 0.025 and v["kill_at"] == 0.0375
+    assert v["warnings"] and "-43%" in v["warnings"][0]  # 과거 최대 낙폭보다 작은 최대 손실 → 경고
+    small = budget.plan(10_000_000, 200_000, daily_vol=0.01)["limits"]
+    assert small["max_position_weight"] == 0.04 and small["max_daily_loss_pct"] == 0.01  # 최대 손실의 절반 이하
+    assert len(budget.plan(10_000_000, 200_000, daily_vol=0.01)["warnings"]) == 2
     for bad in ((50_000, 1000), (1_000_000, 0), (1_000_000, 2_000_000)):
         with pytest.raises(ValueError):
             budget.plan(*bad)
+    with pytest.raises(ValueError):
+        budget.plan(10_000_000, 1_000_000, on_stop="panic")
     assert check_total_loss(app, "paper")["status"] == "ok"  # 미설정
-    budget.save(app, {"principal": 10_000_000, "max_loss": 1_000_000})
-    assert app.settings.risk.max_position_weight == 0.10 and app.settings.live_max_capital == 10_000_000
     base = app.settings.initial_cash
+    with session_scope(app.engine) as s:
+        s.add(PortfolioSnapshot(mode="paper", ts=datetime.now(UTC) - timedelta(days=1), equity=base, cash=base, positions={}))
+    saved = budget.save(app, {"principal": 10_000_000, "max_loss": 1_000_000, "on_stop": "liquidate"})
+    assert saved["start_equity"]["paper"] == base and saved["on_stop"] == "liquidate"
+    assert app.settings.risk.max_position_weight == 0.10 and app.settings.live_max_capital == 10_000_000
     with session_scope(app.engine) as s:
         s.add(PortfolioSnapshot(mode="paper", ts=datetime.now(UTC), equity=base * 0.91, cash=base * 0.91, positions={}))
     c = check_total_loss(app, "paper")
     assert c["status"] == "warn" and "한도" in c["detail"]  # 손실 9% / 한도 10% → 90%
     with session_scope(app.engine) as s:
         s.add(PortfolioSnapshot(mode="paper", ts=datetime.now(UTC) + timedelta(seconds=1), equity=base * 0.85, cash=base * 0.85, positions={}))
-    assert check_total_loss(app, "paper")["status"] == "critical"
+    c = check_total_loss(app, "paper")
+    assert c["status"] == "critical" and "전량 정리" in c["detail"]
+    # 출금은 손실이 아니다: 15% 를 빼 갔다고 기록하면 손실 0
+    flows = ops.get_state(app.engine, "cashflows:paper")
+    app.add_cashflow("paper", -base * 0.15, datetime.now(UTC).date(), "생활비")
+    t = budget.total_loss(app, "paper")
+    assert t["loss"] == 0 and t["n_flows"] == 1 and check_total_loss(app, "paper")["status"] == "ok" and "입출금" in check_total_loss(app, "paper")["detail"]
+    ops.set_state(app.engine, "cashflows:paper", flows)
     ops.set_state(app.engine, budget.KEY, {})
+
+
+def test_budget_replay_counts_triggers_and_stop_sheet(app, monkeypatch):
+    from quant_ai import budget
+    ix = pd.date_range("2018-01-01", periods=252 * 5, freq="B", tz="UTC")
+    rng = np.random.default_rng(7)
+    r = rng.normal(0.0003, 0.01, len(ix))
+    r[300] = -0.05  # 큰 하락 하루
+    r[800:860] = -0.006  # 3개월 하락장 (−30% 가까이)
+    bench = pd.DataFrame({"close": 100 * np.cumprod(1 + r)}, index=ix)
+    monkeypatch.setattr(app, "market_data", lambda: ({}, bench, None))
+    p = budget.plan(10_000_000, 1_000_000, daily_vol=0.01)
+    out = budget.replay(app, p)
+    exp_stop = int((pd.Series(r[1:]) <= -p["limits"]["max_daily_loss_pct"]).sum())
+    assert out["available"] and out["stop_days"] == exp_stop and out["kill_days"] >= 1
+    assert out["max_drawdown"] < -0.25 and 0 < out["hit_share"] <= 1 and out["starts"]
+    assert any(s_["hit"] for s_ in out["starts"]) and out["suggested_limit"] >= p["limits"]["max_daily_loss_pct"]
+    assert "연" in out["plain"][0]
+    v, src = budget.effective_vol(app)
+    assert abs(v - 0.0115) < 0.003 and "최근 1년" in src  # 지수 변동이 전략 기준값보다 크면 그쪽
+    # 정지 후 처리: 보유 유지면 주문표 없음, 정리면 전량 매도표 (자동 매도 아님)
+    ops.set_state(app.engine, budget.KEY, {"principal": 1, "on_stop": "hold"})
+    assert budget.stop_sheet(app, "paper") is None
+    ops.set_state(app.engine, budget.KEY, {"principal": 1, "on_stop": "reduce"})
+
+    class Pos:
+        qty = 11
+
+    class PF:
+        positions = {"005930": Pos()}
+
+    monkeypatch.setattr(app, "load_portfolio", lambda m: PF())
+    sh = budget.stop_sheet(app, "paper")
+    assert sh["rows"] == [{"symbol": "005930", "held": 11, "sell_qty": 5}] and ops.get_state(app.engine, "stop_sheet:paper")["policy"] == "reduce"
+    ops.set_state(app.engine, budget.KEY, {})
+    ops.set_state(app.engine, "stop_sheet:paper", {})
 
 
 # ------------------------------------------------------------------ 부정어 · 출처 신뢰도
@@ -106,17 +159,29 @@ def test_news_extract_llm_json_clusters_and_board(app):
             Fake.calls += 1
             assert "외부 데이터" in system and "[" in text
             ids = [int(x[1:x.index("]")]) for x in text.splitlines() if x.startswith("[")]
-            return {"items": [{"id": i, "event": "earnings", "direction": 1, "confidence": 0.8, "summary": "실적이 예상보다 좋음",
-                               "companies": ["A전자"], "rumor": False} for i in ids[:1]] + [{"id": "x"}]}
+            # 첫 기사는 정상, 둘째는 문자열 방향·확신도('positive'·'high'), 셋째는 해석 불가 — 한 건 때문에 전체가 멈추면 안 된다
+            return {"items": [{"id": ids[0], "event": "earnings", "direction": 1, "confidence": 0.8, "summary": "실적이 예상보다 좋음",
+                               "companies": ["A전자"], "rumor": False},
+                              {"id": ids[1], "event": "earnings", "direction": "positive", "confidence": "high"},
+                              {"id": ids[2], "event": "capital", "direction": "글쎄", "confidence": "?"}, {"id": "x"}]}
 
+    with session_scope(app.engine) as s:
+        orig = {a.id: a.sentiment for a in s.query(NewsArticle)}
     r = news_llm.extract_pending(app, client=Fake(), now=now)
-    assert r["rule"] == 3 and r["llm"] == 1 and r["llm_on"] and Fake.calls == 1
+    assert r["rule"] == 3 and r["llm"] == 2 and r["bad"] == 2 and r["llm_on"] and Fake.calls == 1 and r["clustered"] >= 1
     with session_scope(app.engine) as s:
         arts = s.query(NewsArticle).order_by(NewsArticle.id).all()
         clusters = [a.cluster for a in arts]
         llm = [a for a in arts if a.extract.get("by") == "llm"]
-        assert len(llm) == 1 and llm[0].sentiment == 0.8 and llm[0].extract["summary"] == "실적이 예상보다 좋음"
+        assert len(llm) == 2 and all(a.extract["llm_sentiment"] == 0.8 and a.extract["direction"] == 1 for a in llm)
+        assert sorted(str(a.extract["summary"]) for a in llm) == ["None", "실적이 예상보다 좋음"]  # 문자열 'positive'·'high' 도 해석
+        assert {a.id: a.sentiment for a in arts} == orig  # 수집 때 기록한 감성값은 그대로 (재현·학습용)
+        rule_only = [a for a in arts if a.extract["by"] == "rule"]
+        assert len(rule_only) == 1 and rule_only[0].extract["rule_sentiment"] is not None  # 해석 불가 응답 → 규칙 결과 유지
         assert all("source_weight" in a.extract for a in arts)
+    assert news_llm.parse_direction("부정적") == -1 and news_llm.parse_direction(-0.3) == -1 and news_llm.parse_confidence("75%") == 0.75
+    with pytest.raises(ValueError):
+        news_llm.parse_direction(None)
     assert clusters[0] == clusters[1] != clusters[2]  # 같은 소식 두 기사는 한 묶음
     b = board.news_board(app, days=3, now=now)
     assert b["n_articles"] == 3 and len(b["cards"]) == 2
@@ -146,26 +211,50 @@ def test_pead_forward_ledger_seal_and_scoring(app):
     new = pd.Timestamp(idx[-3]).date()    # 아직 결과 전
     ops.set_state(app.engine, f"krcons:{syms[0]}", {"surprises": [{"date": old.isoformat(), "eps_surprise_pct": 12.0},
                                                                   {"date": new.isoformat(), "surprise_pct": -9.0, "metric": "영업이익"}]})
+    # 같은 실적이 Yahoo 에 3일 늦은 날짜로 또 잡힘 → 중복으로 건너뜀
+    ops.set_state(app.engine, f"profile:{syms[0]}", {"data": {"earnings_history": [{"date": (old + timedelta(days=3)).isoformat(), "surprise_pct": 11.0}]}})
     ops.set_state(app.engine, f"krcons:{syms[1]}", {"surprises": [{"date": old.isoformat(), "eps_surprise_pct": 1.0}]})  # 신호 없음
     early = datetime.combine(old - timedelta(days=1), datetime.min.time(), UTC)
-    assert pead.scan(app, early)["added"] == 3
+    first = pead.scan(app, early)
+    assert first["added"] == 3 and first["anchor"]["upto_id"] == "pead-3"
     assert pead.scan(app, early)["added"] == 0  # 중복 없음
     led = ops.get_state(app.engine, pead.KEY)["rows"]
     assert all(r["forward"] for r in led if r["date"] == old.isoformat())
+    assert not any(r["source"] == "Yahoo" for r in led)
     late = datetime.combine(new + timedelta(days=30), datetime.min.time(), UTC)
     ops.set_state(app.engine, f"krcons:{syms[3]}", {"surprises": [{"date": old.isoformat(), "eps_surprise_pct": -20.0}]})
     pead.scan(app, late)
     led = ops.get_state(app.engine, pead.KEY)["rows"]
     assert not next(r for r in led if r["symbol"] == syms[3])["forward"]  # 나중에 채운 것은 사후
     r = pead.report(app, late)
-    assert r["forward"]["n"] == 1 and r["backfill"]["n"] == 1 and r["tampered"] == 0
+    assert r["forward"]["n"] == 1 and r["backfill"]["n"] == 1 and r["tampered"] == 0 and r["forward"]["months"] == 1
     rec = next(x for x in r["recent"] if x["symbol"] == syms[0])
-    assert rec["signed"] == round(rec["excess"], 4) and rec["intact"]
-    assert "전진 기록 중 (1/30건)" == r["decision"] and len(r["pending"]) == 1
-    # 봉인 뒤 수치를 고치면 드러난다
+    assert rec["signed"] == round(rec["gross"] - r["cost"], 4) and rec["gross"] == round(rec["excess"], 4) and rec["intact"]
+    assert 0 <= rec["beta"] <= 3 and abs(rec["excess"] - round(rec["ret"] - rec["beta"] * rec["bench"], 4)) < 2e-4
+    assert r["decision"] == "전진 기록 중 (1/30건 · 진입 월 1/6개)" and len(r["pending"]) == 1
+    assert r["external"]["status"] == "none"
+    # 외부 공증 (가짜 캘린더 서버) → 지금 장부와 일치
+    rc = pead.notarize(app, post=lambda url, data, headers: b"\xf0\x10" + b"x" * 16)
+    assert rc.get("upto_id") == f"pead-{len(led)}"
+    assert pead.report(app, late)["external"]["status"] == "ok"
+    # 봉인 뒤 수치를 고치면 행 봉인과 외부 공증 둘 다 어긋난다
     led[0]["surprise"] = 99.0
     ops.set_state(app.engine, pead.KEY, {"rows": led})
-    assert pead.report(app, late)["tampered"] == 1
+    r2 = pead.report(app, late)
+    assert r2["tampered"] == 1
+    led[0]["hash"] = pead._seal(led[0])  # DB 에 접근하는 사람이 해시까지 다시 계산해도
+    ops.set_state(app.engine, pead.KEY, {"rows": led})
+    assert pead.report(app, late)["external"]["status"] == "bad"  # 외부 기록과는 어긋난다
+    ops.set_state(app.engine, "notary", {})
+
+
+def test_pead_clustered_t_is_stricter_than_naive():
+    import quant_ai.pead as P
+    # 같은 달에 몰린 신호 30건(시장 충격을 같이 맞음) — 건별 t 는 크지만 월 묶음 t 는 표본이 적어 판정 불가
+    xs = [{"signed": 0.02 + 0.001 * (i % 3), "gross": 0.025, "excess": 0.02, "direction": 1, "entry": "2026-01-15"} for i in range(30)]
+    xs += [{"signed": -0.01, "gross": -0.005, "excess": -0.01, "direction": 1, "entry": "2026-02-10"}]
+    st = P.stats(xs)
+    assert st["n"] == 31 and st["months"] == 2 and st["t_naive"] > 5 and st["t"] is None  # 2개월로는 t 를 못 낸다
 
 
 # ------------------------------------------------------------------ 미국 주문표
@@ -190,6 +279,12 @@ def test_us_order_sheet_tax_fx_and_csv(app, monkeypatch):
     r2 = usorder.sheet(app, holdings={}, cash_krw=2_700_000, targets={"NVDA": 1})
     assert r2["summary"]["need_usd"] > 0 and r2["summary"]["fx_cost_krw"] == round(r2["summary"]["need_usd"] * 1350 * 0.0025)
     assert "error" in usorder.sheet(app, targets={})
+    # 취득 환율을 넣으면 환차익까지: $300 → $400, 환율 1,300 → 1,350 · 5주
+    rf = usorder.sheet(app, holdings={"MSFT": 5}, targets={"AAPL": 1}, avg_cost={"MSFT": (300.0, 1300.0)})
+    m = next(x for x in rf["rows"] if x["symbol"] == "MSFT")
+    assert m["gain_krw"] == round(400 * 5 * 1350 - 300 * 5 * 1300) and m["fx_gain_krw"] == 300 * 5 * 50 and "gain_note" not in m
+    rn = usorder.sheet(app, holdings={"MSFT": 5}, targets={"AAPL": 1})  # 평단 없이 매도 → 경고
+    assert rn["tax_warnings"] and "평단 없음" in rn["tax_warnings"][0] and "확인 필요" in rn["tax_basis"]
     r3 = usorder.sheet(app, holdings={"TSLA": 2}, cash_usd=500, targets={"TSLA": 1}, prices={"tsla": 250.0})  # 시세 없는 종목은 직접 입력 가격으로
     assert not r3["missing"] and r3["rows"][0]["price"] == 250.0 and r3["price_source"] == "직접 입력"
     assert usorder.sheet(app, holdings={"TSLA": 2}, targets={"TSLA": 1})["missing_hint"]
@@ -215,6 +310,29 @@ def test_replay_day_only_knows_that_day(app):
     assert r["prev"] == (d - timedelta(days=1)).isoformat()
     sat = d + timedelta(days=(5 - d.weekday()) % 7 or 7)
     assert not replay.day(app, sat)["trading"]
+    assert r["us"]["breadth"]["n"] == 0  # 가짜 데이터엔 미국 종목 없음 — 칸은 있다
+
+
+def test_replay_us_block_and_archived_events(app, monkeypatch):
+    from quant_ai import desk, replay
+    from quant_ai.engines import events as E
+    sym = _syms(app)[0]
+    d = pd.Timestamp(app.market_data()[0][sym].index[-10]).date()
+    ix = pd.date_range(d - timedelta(days=10), d, freq="B", tz="UTC")
+    us = {"AAPL": pd.DataFrame({"close": np.linspace(100, 110, len(ix))}, index=ix),
+          "TSLA": pd.DataFrame({"close": np.linspace(200, 180, len(ix))}, index=ix)}
+    real = app._all_bars
+    monkeypatch.setattr(app, "_all_bars", lambda: ({**real()[0], **us}, {**real()[1], "US": us["AAPL"]}))
+    # 지난 일정은 보관 — 최신 캘린더가 14일치만 갖고 있어도 그날 일정이 남는다
+    desk.archive_events(app, [{"date": d.isoformat(), "kind": "earnings", "title": "종목1 실적 발표", "symbol": sym, "market": "KR"},
+                              {"date": (d + timedelta(days=400)).isoformat(), "kind": "earnings", "title": "먼 미래", "symbol": sym}], d)
+    ops.set_state(app.engine, "event_calendar", {"events": []})
+    r = replay.day(app, d)
+    assert r["us"]["trading"] and r["us"]["breadth"] == {"up": 1, "down": 1, "n": 2} and r["us"]["gainers"][0]["symbol"] == "AAPL"
+    titles = [e["title"] for e in r["events"]]
+    assert "종목1 실적 발표" in titles and "먼 미래" not in titles
+    exp = {e["title"] for e in E.market_events(d, d) + E.econ_events(d, d)}
+    assert exp <= set(titles)  # 규칙으로 만든 시장 일정도 (옵션 만기·FOMC·휴장 등)
 
 
 def test_weekly_schedule_alert_and_lockup_strip(app, monkeypatch):
@@ -274,6 +392,10 @@ def test_v17_event_routes(server, app):
     st, body = _req(server, "POST", "/api/us-sheet", {"holdings": "AAPL,1", "targets": "AAPL,1"})
     assert st == 200 and ("rows" in body)
     assert _req(server, "POST", "/api/us-sheet", {"holdings": {"AAPL": "x"}})[0] == 400
+    assert _req(server, "POST", "/api/us-sheet", {"holdings": "AAPL,1", "targets": "AAPL,1", "avg_cost": "AAPL,abc"})[0] == 400
+    st, body = _req(server, "POST", "/api/us-sheet", {"holdings": "AAPL,1", "targets": "MSFT,1", "prices": "AAPL,200\nMSFT,400",
+                                                      "avg_cost": "AAPL,150,1300"})
+    assert st == 200 and body["rows"][0]["fx_gain_krw"] == 150 * 50
 
 
 def test_v17_views_are_wired():
@@ -452,3 +574,133 @@ def test_frontend_has_no_duplicate_globals():
         flat[a or b] += n
     assert [k for k, n in flat.items() if n > 1] == []
 
+
+
+# ------------------------------------------------------------------ 로그인 보안 보강
+def test_auth_otp_single_use_proxy_ip_and_config_errors():
+    from quant_ai import auth as A
+    sec = A.new_secret()
+    a = A.Auth({"QUANT_WEB_PASSWORD_HASH": A.hash_password("pw"), "QUANT_WEB_TOTP_SECRET": sec})
+    code = A.totp(sec)
+    sid, msg = a.login("1.1.1.1", "pw", code)
+    assert sid
+    sid2, msg2 = a.login("1.1.1.1", "pw", code)  # 같은 코드 재사용 → 거부
+    assert sid2 is None and "이미 사용한" in msg2
+    old = A.totp(sec, __import__("time").time() - 30)  # 이전 칸 코드도 거부 (이미 더 새 칸을 썼으므로)
+    assert a.login("1.1.1.1", "pw", old)[0] is None
+    # 프록시: 믿는 프록시에서 온 요청만 X-Forwarded-For 를 본다
+    trusted = {"127.0.0.1"}
+    assert A.client_ip("127.0.0.1", "203.0.113.5, 127.0.0.1", trusted) == "203.0.113.5"
+    assert A.client_ip("198.51.100.7", "1.2.3.4", trusted) == "198.51.100.7"  # 아무나 헤더를 꾸며도 무시
+    assert A.client_ip("127.0.0.1", None, trusted) == "127.0.0.1"
+    # TOTP 만 있고 비밀번호 없음 → 설정 오류 (조용히 2단계 인증이 꺼지지 않게)
+    bad = A.Auth({"QUANT_WEB_TOTP_SECRET": sec, "QUANT_WEB_TOKEN": "t" * 32})
+    assert bad.config_errors() and "비밀번호" in bad.config_errors()[0] and bad.info()["errors"]
+    # Secure 쿠키: 강제 설정 또는 믿는 프록시의 https 만
+    p = A.Auth({"QUANT_TRUSTED_PROXIES": "127.0.0.1"})
+    assert p.is_secure("127.0.0.1", "https") and not p.is_secure("9.9.9.9", "https") and not p.is_secure("127.0.0.1", "http")
+    assert A.Auth({"QUANT_WEB_SECURE_COOKIE": "1"}).is_secure("9.9.9.9", None)
+
+
+def test_serve_refuses_totp_without_password(app, monkeypatch):
+    from quant_ai.web import server
+    monkeypatch.setenv("QUANT_WEB_TOTP_SECRET", "JBSWY3DPEHPK3PXP")
+    monkeypatch.delenv("QUANT_WEB_PASSWORD_HASH", raising=False)
+    monkeypatch.delenv("QUANT_WEB_PASSWORD", raising=False)
+    with pytest.raises(SystemExit, match="2단계 인증"):
+        server.serve(app, port=0)
+
+
+def test_login_lock_uses_real_client_ip_behind_proxy(app):
+    """프록시 뒤: 한 사람의 실패가 프록시 IP 전체를 잠그지 않는다."""
+    from http.server import ThreadingHTTPServer
+
+    from quant_ai.auth import Auth, hash_password
+    from quant_ai.web.api import DashboardAPI
+    from quant_ai.web.server import make_handler
+    au = Auth({"QUANT_WEB_PASSWORD_HASH": hash_password("right"), "QUANT_TRUSTED_PROXIES": "127.0.0.1"})
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(DashboardAPI(app), None, {"127.0.0.1", "localhost"}, au))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    port = httpd.server_address[1]
+    try:
+        def login(pw, xff):
+            c = HTTPConnection("127.0.0.1", port, timeout=10)
+            c.request("POST", "/api/login", body=json.dumps({"password": pw}),
+                      headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}", "X-Forwarded-For": xff})
+            r = c.getresponse()
+            return r.status, r.getheader("Set-Cookie") or ""
+        for _ in range(5):
+            assert login("wrong", "203.0.113.9")[0] == 401
+        assert au.locked("203.0.113.9") and not au.locked("127.0.0.1")
+        st, cookie = login("right", "198.51.100.1")  # 다른 사용자는 로그인 가능
+        assert st == 200 and "Secure" not in cookie  # 프록시가 https 라고 알려주지 않았으므로
+    finally:
+        httpd.shutdown()
+
+
+def test_event_strip_unknown_vs_none_and_us_market_events(app):
+    from quant_ai import stock
+    now = datetime(2026, 10, 5, 1, 0, tzinfo=UTC)
+    ops.set_state(app.engine, "event_calendar", {})  # 캘린더가 없거나 오래돼도 시장 일정은 규칙으로 바로
+    ev = stock.events(app, "AAPL", now, days=45)
+    kinds = {e["kind"] for e in ev}
+    assert {"fomc", "options_expiry"} & kinds and "unknown" in kinds  # 미국 종목: FOMC·옵션 만기 + 실적일 모름 표시
+    unk = next(e for e in ev if e["kind"] == "unknown")
+    upcoming = [e for e in ev if e["d_day"] >= 0]
+    assert unk["d_label"] == "확인 안 됨" and upcoming[-1] is unk  # 다가오는 일정 중 맨 뒤
+    ops.set_state(app.engine, "profile:AAPL", {"data": {"events": [{"kind": "earnings", "date": "2027-01-28"}]}})
+    assert not any(e["kind"] == "unknown" for e in stock.events(app, "AAPL", now, days=45))  # 알려진 일정이 창 밖 → '확인 안 됨' 아님
+    ops.set_state(app.engine, "profile:AAPL", {})
+
+
+# ------------------------------------------------------------------ SEC EDGAR · 데이터 충돌
+def test_sec_edgar_filings_and_earnings_event(app):
+    from quant_ai.data.collectors import sec
+    from quant_ai.data.db import session_scope
+    from quant_ai.data.models import Disclosure
+    calls = []
+
+    def fake(url):
+        calls.append(url)
+        if url == sec.TICKERS_URL:
+            return {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
+        assert url.endswith("CIK0000320193.json")
+        return {"cik": "320193", "name": "Apple Inc.", "filings": {"recent": {
+            "accessionNumber": ["0000320193-26-000101", "0000320193-26-000090", "0000320193-26-000050", "0000320193-25-000001"],
+            "filingDate": ["2026-07-31", "2026-07-30", "2026-07-01", "2025-01-01"],
+            "form": ["8-K", "10-Q", "4", "8-K"], "items": ["2.02,9.01", "", "", "5.02"],
+            "primaryDocument": ["aapl-8k.htm", "aapl-10q.htm", "x.xml", "old.htm"]}}}
+    with session_scope(app.engine) as s:
+        r = sec.collect(app, s, ["AAPL", "ZZZZ", "005930"], date(2026, 6, 1), fetch_json=fake)
+    assert r["added"] == 2 and r["missing_cik"] == ["ZZZZ"]  # 국내 종목은 건너뜀 · 폼 4·기간 밖은 제외
+    with session_scope(app.engine) as s:
+        rows = {d.receipt_no: d for d in s.query(Disclosure).filter_by(source="SEC")}
+        k8 = rows["SEC-0000320193-26-000101"]
+        assert "실적 발표" in k8.title and "earnings" in k8.events and k8.symbol == "AAPL"
+        assert k8.url == "https://www.sec.gov/Archives/edgar/data/320193/000032019326000101/aapl-8k.htm"
+    with session_scope(app.engine) as s:
+        assert sec.collect(app, s, ["AAPL"], date(2026, 6, 1), fetch_json=fake)["added"] == 0  # 중복 없음
+    assert calls.count(sec.TICKERS_URL) == 1  # 티커 표는 캐시
+
+
+def test_conflicts_price_earnings_and_news(app):
+    from quant_ai import conflicts
+    from quant_ai.data.db import session_scope
+    from quant_ai.data.models import NewsArticle
+    now = datetime(2026, 10, 2, tzinfo=UTC)
+    ops.set_state(app.engine, "source_failover", {"skipped": [{"symbol": "000020", "reason": "겹치는 날 비율이 9% 흔들림"}]})
+    ops.set_state(app.engine, "profile:000030", {"data": {"events": [{"kind": "earnings", "date": "2026-10-28", "estimated": True}]}})
+    ops.set_state(app.engine, "krcons:000030", {"next_date": "2026-10-14"})
+    with session_scope(app.engine) as s:
+        for i, (src, sent) in enumerate((("연합뉴스", 0.6), ("블로그", -0.5))):
+            s.add(NewsArticle(source=src, url=f"https://x/{i}c", published_at=now - timedelta(hours=1), title="B사 대규모 수주 공시", body="",
+                              symbols=["000030"], sentiment=sent, importance=0.6, cluster="cfx1"))
+    r = conflicts.detect(app, now=now, symbols=["000030"])
+    kinds = {x["kind"] for x in r["rows"]}
+    assert kinds == {"price", "earnings", "news"} and r["counts"]["earnings"] == 1
+    e = next(x for x in r["rows"] if x["kind"] == "earnings")
+    assert "2026-10-14" in e["title"] and "2026-10-28" in e["title"]
+    assert "연합뉴스" in next(x for x in r["rows"] if x["kind"] == "news")["title"]
+    ops.set_state(app.engine, "source_failover", {})
+    ops.set_state(app.engine, "profile:000030", {})
+    ops.set_state(app.engine, "krcons:000030", {})

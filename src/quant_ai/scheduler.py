@@ -140,6 +140,18 @@ def build_default_scheduler(app, mode) -> Scheduler:
             note_error(app.engine, "dart", str(e))
             raise
     sch.add("disclosures", dart, 600, "always")
+
+    def sec(now):  # 미국 원천 공시 (SEC EDGAR · 키 없음) — 보유·관심 미국 종목 + 미국 유니버스 앞부분
+        from .alerts import focus_symbols
+        from .data.collectors import sec as SEC
+        from .global_market import universe
+        syms = list(dict.fromkeys([x for x in focus_symbols(app) if not x[:1].isdigit()] + universe()))
+        SEC.cik_map(app)  # 티커 표 먼저 (따로 저장)
+        with session_scope(app.engine) as s:
+            res = SEC.collect(app, s, syms, date.today() - timedelta(days=30))
+        from . import ops as _ops
+        _ops.set_state(app.engine, "sec_filings", res)
+    sch.add("sec_filings", sec, 6 * 3600, "always")
     # 보유·관심·코어 종목의 새 공시는 원문을 받아 요약 (한 번에 5건)
     from .data.collectors.dart_docs import summarize_pending
     sch.add("dart_summary", lambda now: summarize_pending(app, app.settings.dart_api_key) if app.settings.dart_api_key else None, 1800, "always")
@@ -164,6 +176,7 @@ def build_default_scheduler(app, mode) -> Scheduler:
     from .center import weekly_alert as _weekly
     sch.add("pead_scan", lambda now: _pead.scan(app, now), 6 * 3600, "always")  # 실적 서프라이즈 → 이벤트 전략 장부에 봉인 (전진 기록)
     sch.add("weekly_schedule", lambda now: _weekly(app, now), 6 * 3600, "always")  # 월요일: 이번 주 보유 종목 일정 알림
+    sch.add("pead_notary", lambda now: _pead.notarize(app), 24 * 3600, "always")  # 이벤트 전략 장부 digest 외부 공증 (DB 를 고쳐도 드러나게)
     from .aitrack import snapshot as _ai_track
     sch.add("ai_track", lambda now: _ai_track(app, now), 24 * 3600, "closed")  # AI 성적 매일 기록 · 나쁘면 자동 SHADOW
 

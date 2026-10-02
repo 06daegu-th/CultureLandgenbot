@@ -141,6 +141,9 @@ ITEMS = [
     ("TRADING", "Slippage by situation", "실측 슬리피지를 저유동·급등락·VI(근사)·보통으로 따로", "execreport.py", "test_slippage_segments_low_liquidity_big_move_vi"),
     ("UX", "News board · market map", "같은 소식 한 장·톤 색·뉴스 이후 주가 · 업종별 지도(거래대금 크기·등락 색)", "board.py", "test_market_map_tiles_sectors_and_movers"),
     ("UX", "Day replay", "날짜를 고르면 그날 알 수 있던 가격·뉴스·AI 판단만 (나중 결과는 따로)", "replay.py", "test_replay_day_only_knows_that_day"),
+    ("DATA", "SEC EDGAR filings", "미국 원천 공시 (8-K·10-Q·10-K…) · 8-K 2.02 실적 발표 → 실적 이벤트", "data/collectors/sec.py", "test_sec_edgar_filings_and_earnings_event"),
+    ("DATA", "Data conflict board", "가격(KRX↔Yahoo·증권사↔DB) · 실적일(소스별) · 뉴스 해석(매체별 톤) 충돌 표시", "conflicts.py", "test_conflicts_price_earnings_and_news"),
+    ("SAFETY", "Budget replay", "과거 데이터로 '이 한도였으면 연 몇 번 정지했나' · 권장 한도 · 입출금 반영 손실 · 정지 후 처리", "budget.py", "test_budget_replay_counts_triggers_and_stop_sheet"),
     ("EVENT", "Weekly holdings schedule", "이번 주 보유·관심 종목 일정 + 월요일 알림 · 동종업체 실적 · 락업 공시", "center.py", "test_weekly_schedule_alert_and_lockup_strip"),
 ]
 

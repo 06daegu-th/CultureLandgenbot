@@ -9,12 +9,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import func, select
 
 from . import ops
 from .asof import label, stamp
+
+log = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------ 데이터 신뢰도 · 신선도
@@ -254,7 +257,24 @@ def events(app, symbol: str, now: datetime | None = None, days: int = 45) -> lis
     secs = sector_map(app.engine)
     my_sec = secs.get(symbol)
     peers_seen = 0
-    for e in ops.get_state(app.engine, "event_calendar").get("events") or []:
+    cal = ops.get_state(app.engine, "event_calendar")
+    evs = list(cal.get("events") or [])
+    try:
+        fresh = cal.get("at") and now - datetime.fromisoformat(cal["at"]) < timedelta(hours=26)
+    except (TypeError, ValueError):
+        fresh = False
+    if not fresh:  # 캘린더가 없거나 오래됨 → 규칙으로 만들 수 있는 시장 일정(휴장·만기·FOMC·지표)은 바로 만든다
+        from .engines import events as E
+        try:
+            evs += E.market_events(today - timedelta(days=3), today + timedelta(days=days)) + \
+                E.econ_events(today - timedelta(days=3), today + timedelta(days=days), ops.get_state(app.engine, "fred_releases").get("dates"))
+        except Exception as e:  # noqa: BLE001 - 생성 실패해도 저장된 일정은 보인다
+            log.info("시장 일정 생성 실패: %s", e)
+    seen_titles = set()
+    for e in evs:
+        if (e.get("title"), e.get("symbol"), str(e.get("date"))[:10]) in seen_titles:
+            continue
+        seen_titles.add((e.get("title"), e.get("symbol"), str(e.get("date"))[:10]))
         try:
             d = date.fromisoformat(str(e["date"])[:10])
         except (KeyError, ValueError):
@@ -279,8 +299,21 @@ def events(app, symbol: str, now: datetime | None = None, days: int = 45) -> lis
                         "kind": e.get("kind"), "title": e.get("title"), "estimated": bool(e.get("estimated")), "scope": "종목" if mine else "시장",
                         "source": e.get("source"), "importance": e.get("importance")})
     out += _lockup(app, symbol, today)
+    if not any(x["kind"] == "earnings" and x["scope"] == "종목" for x in out) and not _earnings_known(app, symbol):
+        # '일정 없음'과 '모름'을 구분 — 무료 소스에 실적일 정보가 아예 없으면 확인 안 됨으로 표시
+        out.append({"date": None, "d_day": 999, "d_label": "확인 안 됨", "kind": "unknown", "scope": "종목", "estimated": False,
+                    "title": "실적 발표일 확인 안 됨 — 무료 소스에 정보 없음 (회사 IR·공시로 확인)", "source": None, "importance": 0.4})
     out.sort(key=lambda x: (x["d_day"] < 0, abs(x["d_day"]), x["scope"] != "종목"))
     return out[:16]
+
+
+def _earnings_known(app, symbol: str) -> bool:
+    """이 종목의 실적 일정 정보를 어디서든 받은 적이 있나 (프로필 일정·실적 이력·국내 컨센서스)."""
+    prof = ops.get_state(app.engine, f"profile:{symbol}").get("data") or {}
+    if any(e.get("kind") == "earnings" for e in prof.get("events") or []) or prof.get("earnings_history"):
+        return True
+    kc = ops.get_state(app.engine, f"krcons:{symbol}")
+    return bool(kc.get("surprises") or kc.get("next_date"))
 
 
 LOCKUP_WORDS = ("보호예수", "의무보유", "매각제한", "락업", "lock-up", "lockup")

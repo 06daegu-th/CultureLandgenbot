@@ -45,8 +45,9 @@ def after_tax(gain_krw: float, ytd_gain_krw: float = 0.0) -> dict:
 
 
 def sheet(app, holdings: dict[str, int] | None = None, cash_usd: float = 0.0, cash_krw: float = 0.0,
-          targets: dict[str, float] | None = None, avg_cost: dict[str, float] | None = None, ytd_gain_krw: float = 0.0,
+          targets: dict[str, float] | None = None, avg_cost: dict | None = None, ytd_gain_krw: float = 0.0,
           prices: dict[str, float] | None = None) -> dict:
+    """avg_cost: {종목: 평단USD} 또는 {종목: (평단USD, 취득 때 환율)} — 환율이 있으면 환차익까지 원화로 과세 이익 계산."""
     holdings = {k.upper(): int(v) for k, v in (holdings or {}).items() if int(v) > 0}
     bars, _ = app._all_bars()
     if targets is None:  # 시스템의 미국 가상 장부 비중을 따라간다
@@ -82,8 +83,19 @@ def sheet(app, holdings: dict[str, int] | None = None, cash_usd: float = 0.0, ca
         row = {"symbol": s, "price": round(p, 2), "held": holdings.get(s, 0), "target_qty": tq, "order_qty": dq,
                "side": "매수" if dq > 0 else "매도" if dq < 0 else "유지", "amount_usd": round(amt, 2), "commission_usd": round(amt * comm, 2),
                "target_weight": round(targets.get(s, 0), 4)}
-        if dq < 0 and avg_cost and s in avg_cost:
-            row["gain_krw"] = round((p - float(avg_cost[s])) * (-dq) * fx)
+        if dq < 0:
+            ac = (avg_cost or {}).get(s)
+            if ac is None:
+                row["gain_note"] = "평단 없음 → 이익 0 으로 계산 (세금이 실제보다 적게 나올 수 있음)"
+            else:
+                cost_usd, buy_fx = (ac if isinstance(ac, tuple | list) else (ac, None))
+                buy_fx = float(buy_fx) if buy_fx else None
+                # 과세 이익(원화) = 양도가액(양도일 환율) − 취득가액(취득일 환율) — 환차익·환차손 포함
+                row["gain_krw"] = round(p * (-dq) * fx - float(cost_usd) * (-dq) * (buy_fx or fx))
+                if buy_fx:
+                    row["fx_gain_krw"] = round(float(cost_usd) * (-dq) * (fx - buy_fx))
+                else:
+                    row["gain_note"] = "취득 환율 없음 → 지금 환율로 가정 (환차익·환차손 빠짐)"
         rows.append(row)
     rows.sort(key=lambda r: (r["order_qty"] > 0, -r["amount_usd"]))  # 매도 먼저
     sells = sum(r["amount_usd"] - r["commission_usd"] for r in rows if r["order_qty"] < 0)
@@ -92,6 +104,7 @@ def sheet(app, holdings: dict[str, int] | None = None, cash_usd: float = 0.0, ca
     fx_cost_krw = need_usd * fx * spread
     gain = sum(r.get("gain_krw", 0) for r in rows)
     tax = after_tax(gain, ytd_gain_krw) if gain else None
+    warns = [f"{r['symbol']}: {r['gain_note']}" for r in rows if r.get("gain_note")]
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(["순서", "종목", "구분", "수량", "참고가(USD)", "금액(USD)"])
@@ -100,6 +113,9 @@ def sheet(app, holdings: dict[str, int] | None = None, cash_usd: float = 0.0, ca
     return {"source": src, "fx": fx, "fx_source": fx_src, "equity_usd": round(equity, 2), "rows": rows, "missing": missing,
             "price_source": "직접 입력" if manual and set(manual) >= set(syms) else "마지막 종가" + (" + 직접 입력" if manual else ""),
             "missing_hint": "미국 시세가 없습니다 — '가격 직접 입력' 칸에 `종목,가격` 을 넣거나 미국 데이터 수집 후 다시" if missing else None,
+            "tax_warnings": warns,
+            "tax_basis": (f"양도소득세 {TAX_RATE:.0%}(지방세 포함) · 연 {TAX_DEDUCTION:,.0f}원 기본공제 · 과세 이익 = 양도가액(지금 환율) − 취득가액(취득 환율) — "
+                          "2026년 기준 가정이며 세법·증권사 기준환율(매매기준율)과 다를 수 있어 신고 전 확인 필요"),
             "summary": {"sell_usd": round(sells, 2), "buy_usd": round(buys, 2), "need_usd": round(need_usd, 2), "need_krw": round(need_usd * fx),
                         "fx_cost_krw": round(fx_cost_krw), "commission_usd": round(sum(r["commission_usd"] for r in rows), 2),
                         "realized_gain_krw": round(gain), "tax": tax},

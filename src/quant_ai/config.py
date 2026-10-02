@@ -29,6 +29,10 @@ DEFAULT_NEWS_FEEDS = (
     "https://www.hankyung.com/feed/finance",  # 한국경제 증권
     "https://www.mk.co.kr/rss/50200011/",  # 매일경제 증권
     "https://news.google.com/rss/search?q=%EC%BD%94%EC%8A%A4%ED%94%BC&hl=ko&gl=KR&ceid=KR:ko",  # 구글뉴스 '코스피'
+    # 미국 (v17): 시장 전반 + 연준·실적
+    "https://news.google.com/rss/search?q=stock+market+OR+earnings+OR+fed&hl=en-US&gl=US&ceid=US:en",  # 구글뉴스 영어 '증시·실적·연준'
+    "https://www.cnbc.com/id/100003114/device/rss/rss.html",  # CNBC 주요 뉴스
+    "https://feeds.content.dowjones.io/public/rss/mw_topstories",  # MarketWatch 주요 뉴스
 )
 
 

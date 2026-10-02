@@ -196,7 +196,7 @@ python -m quant_ai.checklist         # 완성 기준 체크리스트 (docs/FINAL
 
 ## 테스트
 
-- `pytest` — 테스트 381개 · 건너뜀 0개 (PostgreSQL 이 설치돼 있으면 임시 DB 를 직접 띄워 통합 테스트까지)
+- `pytest` — 테스트 390개 · 건너뜀 0개 (PostgreSQL 이 설치돼 있으면 임시 DB 를 직접 띄워 통합 테스트까지)
 - 문서의 테스트 수가 실제와 다르면 테스트가 실패한다 (`tests/test_docs_counts.py`) · CI 는 건너뜀이 하나라도 있으면 실패 (`QUANT_NO_SKIP=1`)
 
 ## 안전 원칙

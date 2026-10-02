@@ -137,7 +137,7 @@ function fxCard(fx) {
 }
 
 // ------------------------------------------------------------ 뷰: 이벤트 캘린더 2.0
-const CAL_ICON = { bok: "🇰🇷", fomc: "🏦", cpi: "📈", nfp: "👷", gdp: "📊", pce: "🧾", retail: "🛒", earnings: "💼", ex_div: "💰", div_pay: "💵", options_expiry: "🎯", quad_witching: "🎯", index_rebalance: "⚖️", holiday: "🛑", half_day: "⏰", export: "🚢", disclosure: "📄", peer_earnings: "👥", lockup: "🔓", custom: "📌" };
+const CAL_ICON = { bok: "🇰🇷", fomc: "🏦", cpi: "📈", nfp: "👷", gdp: "📊", pce: "🧾", retail: "🛒", earnings: "💼", ex_div: "💰", div_pay: "💵", options_expiry: "🎯", quad_witching: "🎯", index_rebalance: "⚖️", holiday: "🛑", half_day: "⏰", export: "🚢", disclosure: "📄", peer_earnings: "👥", lockup: "🔓", unknown: "❔", custom: "📌" };
 async function viewCalendar(el) {
   const c = await api("/api/calendar");
   const f = S.calFilter || "all";

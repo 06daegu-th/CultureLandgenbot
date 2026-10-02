@@ -111,7 +111,28 @@ def event_calendar(app, days_ahead: int = 60, days_back: int = 14, now: datetime
            "gate": app.settings.event_gate}
     if store:
         ops.set_state(app.engine, "event_calendar", _json(out))
+        archive_events(app, ev, today)
     return out
+
+
+def archive_events(app, events: list[dict], today) -> int:
+    """지나간 일정은 버리지 않고 날짜별로 보관 — '그날 재현' 이 오래된 날짜의 종목 일정(실적·공시)도 보여주게. 2년치."""
+    st = ops.get_state(app.engine, "event_archive")
+    arch: dict[str, list] = dict(st.get("by_date") or {})
+    n = 0
+    for e in events:
+        d = str(e.get("date"))[:10]
+        if not d or d > today.isoformat():
+            continue  # 미래 일정은 바뀔 수 있어 확정된(지난) 것만
+        keep = {k: e.get(k) for k in ("date", "kind", "title", "symbol", "market", "source", "estimated")}
+        lst = arch.setdefault(d, [])
+        if not any(x.get("title") == keep["title"] and x.get("symbol") == keep["symbol"] for x in lst):
+            lst.append(keep)
+            n += 1
+    cutoff = (today - timedelta(days=730)).isoformat()
+    arch = {k: v for k, v in arch.items() if k >= cutoff}
+    ops.set_state(app.engine, "event_archive", {"by_date": arch})
+    return n
 
 
 def event_caps_for(app, symbols) -> dict:

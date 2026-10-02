@@ -18,6 +18,8 @@
 | ✓ DATA HEALTH | 분야별 점수 % + 전체 · 주가 50% 미만 또는 장중 가격 15분 지연 → TRADING BLOCKED | `datahealth.py` | `test_data_health_blocks_and_explain_gate` |
 | ✓ .env hot reload | 키를 넣으면 5초 안에 반영 · 수집 작업은 항상 등록 · 줄 번호·형식·마지막 오류까지 진단 | `keys.py` | `test_key_added_while_running_is_picked_up_without_restart` |
 | ✓ News structured extraction | 기사마다 이벤트·방향·확신도·요약 JSON(LLM) · 부정어 처리 · 같은 소식 묶기 · 매체 신뢰도 | `news_llm.py` | `test_news_extract_llm_json_clusters_and_board` |
+| ✓ SEC EDGAR filings | 미국 원천 공시 (8-K·10-Q·10-K…) · 8-K 2.02 실적 발표 → 실적 이벤트 | `data/collectors/sec.py` | `test_sec_edgar_filings_and_earnings_event` |
+| ✓ Data conflict board | 가격(KRX↔Yahoo·증권사↔DB) · 실적일(소스별) · 뉴스 해석(매체별 톤) 충돌 표시 | `conflicts.py` | `test_conflicts_price_earnings_and_news` |
 
 ## MARKET
 
@@ -132,6 +134,7 @@
 | ✓ Audit log | 긴급 정지·설정·계좌·알림 규칙·투자 논리·성향·모의 주문 — 추가만 가능 | `governance.audit` | `test_governance_audit_prefs_theme_widgets` |
 | ✓ Budget → limits | 원금·최대 손실 → 모든 한도 자동 · 누적 손실이 한도에 닿으면 전체 정지(11번째 조건) | `budget.py` | `test_budget_plan_apply_and_total_loss_guard` |
 | ✓ Login · MFA · read-only | 비밀번호(scrypt)·TOTP·5회 실패 잠금 · 읽기 전용 토큰은 POST 403 | `auth.py` | `test_login_mfa_session_and_viewer_rbac` |
+| ✓ Budget replay | 과거 데이터로 '이 한도였으면 연 몇 번 정지했나' · 권장 한도 · 입출금 반영 손실 · 정지 후 처리 | `budget.py` | `test_budget_replay_counts_triggers_and_stop_sheet` |
 
 ## OPERATIONS
 

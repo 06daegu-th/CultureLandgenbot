@@ -940,9 +940,10 @@ class QuantAI:
             except Exception as e:  # noqa: BLE001 - 기록 실패가 매매를 막으면 안 됨
                 log.warning("parity 기록 실패: %s", e)
 
-        # ---- 자동 킬스위치: 일 손실 한도의 1.5배를 넘으면 전체 정지 + 알림
+        # ---- 자동 킬스위치: 일 손실 한도의 1.5배(budget.KILL_MULT)를 넘으면 전체 정지 + 알림
+        from .budget import KILL_MULT
         dd = risk.daily_pnl_pct(pf.equity(prices))
-        if dd <= -1.5 * st.risk.max_daily_loss_pct and not risk.kill_switch:
+        if dd <= -KILL_MULT * st.risk.max_daily_loss_pct and not risk.kill_switch:
             self.set_kill_switch(True, f"일 손실 {dd:.1%}", by="auto")
         if fills and mode is not Mode.PAPER:
             self.notifier.send(f"[{mode.value}] 체결 {len(fills)}건: " + ", ".join(

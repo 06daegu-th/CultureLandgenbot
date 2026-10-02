@@ -167,6 +167,20 @@ async function viewDataHealth(el) {
   $("#dh-re").onclick = async (e) => { e.target.disabled = true; await api("/api/data-health?refresh=1"); render(); };
   keysCard(el);
   netCard(el);
+  conflictCard(el);
+}
+
+// v17: 데이터 충돌 — 소스끼리 말이 다를 때 (가격 · 실적일 · 뉴스 해석)
+async function conflictCard(el) {
+  const box = document.createElement("div");
+  el.appendChild(box);
+  let c;
+  try { c = await api("/api/conflicts"); } catch (e) { box.innerHTML = card("데이터 충돌", `<div class="veto">${esc(e.message)}</div>`); return; }
+  const IC = { bad: "🔴", warn: "🟡", info: "🔵" };
+  const KL = { price: "가격", earnings: "실적일", news: "뉴스 해석" };
+  box.innerHTML = card(`데이터 충돌 <span class="small dim">${esc(c.headline)} · ${esc(c.as_of)}</span>`, c.rows.length
+    ? `<div class="tr-rows">${c.rows.slice(0, 20).map((r) => `<div class="tr-row"><span class="tr-ic">${IC[r.level] || "•"}</span><div><div class="small b">${esc(KL[r.kind] || r.kind)}${r.symbol ? ` · <a href="#analysis/${esc(r.symbol)}">${esc(r.symbol)}</a>` : ""}</div><div class="xs muted">${esc(r.title)}</div></div></div>`).join("")}</div><div class="xs dim" style="margin-top:6px">${esc(c.note)}</div>`
+    : empty("소스끼리 엇갈리는 데이터 없음"));
 }
 
 // v17: 외부 연결 점검 — 소스마다 작은 요청 1번 (정상 / 키 / 네트워크 차단 / 서버 / 형식 변경)
@@ -313,22 +327,39 @@ async function viewBudget(el) {
   const fmt = (k, v) => (k.includes("capital") || k === "max_order_value") ? "₩" + num(v) : R(v, 1);
   const table = (p) => `<table class="tight"><thead><tr><th>한도</th><th class="r">값</th><th>근거</th></tr></thead><tbody>${Object.entries(p.limits).map(([k, v]) =>
     `<tr><td class="small b">${LBL[k] || k}</td><td class="r num">${fmt(k, v)}</td><td class="xs muted">${esc(p.why[k])}</td></tr>`).join("")}</tbody></table>`;
+  const warn = (p) => (p.warnings || []).map((w) => `<div class="veto small" style="margin-top:6px">⚠ ${esc(w)}</div>`).join("");
+  const rp = (r) => !r ? "" : !r.available ? `<div class="xs dim">${esc(r.message)}</div>` : `
+    <div class="small b" style="margin-top:12px">과거로 재생 — 이 한도였으면 몇 번 걸렸을까 <span class="xs dim">${esc(r.source)} · ${esc(r.from)} ~ ${esc(r.to)}</span></div>
+    <div class="grid g-4" style="margin-top:6px">
+      <div class="kpi"><div class="xs muted">신규 매수 중단 (일 ${R(r.limit, 1)})</div><div class="big num">연 ${r.stop_per_year}회</div><div class="xs">총 ${r.stop_days}일</div></div>
+      <div class="kpi ${r.kill_per_year > 1 ? "warn" : ""}"><div class="xs muted">자동 정지 (일 ${R(r.kill_at, 1)})</div><div class="big num">연 ${r.kill_per_year}회</div><div class="xs">총 ${r.kill_days}일${r.kill_dates.length ? ` · 최근 ${esc(r.kill_dates.slice(-3).join(", "))}` : ""}</div></div>
+      <div class="kpi ${r.hit_share > 0.3 ? "warn" : ""}"><div class="xs muted">최대 손실 정지</div><div class="big num">${R(r.hit_share, 0)}</div><div class="xs">매년 1월 시작 ${r.starts.length}번 중 닿은 비율</div></div>
+      <div class="kpi"><div class="xs muted">같은 기간 최대 낙폭</div><div class="big num down">${P(r.max_drawdown, 0)}</div><div class="xs">하루 변동 ${R(r.daily_vol, 2)}</div></div></div>
+    <div class="xs muted" style="margin-top:6px">${r.plain.map(esc).join("<br>")}</div>`;
+  const pol = sv?.on_stop || "hold";
   const u = b.usage;
   el.innerHTML = `
   ${card("내 투자 한도 <span class='small dim'>원금과 '최대로 감당할 손실'을 먼저 — 모든 한도가 여기서 계산됩니다</span>", `
     <div class="form-grid"><label>원금 (원)<input id="bg-p" type="number" inputmode="numeric" step="100000" value="${sv?.principal ?? ""}" placeholder="예: 10000000"></label>
       <label>최대로 감당할 손실 (원)<input id="bg-l" type="number" inputmode="numeric" step="10000" value="${sv?.max_loss ?? ""}" placeholder="예: 1000000"></label>
       <label>실전 첫 단계 비율<input id="bg-f" type="number" step="0.01" min="0.01" max="0.5" value="${sv?.first_stage ?? 0.1}"></label></div>
-    <div style="margin-top:10px;display:flex;gap:8px"><button class="btn-sm" id="bg-prev">미리 보기</button><button class="btn-sm primary" id="bg-save">저장 · 바로 적용</button></div>
-    <div id="bg-out" style="margin-top:12px">${sv ? `<div class="lesson small">${sv.plain.map(esc).join("<br>")}</div>${table(sv)}` : '<div class="xs dim">아직 정하지 않았습니다 — 지금은 .env 의 기본 한도로 동작합니다.</div>'}</div>`)}
-  ${u ? card("원금 대비 손실 (자동 정지 기준)", u.equity == null ? empty("평가 기록 없음") : `<div class="kv-grid">${kv("평가금액", "₩" + num(u.equity))}${kv("손실", "₩" + num(u.loss), "down")}${kv("한도", "₩" + num(u.limit))}${kv("사용", R(u.used, 0))}</div>
-      <div style="margin-top:8px">${hbar(u.used, 1, u.used >= 0.8 ? "neg" : u.used >= 0.5 ? "warn" : "pos")}</div><div class="xs dim">80% 경고 · 100% 이면 자동 매매 전체 정지(HALTED)</div>`) : ""}
+    <div class="small b" style="margin-top:10px">최대 손실에 닿아 정지했을 때 보유분은? <span class="xs dim">미리 정해 두세요 — 어떤 경우에도 자동으로 팔지는 않고, 매도 주문표를 만들어 알립니다</span></div>
+    <div id="bg-pol" style="display:grid;gap:4px;margin-top:4px">${Object.entries(b.policies).map(([k, t]) => `<label class="small"><input type="radio" name="bg-pol" value="${k}" ${k === pol ? "checked" : ""}> ${esc(t)}</label>`).join("")}</div>
+    <div style="margin-top:10px;display:flex;gap:8px"><button class="btn-sm" id="bg-prev">미리 보기 (+ 과거 재생)</button><button class="btn-sm primary" id="bg-save">저장 · 바로 적용</button></div>
+    <div id="bg-out" style="margin-top:12px">${sv ? `<div class="lesson small">${sv.plain.map(esc).join("<br>")}</div>${warn(sv)}${table(sv)}${rp(b.replay)}` : '<div class="xs dim">아직 정하지 않았습니다 — 지금은 .env 의 기본 한도로 동작합니다.</div>'}</div>`)}
+  ${u ? card("원금 대비 손실 (자동 정지 기준 · 입출금 반영)", u.equity == null ? empty("평가 기록 없음") : `<div class="kv-grid">${kv("넣은 돈", "₩" + num(u.invested ?? u.base))}${kv("평가금액", "₩" + num(u.equity))}${kv("손실", "₩" + num(u.loss), "down")}${kv("한도", "₩" + num(u.limit))}${kv("사용", R(u.used, 0))}</div>
+      <div style="margin-top:8px">${hbar(u.used, 1, u.used >= 0.8 ? "neg" : u.used >= 0.5 ? "warn" : "pos")}</div>
+      <div class="xs dim">넣은 돈 = 한도를 정한 시점 평가금액 ₩${num(u.base)} + 그 뒤 입금·출금 ${u.n_flows ? `${u.n_flows}건 (₩${num(u.net_flows)})` : "없음"} · 80% 경고 · 100% 정지 ·
+        입출금은 <code>./run.sh cashflow --amount -500000</code> 로 기록 (기록 안 하면 출금이 손실로 보입니다)</div>`) : ""}
+  ${b.stop_sheet?.rows?.length ? card(`정지 후 매도 주문표 <span class="small dim">${esc(b.stop_sheet.text)}</span>`, `<table class="tight"><thead><tr><th>종목</th><th class="r">보유</th><th class="r">매도</th></tr></thead><tbody>${b.stop_sheet.rows.map((r) => `<tr><td><a href="#analysis/${esc(r.symbol)}">${esc(r.symbol)}</a></td><td class="r num">${num(r.held)}</td><td class="r num down">${num(r.sell_qty)}</td></tr>`).join("")}</tbody></table><div class="xs dim">자동으로 팔지 않았습니다 — 확인 후 증권사 앱 또는 수동 주문으로</div>`) : ""}
   ${card("지금 적용 중인 한도", `<table class="tight"><tbody>${Object.entries(b.current).map(([k, v]) => `<tr><td class="small">${LBL[k] || k}</td><td class="r num">${fmt(k, v)}</td></tr>`).join("")}</tbody></table>`)}`;
-  const vals = () => ({ principal: $("#bg-p").value, max_loss: $("#bg-l").value, first_stage: $("#bg-f").value });
+  const vals = () => ({ principal: $("#bg-p").value, max_loss: $("#bg-l").value, first_stage: $("#bg-f").value,
+    on_stop: (el.querySelector('input[name="bg-pol"]:checked') || {}).value || "hold" });
   $("#bg-prev").onclick = async () => {
     const v = vals();
-    const r = await api(`/api/budget?principal=${encodeURIComponent(v.principal)}&max_loss=${encodeURIComponent(v.max_loss)}`).catch((e) => ({ error: e.message }));
-    $("#bg-out").innerHTML = r.error ? `<div class="veto">${esc(r.error)}</div>` : `<div class="lesson small">${r.preview.plain.map(esc).join("<br>")}</div>${table(r.preview)}<div class="xs dim">미리 보기 — 저장해야 적용됩니다</div>`;
+    $("#bg-out").innerHTML = skeleton();
+    const r = await api(`/api/budget?principal=${encodeURIComponent(v.principal)}&max_loss=${encodeURIComponent(v.max_loss)}&on_stop=${v.on_stop}`).catch((e) => ({ error: e.message }));
+    $("#bg-out").innerHTML = r.error ? `<div class="veto">${esc(r.error)}</div>` : `<div class="lesson small">${r.preview.plain.map(esc).join("<br>")}</div>${warn(r.preview)}${table(r.preview)}${rp(r.replay)}<div class="xs dim">미리 보기 — 저장해야 적용됩니다</div>`;
   };
   $("#bg-save").onclick = async () => {
     const r = await post("/api/budget", vals());

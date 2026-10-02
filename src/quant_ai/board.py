@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from . import ops
 from .asof import label
-from .news_llm import EVENT_KO
+from .news_llm import EVENT_KO, tone_value
 
 TONE = lambda s: "긍정" if (s or 0) > 0.2 else "부정" if (s or 0) < -0.2 else "중립"  # noqa: E731
 
@@ -49,7 +49,7 @@ def news_board(app, days: int = 3, only: str | None = None, symbol: str | None =
         names = {i.symbol: i.name for i in s.scalars(select(Instrument))}
         rows = s.scalars(select(NewsArticle).where(NewsArticle.published_at >= now - timedelta(days=days))
                          .order_by(NewsArticle.published_at.desc()).limit(3000)).all()
-        arts = [{"id": a.id, "title": a.title, "source": a.source, "url": a.url, "at": _aware(a.published_at), "sent": a.sentiment or 0.0,
+        arts = [{"id": a.id, "title": a.title, "source": a.source, "url": a.url, "at": _aware(a.published_at), "sent": tone_value(a.sentiment, a.extract),
                  "imp": a.importance or 0.5, "symbols": a.symbols or [], "events": a.events or [], "ex": a.extract or {},
                  "cluster": a.cluster or f"a{a.id}", "body": (a.body or "")[:200]} for a in rows]
     if symbol:
@@ -112,7 +112,7 @@ def market_map(app, now: datetime | None = None) -> dict:
         for i in insts:  # WICS·Yahoo 업종이 없으면 종목 정보의 업종
             if i.sector and not sectors.get(i.symbol):
                 sectors[i.symbol] = i.sector
-        recent = [(a.published_at, a.title, a.symbols or [], a.sentiment or 0.0) for a in s.scalars(
+        recent = [(a.published_at, a.title, a.symbols or [], tone_value(a.sentiment, a.extract)) for a in s.scalars(
             select(NewsArticle).where(NewsArticle.published_at >= now - timedelta(days=4)).order_by(NewsArticle.published_at.desc()).limit(3000))]
     tiles = []
     for sym, b in bars.items():

@@ -397,8 +397,13 @@ class Tools:
         if not b.get("limits"):
             return {"set": False, "message": "아직 원금·최대 손실을 정하지 않았습니다 — '내 투자 한도' 화면(#budget)에서 두 숫자만 넣으면 모든 한도가 자동으로 정해집니다"}
         t = budget.total_loss(self.app, self._mode())
+        try:
+            rp = budget.replay(self.app, b)
+        except Exception as e:  # noqa: BLE001 - 재생 실패해도 한도는 답한다
+            rp = {"plain": [f"과거 재생 실패: {type(e).__name__}"]}
         return {"set": True, "principal": b["principal"], "max_loss": b["max_loss"], "loss_pct": b["loss_pct"], "limits": b["limits"],
-                "plain": b.get("plain"), "usage": t}
+                "plain": b.get("plain"), "warnings": b.get("warnings"), "on_stop": b.get("on_stop_text"), "usage": t,
+                "replay": rp.get("plain") or [rp.get("message", "")]}
 
     def t_event_strategy(self) -> dict:
         from . import pead
@@ -850,7 +855,9 @@ def rule_answer(text: str, pre: list[dict], tools: Tools, quota: bool = False, h
                 u = r.get("usage") or {}
                 parts.append(f"### 내 투자 한도 — 원금 {r['principal']:,}원 · 최대 손실 {r['max_loss']:,}원 ({_pct(r['loss_pct'], False)})\n"
                              + "\n".join(f"- {x}" for x in r.get("plain") or [])
-                             + (f"\n- 지금 손실 {u['loss']:,}원 = 한도의 **{_pct(u['used'], False)}**" if u.get("equity") is not None else ""))
+                             + "".join(f"\n- ⚠ {w}" for w in r.get("warnings") or [])
+                             + "".join(f"\n- 📼 과거 재생: {x}" for x in r.get("replay") or [] if x)
+                             + (f"\n- 지금 손실 {u['loss']:,}원 = 한도의 **{_pct(u['used'], False)}** (입출금 반영)" if u.get("equity") is not None else ""))
         elif name == "event_strategy":
             f = r["forward"]
             parts.append(f"### 실적 이벤트 전략 (PEAD): **{r['decision']}**\n- 규칙: {r['rule']}\n"

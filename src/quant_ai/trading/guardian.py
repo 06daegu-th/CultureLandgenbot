@@ -136,8 +136,9 @@ def check_daily_loss(app, mode: str, now: datetime | None = None) -> dict:
         return _c("daily_loss", "ok", "기록 없음")
     pnl = last / prev - 1
     lim = app.settings.risk.max_daily_loss_pct
-    if pnl <= -1.5 * lim:
-        return _c("daily_loss", "critical", f"당일 {pnl:+.2%} ≤ 한도의 1.5배 (-{1.5 * lim:.1%})", value=round(pnl, 5))
+    from ..budget import KILL_MULT
+    if pnl <= -KILL_MULT * lim:
+        return _c("daily_loss", "critical", f"당일 {pnl:+.2%} ≤ 한도의 {KILL_MULT}배 (-{KILL_MULT * lim:.1%})", value=round(pnl, 5))
     if pnl <= -lim:
         return _c("daily_loss", "warn", f"당일 {pnl:+.2%} ≤ 한도 -{lim:.1%} → 신규 매수 중단", value=round(pnl, 5))
     return _c("daily_loss", "ok", f"당일 {pnl:+.2%} (한도 -{lim:.1%})", value=round(pnl, 5))
@@ -151,9 +152,11 @@ def check_total_loss(app, mode: str) -> dict:
         return _c("total_loss", "ok", "투자 한도 미설정 — '내 투자 한도'에서 원금·최대 손실을 정하세요")
     if t["equity"] is None:
         return _c("total_loss", "ok", f"평가 기록 없음 (한도 {t['limit']:,}원)")
-    detail = f"손실 {t['loss']:,}원 / 한도 {t['limit']:,}원 ({t['used']:.0%})"
+    from ..budget import STOP_POLICIES
+    detail = f"손실 {t['loss']:,}원 / 한도 {t['limit']:,}원 ({t['used']:.0%})" + (f" · 입출금 {t['net_flows']:+,}원 반영" if t.get("n_flows") else "")
     if t["used"] >= 1:
-        return _c("total_loss", "critical", detail + " → 최대 손실 도달", value=t["used"])
+        return _c("total_loss", "critical", detail + " → 최대 손실 도달 · 정지 후: " + STOP_POLICIES[t.get("on_stop", "hold")].split(" —")[0],
+                  value=t["used"])
     if t["used"] >= 0.8:
         return _c("total_loss", "warn", detail + " → 한도의 80% 이상", value=t["used"])
     return _c("total_loss", "ok", detail, value=t["used"])
@@ -245,6 +248,12 @@ def evaluate(app, mode: str | None = None, act: bool = True, now: datetime | Non
             app.notifier.send(f"[{mode}] ⛔ 자동 매매 정지 (HALTED)\n{reason}\n원인 확인 후 대시보드에서 해제하세요.",
                               "critical")
             acted = True
+            if any(c["key"] == "total_loss" for c in critical):  # 미리 정한 '정지 후 처리' — 매도 주문표만 만들고 자동으로 팔지 않는다
+                from ..budget import stop_sheet
+                sh = stop_sheet(app, mode)
+                if sh and sh["rows"]:
+                    app.notifier.send(f"[{mode}] 최대 손실 정지 후 처리: {sh['text']}\n매도 주문표 {len(sh['rows'])}종목 — '내 투자 한도' 화면에서 확인",
+                                      "critical")
     out = {"state": state, "mode": mode, "conditions": conds, "checked_at": now.isoformat(), "acted": acted,
            "kill_switch": ops.get_state(app.engine, "kill_switch")}
     ops.set_state(app.engine, "guardian", {k: v for k, v in out.items() if k != "kill_switch"})

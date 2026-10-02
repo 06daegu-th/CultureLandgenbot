@@ -98,6 +98,9 @@
 | `QUANT_FX_SPREAD_BPS` | 환전 스프레드 (기본 25 = 0.25%, 환율 우대 반영해서) |
 | `QUANT_US_TAX_RATE` | 해외주식 양도세율 (기본 0.22) — 세법 바뀌면 수정 |
 | `QUANT_US_TAX_DEDUCTION` | 연 기본공제 (기본 2500000) |
+| `QUANT_TRUSTED_PROXIES` | 리버스 프록시 주소(쉼표). 이 주소에서 온 요청만 X-Forwarded-For·Proto 를 믿는다 (로그인 잠금이 실제 접속 IP 기준이 되게) |
+| `QUANT_WEB_SECURE_COOKIE` | `1` 이면 세션 쿠키에 항상 Secure — 외부 공개 시 HTTPS 와 함께 필수 |
+| `QUANT_SEC_USER_AGENT` | SEC EDGAR 수집용 연락처 (예: `홍길동 me@example.com`) — SEC 정책상 필요 |
 
 '내 투자 한도'(원금·최대 손실)는 `.env` 가 아니라 화면(`#budget`)이나 `./run.sh budget ... --save` 로 정한다 — DB 에 저장되고 다음 시작 때도 적용된다.
 
