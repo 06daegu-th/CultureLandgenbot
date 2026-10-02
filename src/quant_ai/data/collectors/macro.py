@@ -1,0 +1,59 @@
+"""경제지표 수집 (FRED). FRED_API_KEY 필요 (https://fred.stlouisfed.org).
+
+기본 시리즈: 미 10년물, 2년물, 달러/원, VIX, 연방기금금리, WTI.
+한국은행 ECOS 등 다른 소스도 같은 형태(``series_id, ts, value``)로 추가하면 된다.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..models import MacroObservation
+from . import http
+
+FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
+# 금리·환율·변동성·유가 + 크로스에셋(NASDAQ, S&P500, 달러지수)
+DEFAULT_SERIES = ("DGS10", "DGS2", "DEXKOUS", "VIXCLS", "DFF", "DCOILWTICO", "NASDAQCOM", "SP500", "DTWEXBGS")
+
+
+def parse_fred(payload: dict) -> list[tuple[date, float]]:
+    out = []
+    for obs in payload.get("observations", []):
+        if obs.get("value") in (None, "", "."):  # FRED 는 결측을 "." 로 표시
+            continue
+        out.append((datetime.strptime(obs["date"], "%Y-%m-%d").date(), float(obs["value"])))
+    return out
+
+
+class FredCollector:
+    def __init__(self, api_key: str, series: tuple[str, ...] = DEFAULT_SERIES, fetch_json=http.get_json):
+        self.api_key = api_key
+        self.series = series
+        self.fetch_json = fetch_json
+
+    def collect(self, session: Session, start: date) -> int:
+        n = 0
+        self.errors: dict[str, str] = {}
+        for sid in self.series:
+            try:
+                payload = self.fetch_json(FRED_URL, {
+                    "series_id": sid, "api_key": self.api_key, "file_type": "json",
+                    "observation_start": start.isoformat(),
+                })
+            except Exception as e:  # noqa: BLE001 - 한 시리즈 실패가 나머지를 막지 않게
+                self.errors[sid] = str(e)[:300]
+                if len(self.errors) >= 3 and not n:  # 처음 셋이 다 실패 = 키·네트워크 문제 → 더 시도하지 않음
+                    raise RuntimeError(f"FRED 수집 실패: {next(iter(self.errors.values()))}") from e
+                continue
+            have = set(session.scalars(
+                select(MacroObservation.ts).where(MacroObservation.series_id == sid, MacroObservation.ts >= start)
+            ))
+            for ts, value in parse_fred(payload):
+                if ts in have:
+                    continue
+                session.add(MacroObservation(series_id=sid, source="FRED", ts=ts, value=value))
+                n += 1
+        return n

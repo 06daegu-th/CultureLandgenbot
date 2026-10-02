@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quant AI</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b1530">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <a class="brand" href="#dashboard">
+      <div class="logo" id="brand-logo"></div>
+      <div><div class="brand-name">QUANT AI</div><div class="brand-sub">AI-Powered Trading &amp; Research</div></div>
+    </a>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <div class="side-card" id="mode-card"></div>
+      <div class="side-card" id="balance-card"></div>
+      <button id="kill-btn" class="kill-big" title="긴급 정지: 신규 매수 즉시 중단 (매도·위험 축소는 계속)"></button>
+      <div class="quote">"데이터는 거짓말을 하지 않는다.<br>다만, 해석이 다를 뿐이다."</div>
+      <div class="ver">Quant AI · <span id="sys-last" class="mono">-</span></div>
+    </div>
+  </aside>
+
+  <main>
+    <header class="top">
+      <button class="menu-btn" id="menu-btn" aria-label="메뉴">☰</button>
+      <div class="search">
+        <span class="ico" id="search-ico"></span><input id="search" placeholder="종목명, 코드 검색…" autocomplete="off">
+        <div id="search-results" class="search-results"></div>
+      </div>
+      <div class="top-right">
+        <span id="demo-badge" class="pill warn" hidden>DEMO 가상 데이터</span>
+        <span id="sys-status" class="sys-pill"><span class="dot"></span>연결 중</span>
+        <span id="market-badges" class="mkt-badges"></span>
+        <span id="clock" class="clock mono">--</span>
+        <button id="theme-btn" class="icon-btn" title="테마 전환"></button>
+        <a href="#settings" class="icon-btn" id="settings-btn" title="설정"></a>
+        <div class="bell-wrap">
+          <button id="bell-btn" class="icon-btn" title="알림"></button>
+          <div id="bell-panel" class="bell-panel"></div>
+        </div>
+        <div class="avatar" id="avatar" title="운영 모드">QA</div>
+      </div>
+    </header>
+    <section id="view" class="view"></section>
+    <nav class="tabbar" id="tabbar"></nav>
+    <footer class="disclaimer">본 화면의 신호·예측·시나리오는 정보 제공 목적이며 투자 권유나 수익 보장이 아닙니다. 백테스트·가상매매 성과는 실제 성과와 다를 수 있으며, 투자 판단과 그 결과의 책임은 투자자 본인에게 있습니다.</footer>
+  </main>
+</div>
+<script src="/icons.js"></script>
+<script src="/pro.js"></script>
+<script src="/live.js"></script>
+<script src="/verify.js"></script>
+<script src="/desk.js"></script>
+<script src="/truth.js"></script>
+<script src="/allin.js"></script>
+<script src="/os.js"></script>
+<script src="/hub.js"></script>
+<script src="/board.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

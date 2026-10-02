@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-ai"
+version = "0.17.0"
+description = "Self-reviewing quant AI: data collection, regime/news/feature engines, prediction, backtest, paper/shadow/live trading and daily review"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "sqlalchemy>=2.0",
+    "scikit-learn>=1.4",
+    "defusedxml>=0.7",
+    "pyarrow>=15",  # marcap(KRX) parquet 읽기 — 코어 전략의 데이터 원천
+    "holidays>=0.50",  # 거래소 휴장일 (XKRX · XNYS) — 시장 캘린더
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1", "alembic>=1.13"]
+ai = ["anthropic>=1.0"]
+yahoo = ["yfinance>=0.2.54"]
+live = ["websockets>=12", "cryptography>=41"]  # KIS 실시간 체결(웹소켓) · 웹 푸시(VAPID 암호화)
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+quant-ai = "quant_ai.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+quant_ai = ["web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "S", "UP", "I"]
+ignore = ["E501", "B008", "B905", "S101", "S311", "UP042", "S608"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B017"]

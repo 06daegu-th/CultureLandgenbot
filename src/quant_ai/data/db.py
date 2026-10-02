@@ -1,0 +1,161 @@
+"""DB 연결과 저장 헬퍼."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from contextlib import contextmanager
+from datetime import UTC
+
+import pandas as pd
+from sqlalchemy import create_engine, insert, select
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from .models import Base, PriceBar
+
+
+def make_engine(url: str, connect_timeout: int | None = None) -> Engine:
+    # psycopg3 드라이버를 기본으로 사용
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    args = {"connect_timeout": connect_timeout} if connect_timeout and url.startswith("postgresql") else {}
+    if url.startswith("sqlite"):
+        args = {"timeout": 30}  # 대시보드·스케줄러·백그라운드 작업이 같은 파일을 쓸 때 잠깐 기다린다
+    engine = create_engine(url, future=True, pool_pre_ping=True, connect_args=args)
+    if url.startswith("sqlite") and ":memory:" not in url and url.rstrip("/") != "sqlite:":
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragmas(dbapi_conn, _):  # WAL: 읽기와 쓰기가 서로 막지 않는다 (여러 프로세스 동시 사용)
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.close()
+    return engine
+
+
+def init_db(engine: Engine) -> None:
+    Base.metadata.create_all(engine)
+    ensure_columns(engine)
+
+
+def ensure_columns(engine: Engine) -> list[str]:
+    """이미 만들어진 DB 에 새 버전의 컬럼을 추가한다 (nullable 컬럼만 · 데이터는 그대로).
+
+    create_all 은 없는 테이블만 만든다 → 예전 버전으로 만든 quant_ai.db 도 업데이트 후 그대로 쓰게 한다.
+    PostgreSQL 운영은 Alembic 마이그레이션이 같은 일을 한다 (migrations/versions)."""
+    from sqlalchemy import inspect, text
+    added = []
+    insp = inspect(engine)
+    existing = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing:
+                continue
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have or not col.nullable:
+                    continue
+                ddl = col.type.compile(dialect=engine.dialect)
+                conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {ddl}'))
+                added.append(f"{table.name}.{col.name}")
+                if col.unique:
+                    conn.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{table.name}_{col.name} "
+                                      f"ON {table.name} ({col.name})"))
+    return added
+
+
+@contextmanager
+def session_scope(engine: Engine):
+    session = sessionmaker(engine, expire_on_commit=False)()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def to_utc_index(idx: pd.Index) -> pd.DatetimeIndex:
+    """모든 시각은 UTC 로 통일한다 (SQLite 는 tz 정보를 잃으므로 naive=UTC 로 간주)."""
+    idx = pd.DatetimeIndex(idx)
+    return idx.tz_localize("UTC") if idx.tz is None else idx.tz_convert("UTC")
+
+
+def _naive_utc(ts) -> object:
+    return ts.astimezone(UTC).replace(tzinfo=None) if ts.tzinfo else ts
+
+
+def upsert_bars(session: Session, symbol: str, bars: pd.DataFrame, interval: str, source: str) -> int:
+    """(symbol, interval, ts) 기준으로 없는 봉만 추가하고, 있으면 값을 갱신한다."""
+    if bars.empty:
+        return 0
+    bars = bars.set_axis(to_utc_index(bars.index))
+    existing = {
+        _naive_utc(b.ts): b
+        for b in session.scalars(
+            select(PriceBar).where(
+                PriceBar.symbol == symbol,
+                PriceBar.interval == interval,
+                PriceBar.ts >= bars.index.min().to_pydatetime(),
+                PriceBar.ts <= bars.index.max().to_pydatetime(),
+            )
+        )
+    }
+    new_rows = []
+    for ts, o, h, lo, c, v in zip(bars.index, bars["open"], bars["high"], bars["low"], bars["close"],
+                                  bars["volume"], strict=True):
+        py_ts = ts.to_pydatetime()
+        values = dict(open=float(o), high=float(h), low=float(lo), close=float(c), volume=float(v))
+        bar = existing.get(_naive_utc(py_ts))
+        if bar is None:
+            new_rows.append(dict(symbol=symbol, interval=interval, ts=py_ts, source=source, **values))
+        else:  # 수정주가는 새 분할이 생기면 과거 값이 바뀐다 → 갱신 (1차 소스가 2차로 채운 날을 덮어쓴다)
+            for k, val in values.items():
+                setattr(bar, k, val)
+            bar.source = source
+    if new_rows:
+        session.execute(insert(PriceBar), new_rows)  # 대량 삽입
+    return len(new_rows)
+
+
+def load_bars(session: Session, symbols: Iterable[str], interval: str = "1d") -> dict[str, pd.DataFrame]:
+    """종목별 일봉. 컬럼만 묶음으로 읽는다 (ORM 객체 14만 개를 만들지 않음 → 전 종목 로딩이 몇 배 빠름). 순서는 symbols 순."""
+    syms = list(dict.fromkeys(symbols))
+    out: dict[str, pd.DataFrame] = {}
+    if not syms:
+        return out
+    cols = ["ts", "open", "high", "low", "close", "volume"]
+    groups: dict[str, list] = {}
+    for i in range(0, len(syms), 200):  # IN 절 크기 제한 (SQLite 변수 한도)
+        chunk = syms[i:i + 200]
+        rows = session.execute(
+            select(PriceBar.symbol, PriceBar.ts, PriceBar.open, PriceBar.high, PriceBar.low, PriceBar.close, PriceBar.volume)
+            .where(PriceBar.symbol.in_(chunk), PriceBar.interval == interval)
+            .order_by(PriceBar.symbol, PriceBar.ts)
+        ).all()
+        for r in rows:
+            groups.setdefault(r[0], []).append(r[1:])
+    for symbol in syms:
+        g = groups.get(symbol)
+        if not g:
+            continue
+        df = pd.DataFrame(g, columns=cols).set_index("ts")
+        df.index = to_utc_index(df.index)
+        out[symbol] = df
+    return out
+
+
+def recent_adv(session: Session, symbols: Iterable[str], n: int = 20, interval: str = "1d") -> dict[str, float]:
+    """종목별 최근 n 봉 평균 거래대금 (종가 × 거래량). 유동성 한도용 — 전체 이력을 읽지 않는다."""
+    out: dict[str, float] = {}
+    for symbol in set(symbols):
+        rows = session.execute(select(PriceBar.close, PriceBar.volume).where(
+            PriceBar.symbol == symbol, PriceBar.interval == interval).order_by(PriceBar.ts.desc()).limit(n)).all()
+        vals = [c * v for c, v in rows if c and v]
+        if vals:
+            out[symbol] = sum(vals) / len(vals)
+    return out
+
