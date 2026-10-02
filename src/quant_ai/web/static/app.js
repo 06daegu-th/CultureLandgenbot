@@ -955,7 +955,7 @@ function orderSheetView(r) {
 // ------------------------------------------------------------ 뷰: 실데이터 연구
 async function viewResearch(el) {
   const r = await api("/api/research");
-  if (r.kind === "lab") return viewLab(el, r);
+  if (r.kind === "lab") return viewLabResult(el, r);
   if (!r.trials) { el.innerHTML = card("실데이터 연구", empty("리포트 없음 — quant-ai research krx --marcap-dir ... 실행")); return; }
   const f2 = (v) => v == null ? "-" : Number(v).toFixed(2);
   const rows = r.trials.map((t) => { const s = t.metrics.strategy, p = t.metrics.prediction; return `<tr class="${t.trial.name === r.best ? "" : ""}">
@@ -988,7 +988,7 @@ async function viewResearch(el) {
   ]);
 }
 
-function viewLab(el, r) {
+function viewLabResult(el, r) {
   const f2 = (v) => v == null ? "-" : Number(v).toFixed(2);
   const pc = (v) => v == null ? "-" : (v * 100).toFixed(1) + "%";
   const row = (x) => { const d = x.dev.strategy, h = x.holdout.strategy, chosen = x.name === r.chosen; return `<tr>
@@ -1092,7 +1092,7 @@ async function render() {
   const d = S.data;
   if (!d) { el.innerHTML = skeleton(); return; }
   try {
-    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); todayCard(el).then(() => osHomeBrief(el)).then(() => weeklyCard(el, "#home-brief")); applyHomeLayout(el); }
+    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); homeOneLine(el); todayCard(el).then(() => osHomeBrief(el)).then(() => weeklyCard(el, "#home-brief")); applyHomeLayout(el); }
     else if (S.view === "analysis") await viewAnalysis(el);
     else if (S.view === "market") {
       el.innerHTML = viewMarket(d);

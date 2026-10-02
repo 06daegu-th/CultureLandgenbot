@@ -273,8 +273,39 @@ def overlay(app, symbol: str, days: int = 260) -> dict:
               "title": t_[:60], "tone": tone(sv)} for t, t_, sv in news]
     marks += [{"date": str(d), "kind": "disclosure", "title": t_[:60], "important": any(k in t_ for k in IMPORTANT_DISC)} for d, t_ in discs]
     marks += [{"date": d, "kind": "earnings", "title": "실적 발표"} for d in sorted(earn) if d >= first]
+    marks += big_moves(c)
+    marks += ai_changes(app, symbol, start)
     return {"symbol": symbol, "last": last, "lines": [x for x in lines if x.get("price")], "marks": marks,
             "note": "지지/저항: 최근 120거래일 고점·저점이 몰린 가격대 (횟수가 많을수록 강함) — 예측이 아니라 참고선"}
+
+
+def big_moves(c: pd.Series, k: float = 2.5, floor: float = 0.05) -> list[dict]:
+    """급등락: 하루 등락이 ±5% 이상 그리고 직전 60일 변동성의 2.5배 이상 (변동성이 큰 종목은 더 큰 움직임만)."""
+    r = c.pct_change()
+    sd = r.rolling(60, min_periods=20).std().shift(1)
+    out = []
+    for t, x in r.items():
+        s_ = sd.get(t)
+        if pd.notna(x) and abs(x) >= floor and (pd.isna(s_) or abs(x) >= k * s_):
+            out.append({"date": str(pd.Timestamp(t).date()), "kind": "move", "chg": round(float(x), 4),
+                        "title": f"{'급등' if x > 0 else '급락'} {x:+.1%}"})
+    return out[-30:]
+
+
+def ai_changes(app, symbol: str, start) -> list[dict]:
+    """AI 합의 신호가 바뀐 날 (HOLD→BUY 등) — 그날 판단 기록 그대로 (나중에 고친 값 아님)."""
+    from .data.db import session_scope
+    from .data.models import ConsensusRecord
+    with session_scope(app.engine) as s:
+        rows = s.execute(select(ConsensusRecord.as_of, ConsensusRecord.action, ConsensusRecord.prob_up)
+                         .where(ConsensusRecord.symbol == symbol, ConsensusRecord.as_of >= start).order_by(ConsensusRecord.as_of)).all()
+    out, prev = [], None
+    for at, act, p in rows:
+        if prev is not None and act != prev:
+            out.append({"date": str(_aware(at).astimezone(KST).date()), "kind": "ai_change", "from": prev, "to": act,
+                        "title": f"AI {prev}→{act} ({p:.0%})"})
+        prev = act
+    return out[-20:]
 
 
 # ------------------------------------------------------------------ 뉴스·공시 요약 v2

@@ -107,7 +107,11 @@ def market_map(app, now: datetime | None = None) -> dict:
     bars, bench, _ = app.market_data()
     sectors = sector_map(app.engine)
     with session_scope(app.engine) as s:
-        names = {i.symbol: i.name for i in s.scalars(select(Instrument))}
+        insts = list(s.scalars(select(Instrument)))
+        names = {i.symbol: i.name for i in insts}
+        for i in insts:  # WICS·Yahoo 업종이 없으면 종목 정보의 업종
+            if i.sector and not sectors.get(i.symbol):
+                sectors[i.symbol] = i.sector
         recent = [(a.published_at, a.title, a.symbols or [], a.sentiment or 0.0) for a in s.scalars(
             select(NewsArticle).where(NewsArticle.published_at >= now - timedelta(days=4)).order_by(NewsArticle.published_at.desc()).limit(3000))]
     tiles = []
@@ -121,6 +125,15 @@ def market_map(app, now: datetime | None = None) -> dict:
                       "above20": bool(c.iloc[-1] > c.iloc[-20:].mean()), "value": val, "date": str(pd.Timestamp(b.index[-1]).date())})
     if not tiles:
         return {"tiles": [], "sectors": [], "message": "국내 일봉이 없습니다 (./run.sh data)"}
+    latest = max(t["date"] for t in tiles)
+    n_stale = sum(1 for t in tiles if t["date"] != latest)
+    tiles = [t for t in tiles if t["date"] == latest]  # 마지막 거래일 봉이 없는 종목(거래정지·상장폐지·수집 누락)은 빼고 따로 센다
+    sector_note = None
+    if all(t["sector"] == "미분류" for t in tiles):  # 업종 정보가 하나도 없으면 거래대금 순위로 묶는다 (정직하게 표시)
+        ranked = sorted(tiles, key=lambda t: -t["value"])
+        for k, t in enumerate(ranked):
+            t["sector"] = "거래대금 상위 30" if k < 30 else "31~100위" if k < 100 else "그 외"
+        sector_note = "업종 정보가 없어(WICS 미수집) 거래대금 순위로 묶었습니다 — 네트워크가 되면 업종으로 바뀝니다"
     tot = sum(t["value"] for t in tiles) or 1
     for t in tiles:
         t["weight"] = round(t["value"] / tot, 5)
@@ -144,12 +157,12 @@ def market_map(app, now: datetime | None = None) -> dict:
     idx = None
     if bench is not None and len(bench) > 21:
         bc = bench["close"].astype(float)
-        idx = {"name": "KOSPI", "last": round(float(bc.iloc[-1]), 2), "chg": round(float(bc.iloc[-1] / bc.iloc[-2] - 1), 4),
+        idx = {"name": names.get("KOSPI") or "KOSPI", "last": round(float(bc.iloc[-1]), 2), "chg": round(float(bc.iloc[-1] / bc.iloc[-2] - 1), 4),
                "chg20": round(float(bc.iloc[-1] / bc.iloc[-21] - 1), 4), "spark": [round(float(x), 2) for x in bc.iloc[-60:]]}
     mood = ("상승 우세" if up > down * 1.5 else "하락 우세" if down > up * 1.5 else "혼조")
     return {"tiles": sorted(tiles, key=lambda t: -t["value"]), "sectors": sec_rows, "breadth": {"up": up, "down": down, "flat": len(tiles) - up - down,
             "above20": round(sum(t["above20"] for t in tiles) / len(tiles), 3), "mood": mood},
-            "gainers": gain, "losers": lose, "index": idx, "date": tiles[0]["date"], "as_of": label(now),
+            "gainers": gain, "losers": lose, "index": idx, "date": latest, "as_of": label(now), "n_stale": n_stale, "sector_note": sector_note,
             "note": "타일 크기 = 20일 평균 거래대금 · 색 = 마지막 거래일 등락 · '왜 움직였나'는 가장 가까운 뉴스(인과 아님)"}
 
 

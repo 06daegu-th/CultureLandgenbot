@@ -45,7 +45,8 @@ def after_tax(gain_krw: float, ytd_gain_krw: float = 0.0) -> dict:
 
 
 def sheet(app, holdings: dict[str, int] | None = None, cash_usd: float = 0.0, cash_krw: float = 0.0,
-          targets: dict[str, float] | None = None, avg_cost: dict[str, float] | None = None, ytd_gain_krw: float = 0.0) -> dict:
+          targets: dict[str, float] | None = None, avg_cost: dict[str, float] | None = None, ytd_gain_krw: float = 0.0,
+          prices: dict[str, float] | None = None) -> dict:
     holdings = {k.upper(): int(v) for k, v in (holdings or {}).items() if int(v) > 0}
     bars, _ = app._all_bars()
     if targets is None:  # 시스템의 미국 가상 장부 비중을 따라간다
@@ -62,6 +63,8 @@ def sheet(app, holdings: dict[str, int] | None = None, cash_usd: float = 0.0, ca
         return {"error": "목표 비중이 없습니다 — 미국 가상 장부가 비어 있거나(먼저 미국 사이클 실행) 목표를 직접 넣으세요", "rows": []}
     syms = sorted(set(targets) | set(holdings))
     price = {s: float(bars[s]["close"].iloc[-1]) for s in syms if s in bars and len(bars[s])}
+    manual = {k.upper(): float(v) for k, v in (prices or {}).items() if float(v) > 0}
+    price |= manual  # 직접 넣은 가격이 우선 (지금 앱에서 보이는 가격)
     missing = [s for s in syms if s not in price]
     fx, fx_src = fx_rate(app)
     comm, spread = _bps("QUANT_US_COMMISSION_BPS", 25), _bps("QUANT_FX_SPREAD_BPS", 25)
@@ -95,12 +98,14 @@ def sheet(app, holdings: dict[str, int] | None = None, cash_usd: float = 0.0, ca
     for i, r in enumerate([r for r in rows if r["order_qty"]], 1):
         w.writerow([i, r["symbol"], r["side"], abs(r["order_qty"]), r["price"], r["amount_usd"]])
     return {"source": src, "fx": fx, "fx_source": fx_src, "equity_usd": round(equity, 2), "rows": rows, "missing": missing,
+            "price_source": "직접 입력" if manual and set(manual) >= set(syms) else "마지막 종가" + (" + 직접 입력" if manual else ""),
+            "missing_hint": "미국 시세가 없습니다 — '가격 직접 입력' 칸에 `종목,가격` 을 넣거나 미국 데이터 수집 후 다시" if missing else None,
             "summary": {"sell_usd": round(sells, 2), "buy_usd": round(buys, 2), "need_usd": round(need_usd, 2), "need_krw": round(need_usd * fx),
                         "fx_cost_krw": round(fx_cost_krw), "commission_usd": round(sum(r["commission_usd"] for r in rows), 2),
                         "realized_gain_krw": round(gain), "tax": tax},
             "csv": out.getvalue(),
             "note": ("KIS 해외 주문 API 연동 전 — 이 표를 보고 증권사 앱에서 직접 주문하세요 (지정가 권장 · 미국 정규장 23:30~06:00 KST, 서머타임 22:30~05:00) · "
-                     f"세금은 추정(양도세 {TAX_RATE:.0%}, 연 {TAX_DEDUCTION:,.0f}원 공제 — 세법 확인 필요) · 가격은 마지막 종가")}
+                     f"세금은 추정(양도세 {TAX_RATE:.0%}, 연 {TAX_DEDUCTION:,.0f}원 공제 — 세법 확인 필요) · 가격은 마지막 종가 또는 직접 입력값")}
 
 
 __all__ = ["sheet", "after_tax", "fx_rate", "TAX_RATE", "TAX_DEDUCTION"]

@@ -1098,3 +1098,13 @@ kbd { font: 600 11px "JetBrains Mono", monospace; padding: 1px 6px; border-radiu
 .sell-row td:first-child { box-shadow: inset 3px 0 0 var(--down); }
 #us-out textarea, .card label textarea, .card label input { width: 100%; box-sizing: border-box; margin-top: 4px; font-family: inherit; }
 a.dd { text-decoration: none; color: inherit; }
+
+.chat-links { margin-top: 8px; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.chat-fol { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+.fol-q { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--accent, #3b82f6); cursor: pointer; }
+.fol-q:hover { background: var(--panel-3); }
+
+.oneline { display: flex; gap: 6px 18px; flex-wrap: wrap; align-items: center; padding: 10px 14px; margin-bottom: 12px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--dim); }
+.oneline.lv-warn { border-left-color: #f59e0b; } .oneline.lv-bad { border-left-color: var(--down); } .oneline.lv-ok { border-left-color: #22c55e; }
+.oneline .ol-it { text-decoration: none; color: inherit; } .oneline .ol-at { margin-left: auto; }

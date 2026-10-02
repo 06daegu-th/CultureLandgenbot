@@ -259,3 +259,41 @@ def weekly_alert(app, now: datetime | None = None) -> int:
     r = push(app.engine, "event", f"이번 주 일정 {w['n']}건", body, level="info", link="#calendar",
              dedupe=f"weekly_schedule:{k.isocalendar().year}-{k.isocalendar().week}")
     return int(r is not None)
+
+
+def oneline(app, mode: str = "paper", now: datetime | None = None) -> dict:
+    """홈 맨 위 한 줄: 시장 분위기 · 가장 가까운 큰 일정 · 내 포트폴리오 위험 · AI 신뢰 — 각 칸은 해당 화면으로 연결."""
+    from . import aitrack
+    from .engines.market_intel import market_state
+    now = now or datetime.now(UTC)
+    out = []
+    try:
+        bars, bench, _ = app.market_data()
+        ms = market_state(bench, bars)
+        mood = {"RISK ON": ("위험 선호", "good"), "RISK OFF": ("위험 회피", "bad"), "NEUTRAL": ("중립", "warn")}.get(ms["label"], ("-", "warn"))
+        out.append({"key": "market", "label": "시장", "text": f"{mood[0]} ({ms['score']}점 · {ms['type']})" if not ms.get("insufficient") else "지수 데이터 부족",
+                    "level": mood[1] if not ms.get("insufficient") else "warn", "link": "#market"})
+    except Exception as e:  # noqa: BLE001 - 한 칸이 실패해도 나머지는 보인다
+        out.append({"key": "market", "label": "시장", "text": f"계산 실패: {type(e).__name__}", "level": "warn", "link": "#market"})
+    try:
+        w = weekly_schedule(app, now, days=3)
+        big = next((e for e in w["rows"] if e["scope"] == "시장" or e["kind"] in ("earnings", "ex_div")), None)
+        out.append({"key": "event", "label": "주요 일정", "text": f"{big['d_label']} {big['title']}" if big else "3일 안 큰 일정 없음",
+                    "level": "warn" if big and big["d_day"] <= 1 else "ok", "link": "#calendar"})
+    except Exception as e:  # noqa: BLE001
+        out.append({"key": "event", "label": "주요 일정", "text": f"계산 실패: {type(e).__name__}", "level": "warn", "link": "#calendar"})
+    try:
+        r = risk_simple(app, mode)
+        out.append({"key": "risk", "label": "내 위험", "text": r["headline"] + (f" · {r['rising'][0]}" if r.get("rising") else ""),
+                    "level": {"ok": "ok", "warn": "warn", "bad": "bad"}.get(r["level"], "warn"), "link": "#pos"})
+    except Exception as e:  # noqa: BLE001
+        out.append({"key": "risk", "label": "내 위험", "text": f"계산 실패: {type(e).__name__}", "level": "warn", "link": "#pos"})
+    t = aitrack.report(app)
+    lv = t["trust"].get("level", "NO_DATA")
+    dem = bool((t.get("demotion") or {}).get("on"))
+    out.append({"key": "ai", "label": "AI 신뢰", "text": ("SHADOW 강등 — 주문에 안 씀" if dem else
+                                                        {"UNTRUSTED": "기준 미달 — 참고만", "WATCH": "관찰 중", "CANDIDATE": "후보 (소액 위성만)",
+                                                         "NO_DATA": "채점 기록 부족"}.get(lv, lv)),
+                "level": "bad" if dem or lv == "UNTRUSTED" else "ok" if lv == "CANDIDATE" else "warn", "link": "#scorecard"})
+    worst = max((["ok", "good", "warn", "bad"].index(x["level"]) for x in out), default=0)
+    return {"items": out, "level": ["ok", "ok", "warn", "bad"][worst], "as_of": label(now)}

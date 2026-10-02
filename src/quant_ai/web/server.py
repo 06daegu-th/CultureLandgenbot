@@ -187,6 +187,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.replay(arg("date", "")[:10]))
                     if url.path == "/api/weekly":
                         return self._json(api.weekly())
+                    if url.path == "/api/oneline":
+                        return self._json(api.oneline(arg("mode", "") or None))
                     if url.path == "/api/budget":
                         return self._json(api.budget(arg("principal", "")[:15], arg("max_loss", "")[:15]))
                     if url.path == "/api/server":

@@ -12,10 +12,52 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
+import pandas as pd
 from sqlalchemy import select
 
 from . import ops
 from .asof import label
+
+LOW_ADV_KRW = 3e9  # 20일 평균 거래대금 30억원 미만 = 저유동
+SEG_LABEL = {"low_liq": "거래량 적은 종목 (20일 평균 거래대금 30억 미만)", "big_move": "급등락 날 (그날 ±5% 이상)",
+             "vi": "VI 가능성 (그날 고가·저가가 전일 대비 ±10% 이상 — 근사)", "normal": "보통"}
+
+
+def _segment(b: pd.DataFrame | None, at) -> str:
+    """주문 시점의 상황 분류 — 일봉으로 근사 (VI 발동 기록은 KIS 실시간으로만 정확히 알 수 있음)."""
+    if b is None or len(b) < 3 or at is None:
+        return "normal"
+    idx = pd.DatetimeIndex(b.index)
+    t = pd.Timestamp(at)
+    t = t.tz_convert(idx.tz) if idx.tz is not None and t.tzinfo else t.tz_localize(idx.tz) if idx.tz is not None else t.tz_localize(None)
+    i = int(idx.searchsorted(t.normalize(), side="right")) - 1
+    if i < 1:
+        return "normal"
+    prev = float(b["close"].iloc[i - 1])
+    hi = float(b["high"].iloc[i]) if "high" in b else float(b["close"].iloc[i])
+    lo = float(b["low"].iloc[i]) if "low" in b else float(b["close"].iloc[i])
+    if prev and max(hi / prev - 1, 1 - lo / prev) >= 0.10:
+        return "vi"
+    if prev and abs(float(b["close"].iloc[i]) / prev - 1) >= 0.05:
+        return "big_move"
+    adv = float((b["close"].astype(float) * b["volume"].astype(float)).iloc[max(0, i - 20):i].mean()) if "volume" in b else None
+    if adv is not None and adv < LOW_ADV_KRW:
+        return "low_liq"
+    return "normal"
+
+
+def segments(app, filled: list, slip: list[float]) -> list[dict]:
+    """슬리피지를 상황별로 따로 (저유동 · 급등락 · VI 근사 · 보통) — 평균 하나로 뭉개면 위험한 날의 비용이 가려진다."""
+    if not filled:
+        return []
+    bars, _ = app._all_bars()
+    groups: dict[str, list[float]] = {}
+    for o, x in zip(filled, slip, strict=False):
+        seg = _segment(bars.get(o.symbol), o.created_at) if o.symbol[:1].isdigit() else "normal"
+        groups.setdefault(seg, []).append(x)
+    return [{"key": k, "label": SEG_LABEL[k], "n": len(v), "mean_bps": round(float(np.mean(v)), 2),
+             "p90_bps": round(float(np.percentile(v, 90)), 2) if len(v) >= 5 else None, "enough": len(v) >= 20}
+            for k, v in sorted(groups.items(), key=lambda kv: list(SEG_LABEL).index(kv[0]))]
 
 
 def costs(app, days: int = 90) -> dict:
@@ -28,7 +70,7 @@ def costs(app, days: int = 90) -> dict:
     with session_scope(app.engine) as s:
         for mode in ("live", "shadow", "paper"):
             orders = s.execute(select(OrderRecord.id, OrderRecord.side, OrderRecord.qty, OrderRecord.filled_qty, OrderRecord.ref_price,
-                                      OrderRecord.avg_price, OrderRecord.status)
+                                      OrderRecord.avg_price, OrderRecord.status, OrderRecord.symbol, OrderRecord.created_at)
                                .where(OrderRecord.mode == mode, OrderRecord.created_at >= since)).all()
             if not orders:
                 continue
@@ -45,7 +87,7 @@ def costs(app, days: int = 90) -> dict:
                         "n_filled": len(filled), "slippage_bps": round(float(np.mean(slip)), 2) if slip else None,
                         "slippage_p90_bps": round(float(np.percentile(slip, 90)), 2) if len(slip) >= 5 else None,
                         "commission_bps": round(float(np.mean(comm)), 2) if comm else None, "n_sells": len(sells),
-                        "measured": mode == "live",
+                        "measured": mode == "live", "segments": segments(app, filled, slip),
                         "roundtrip_bps": round(2 * (float(np.mean(slip)) if slip else c.slippage_bps) + 2 * (float(np.mean(comm)) if comm else c.commission_bps)
                                                + c.sell_tax_bps, 1)})
     model = ops.get_state(app.engine, "slippage_model").get("model") or {}

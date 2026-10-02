@@ -298,13 +298,15 @@ async function osOverlay(sym) {
       seen.add(key);
       if (m.kind === "earnings") mk.push({ time: t, position: "aboveBar", shape: "square", color: "#a855f7", text: "실적" });
       else if (m.kind === "disclosure" && m.important) mk.push({ time: t, position: "aboveBar", shape: "square", color: "#f59e0b", text: "공시" });
+      else if (m.kind === "move") mk.push({ time: t, position: m.chg > 0 ? "aboveBar" : "belowBar", shape: m.chg > 0 ? "arrowUp" : "arrowDown", color: m.chg > 0 ? "#f0474f" : "#3b8cff", text: `${m.chg > 0 ? "+" : ""}${(m.chg * 100).toFixed(0)}%` });
+      else if (m.kind === "ai_change") mk.push({ time: t, position: "belowBar", shape: "arrowUp", color: m.to === "BUY" ? "#22c55e" : m.to === "SELL" ? "#ef4444" : "#94a3b8", text: `AI ${m.to}` });
       else if (m.kind === "news" && m.tone !== "중립") mk.push({ time: t, position: "belowBar", shape: "circle", color: m.tone === "긍정" ? "#22c55e" : "#ef4444", text: "" });
     });
     mk.sort((a, b) => a.time - b.time);
     try { s.setMarkers(mk); } catch { /* 표시 실패는 무시 */ }
     const leg = document.createElement("div");
     leg.className = "chart-legend xs";
-    leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#22c55e">● 긍정</span>/<span style="color:#ef4444">●</span> 부정 뉴스 <span class="dim">· ${esc(o.note)}</span>`;
+    leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#22c55e">● 긍정</span>/<span style="color:#ef4444">●</span> 부정 뉴스 <span style="color:#f0474f">▲</span>/<span style="color:#3b8cff">▼</span> 급등락 <span style="color:#94a3b8">↑ AI 신호 변화</span> <span class="dim">· ${esc(o.note)}</span>`;
     el.parentElement?.appendChild(leg);
     return;
   }

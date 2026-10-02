@@ -338,14 +338,16 @@ const CHAT = {
     return this._sid;
   },
 };
-const SUGGEST = ["하이닉스 지금 상태 어때?", "엔비디아 어때?", "오늘 시장 어때?", "서버 상태 알려줘", "DB 정리해줘", "AI 성과 검증 결과", "킬스위치 상태", "내 포트폴리오"];
-const TOOL_LABEL = { search_stocks: "🔎 종목 검색", stock_overview: "📈 종목 조회", market_overview: "🌐 시장", portfolio: "💼 포트폴리오", net_alpha: "🏆 Net Alpha", safety_status: "🛡️ 안전 점검", ai_performance: "🎯 AI 성적", server_status: "🖥️ 서버", db_status: "🗄️ DB", propose_action: "▶ 실행 제안" };
+const SUGGEST = ["하이닉스 지금 상태 어때?", "엔비디아 어때?", "오늘 많이 오른 종목은?", "오늘 뉴스 요약해줘", "AI 믿어도 돼?", "이번 주 일정", "왜 안 샀어?", "내 투자 한도", "DART 키 왜 안돼?", "어제 무슨 일 있었어?"];
+const TOOL_LABEL = { search_stocks: "🔎 종목 검색", stock_overview: "📈 종목 조회", market_overview: "🌐 시장", portfolio: "💼 포트폴리오", net_alpha: "🏆 Net Alpha", safety_status: "🛡️ 안전 점검", ai_performance: "🎯 AI 성적", server_status: "🖥️ 서버", db_status: "🗄️ DB", propose_action: "▶ 실행 제안",
+  ai_trust: "🧪 AI 신뢰", keys_status: "🔑 키 진단", news_board: "📰 뉴스 보드", market_map: "🗺️ 증시 지도", budget: "💰 투자 한도",
+  event_strategy: "📊 이벤트 전략", why_no_trade: "⛔ 거래 안 한 이유", weekly_schedule: "📅 이번 주 일정", replay_day: "⏪ 그날 재현" };
 
 function md(text) {
   const lines = esc(text || "").split("\n");
   let out = "", list = false, table = [];
   const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/#(analysis|alpha|safety|lab|server|risk|portfolio|journal)(\/[A-Za-z0-9.\-]+)?/g, '<a class="link" href="#$1$2">#$1$2</a>');
+    .replace(/#(analysis|alpha|safety|lab|server|risk|portfolio|journal|news|map|budget|pead|replay|notrade|calendar|datahealth|scorecard|pos|market|usorder|ai)(\/[A-Za-z0-9.\-]+)?(?![A-Za-z])/g, '<a class="link" href="#$1$2">#$1$2</a>');
   const flushTable = () => {
     if (!table.length) return;
     const rows = table.filter((r) => !/^\|?\s*:?-{2,}/.test(r)).map((r) => r.replace(/^\||\|$/g, "").split("|").map((c) => inline(c.trim())));
@@ -372,7 +374,9 @@ function chatMsgHtml(m) {
   const tools = (m.tools || []).map((t) => `<span class="tchip ${t.ok === false ? "bad" : ""}">${TOOL_LABEL[t.tool] || esc(t.tool)}${t.args?.symbol ? " · " + esc(t.args.symbol) : ""}</span>`).join("");
   const cards = (m.cards || []).map((c) => `<a class="stock-card" href="#analysis/${esc(c.symbol)}"><div><b>${esc(c.name)}</b> <span class="xs dim">${esc(c.symbol)}</span><div class="num">${c.currency === "USD" ? "$" + num(c.last, 2) : num(c.last) + "원"} <span class="${sgn(c.ret_1d)}">${pp(c.ret_1d)}</span></div><div class="xs dim">${esc(c.date || "")} 종가</div></div><div class="sc-spark">${spark(c.spark, 120, 36)}</div></a>`).join("");
   const acts = (m.actions || []).map((a) => `<button class="act-btn ${a.danger ? "danger" : ""}" data-act="${esc(a.action)}" data-sym="${esc(a.symbol || "")}" title="${esc(a.reason || "")}">▶ ${esc(a.label)}</button>`).join("");
-  return `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble">${tools ? `<div class="tchips">${tools}</div>` : ""}${md(m.content)}${cards ? `<div class="cards">${cards}</div>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}${m.model ? `<div class="xs dim" style="margin-top:6px">${esc(m.model)}</div>` : ""}</div></div>`;
+  const links = (m.links || []).map((l) => `<a class="chip xs" href="${esc(l.href)}">↗ ${esc(l.label)}</a>`).join(" ");
+  const fol = (m.followups || []).map((q) => `<button class="fol-q">${esc(q)}</button>`).join("");
+  return `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble">${tools ? `<div class="tchips">${tools}</div>` : ""}${md(m.content)}${cards ? `<div class="cards">${cards}</div>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}${links ? `<div class="chat-links xs muted">근거 화면 ${links}</div>` : ""}${fol ? `<div class="chat-fol">${fol}</div>` : ""}${m.model ? `<div class="xs dim" style="margin-top:6px">${esc(m.model)}</div>` : ""}</div></div>`;
 }
 
 function chatShell(id, full = false) {
@@ -398,6 +402,7 @@ async function chatLoad(root) {
 }
 
 function bindChatActs(root) {
+  root.querySelectorAll(".fol-q").forEach((b) => b.onclick = () => chatSend(root, b.textContent));
   root.querySelectorAll(".act-btn").forEach((b) => b.onclick = async () => {
     const a = b.dataset.act;
     if (b.classList.contains("danger") && !confirm("실행할까요? (DB 정리는 오래된 로그만 지우며 주문·판단 기록은 보존합니다)")) return;
@@ -419,7 +424,7 @@ async function chatSend(root, text) {
   try {
     const r = await post("/api/chat", { message: text, sid: CHAT.sid });
     body.querySelector(".typing")?.remove();
-    body.insertAdjacentHTML("beforeend", chatMsgHtml({ role: "assistant", content: r.answer, tools: r.tools_used, cards: r.cards, actions: r.actions, model: r.model }));
+    body.insertAdjacentHTML("beforeend", chatMsgHtml({ role: "assistant", content: r.answer, tools: r.tools_used, cards: r.cards, actions: r.actions, model: r.model, links: r.links, followups: r.followups }));
   } catch (e) {
     body.querySelector(".typing")?.remove();
     body.insertAdjacentHTML("beforeend", `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble"><div class="veto">${esc(e.message)}</div></div></div>`);

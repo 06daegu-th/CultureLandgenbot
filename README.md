@@ -20,7 +20,12 @@ AI 에게 주문 권한은 없다. 신호는 반드시 **리스크 게이트**�
 국내·미국 모두 이 **증명 체인 6단계**로 판정해 홈 최상단에 보여준다.
 자동 킬스위치 10개 조건(→ HALTED), champion 자동 롤백, 사이트 채팅 AI 도 들어 있다.
 
-- **현황·결과·한계: [docs/PLATFORM_STATUS.md](docs/PLATFORM_STATUS.md)**
+> **v17 사용 원칙 — AI 는 '실수 방지 도구'다.** 먼저 `#budget` 에서 원금·최대 손실을 정하면 모든 한도가 자동으로 정해지고,
+> 누적 손실이 그 한도에 닿으면 전체 정지한다. 대부분은 코어(지수형)로, AI 신호는 소액 위성에서 6개월 이상 전진 기록이 기준을 넘을 때만.
+> AI 성적이 3일 연속 기준 미달이면 시스템이 스스로 주문에서 뺀다. 미국 주식은 아직 **수동 주문표**(`#usorder`)다.
+> 뉴스는 '읽는 목록' 대신 **뉴스 보드**(`#news`)·**증시 지도**(`#map`)·**그날 재현**(`#replay`)으로 본다.
+
+- **현황·결과·한계: [docs/PLATFORM_STATUS.md](docs/PLATFORM_STATUS.md)** (V17: 8-8장)
 - **지금 할 일과 다음 개선: [docs/ROADMAP.md](docs/ROADMAP.md)**
 
 ```text
@@ -191,7 +196,7 @@ python -m quant_ai.checklist         # 완성 기준 체크리스트 (docs/FINAL
 
 ## 테스트
 
-- `pytest` — 테스트 375개 · 건너뜀 0개 (PostgreSQL 이 설치돼 있으면 임시 DB 를 직접 띄워 통합 테스트까지)
+- `pytest` — 테스트 381개 · 건너뜀 0개 (PostgreSQL 이 설치돼 있으면 임시 DB 를 직접 띄워 통합 테스트까지)
 - 문서의 테스트 수가 실제와 다르면 테스트가 실패한다 (`tests/test_docs_counts.py`) · CI 는 건너뜀이 하나라도 있으면 실패 (`QUANT_NO_SKIP=1`)
 
 ## 안전 원칙

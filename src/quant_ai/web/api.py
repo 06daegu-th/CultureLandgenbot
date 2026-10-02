@@ -905,8 +905,11 @@ class DashboardAPI:
             cu, ck, yg = float(body.get("cash_usd") or 0), float(body.get("cash_krw") or 0), float(body.get("ytd_gain_krw") or 0)
         except (TypeError, ValueError):
             raise ValueError("현금·올해 실현 이익은 숫자로") from None
+        px = body.get("prices")
+        if isinstance(px, str):
+            px = dict(x.split(",", 1) for x in px.strip().splitlines() if "," in x)
         return sheet(self.app, nums(h, lambda v: int(float(v))), cu, ck, nums(t, float) if t else None,
-                     nums(body.get("avg_cost"), float) if body.get("avg_cost") else None, yg)
+                     nums(body.get("avg_cost"), float) if body.get("avg_cost") else None, yg, nums(px, float) if px else None)
 
     def replay(self, d: str) -> dict:
         from datetime import date as _date
@@ -917,6 +920,11 @@ class DashboardAPI:
         except ValueError:
             raise ValueError("날짜는 YYYY-MM-DD") from None
         return self._cached(f"replay:{dd}", 120, lambda: day(self.app, dd))
+
+    def oneline(self, mode: str | None = None) -> dict:
+        from ..center import oneline
+        m = self._mode(mode)
+        return self._cached(f"oneline:{m}", 60, lambda: oneline(self.app, m))
 
     def weekly(self) -> dict:
         from ..center import weekly_schedule

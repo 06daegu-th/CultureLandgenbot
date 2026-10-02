@@ -54,7 +54,7 @@ async function viewNewsBoard(el) {
 }
 
 // ------------------------------------------------------------ 증시 지도
-function heatColor(chg) {
+function mapColor(chg) {
   const c = Math.max(-0.05, Math.min(0.05, chg || 0)) / 0.05;  // ±5% 에서 최대
   const a = (0.18 + Math.abs(c) * 0.72).toFixed(2);
   return c >= 0 ? `rgba(240,71,79,${a})` : `rgba(59,140,255,${a})`;  // 한국식: 상승 빨강 · 하락 파랑
@@ -67,7 +67,7 @@ async function viewMarketMap(el) {
   m.tiles.forEach((t) => (bySec[t.sector] = bySec[t.sector] || []).push(t));
   const secs = m.sectors.filter((s) => bySec[s.sector]);
   const b = m.breadth;
-  const tile = (t) => `<a class="mm-t" href="#analysis/${esc(t.symbol)}" style="flex-grow:${Math.max(1, Math.round(Math.sqrt(t.weight) * 300))};background:${heatColor(t.chg)}" title="${esc(t.name)} ${P(t.chg, 2)} · 5일 ${P(t.chg5, 1)}">
+  const tile = (t) => `<a class="mm-t" href="#analysis/${esc(t.symbol)}" style="flex-grow:${Math.max(1, Math.round(Math.sqrt(t.weight) * 300))};background:${mapColor(t.chg)}" title="${esc(t.name)} ${P(t.chg, 2)} · 5일 ${P(t.chg5, 1)}">
     <b>${esc(t.name)}</b><span class="num">${P(t.chg, 1)}</span></a>`;
   const mover = (t) => `<a class="mv-it" href="#analysis/${esc(t.symbol)}"><b>${esc(t.name)}</b> <span class="num ${t.chg >= 0 ? "up" : "down"}">${P(t.chg, 1)}</span>
     ${t.news ? `<div class="xs muted">📰 ${esc(t.news.title)} <span class="dim">${esc(t.news.at)}</span></div>` : '<div class="xs dim">관련 뉴스 없음</div>'}</a>`;
@@ -76,9 +76,10 @@ async function viewMarketMap(el) {
     <div class="mm-head">${m.index ? `<div><div class="xs muted">${esc(m.index.name)}</div><div class="big num">${num(m.index.last, 2)}</div><div class="num ${m.index.chg >= 0 ? "up" : "down"}">${P(m.index.chg, 2)} <span class="xs dim">20일 ${P(m.index.chg20, 1)}</span></div></div><div>${miniSpark(m.index.spark, 160, 44)}</div>` : ""}
       <div><div class="xs muted">시장 분위기</div><div class="b">${esc(b.mood)}</div><div class="xs">상승 <span class="up">${b.up}</span> · 하락 <span class="down">${b.down}</span> · 보합 ${b.flat}</div></div>
       <div><div class="xs muted">20일선 위 종목</div><div class="b">${R(b.above20, 0)}</div><div class="hbar" style="width:120px;margin:4px 0"><i style="width:${b.above20 * 100}%"></i></div></div></div>
-    <div class="mm-legend xs"><span style="background:${heatColor(-0.05)}"></span>−5% <span style="background:${heatColor(-0.01)}"></span> <span style="background:${heatColor(0.01)}"></span> <span style="background:${heatColor(0.05)}"></span>+5%</div>
+    <div class="mm-legend xs"><span style="background:${mapColor(-0.05)}"></span>−5% <span style="background:${mapColor(-0.01)}"></span> <span style="background:${mapColor(0.01)}"></span> <span style="background:${mapColor(0.05)}"></span>+5%</div>
     <div class="mm-map">${secs.map((s) => `<div class="mm-sec" style="flex-grow:${Math.max(1, Math.round(s.weight * 100))}"><div class="mm-sh"><b>${esc(s.sector)}</b> <span class="num ${s.chg >= 0 ? "up" : "down"}">${P(s.chg, 1)}</span></div>
       <div class="mm-tiles">${bySec[s.sector].slice(0, 30).map(tile).join("")}</div></div>`).join("")}</div></div>
+  ${m.sector_note || m.n_stale ? `<div class="xs muted">${m.sector_note ? `ℹ️ ${esc(m.sector_note)} ` : ""}${m.n_stale ? `· 마지막 거래일 봉이 없는 ${m.n_stale}종목(거래정지·상장폐지·수집 누락)은 지도에서 뺐습니다` : ""}</div>` : ""}
   <div class="grid g-2">${card("많이 오른 종목 <span class='small dim'>가장 가까운 뉴스 = '왜' 후보</span>", m.gainers.map(mover).join(""))}${card("많이 내린 종목", m.losers.map(mover).join(""))}</div>
   <div class="xs dim">${esc(m.note)}</div>`;
 }
@@ -106,7 +107,7 @@ async function viewPead(el) {
 
 // ------------------------------------------------------------ 미국 주식 주문표 (수동 · 환전 · 세금)
 async function viewUSOrder(el) {
-  S.us = S.us || { holdings: "", targets: "", avg: "", cash_usd: "", cash_krw: "", ytd: "" };
+  S.us = S.us || { holdings: "", targets: "", avg: "", prices: "", cash_usd: "", cash_krw: "", ytd: "" };
   const u = S.us;
   el.innerHTML = `
   <div class="card"><div class="card-h"><h3>미국 주식 주문표 <span class="small dim">증권사 앱에서 그대로 따라 넣는 표 · 환전·수수료·양도세 추정 포함</span></h3></div>
@@ -115,6 +116,7 @@ async function viewUSOrder(el) {
       <label class="small">보유 (한 줄에 <code>종목,수량</code>)<textarea id="us-h" rows="5" placeholder="AAPL,10&#10;MSFT,3">${esc(u.holdings)}</textarea></label>
       <label class="small">목표 비중 (비우면 시스템 미국 가상 장부를 따라감)<textarea id="us-t" rows="5" placeholder="AAPL,0.3&#10;MSFT,0.3&#10;NVDA,0.4">${esc(u.targets)}</textarea></label>
       <label class="small">평균 단가 USD (매도 이익·세금 계산용)<textarea id="us-a" rows="5" placeholder="AAPL,150">${esc(u.avg)}</textarea></label></div>
+    <label class="small">가격 직접 입력 (선택 · 앱에서 보이는 지금 가격 <code>종목,가격</code> — 비우면 마지막 종가)<textarea id="us-p" rows="2" placeholder="AAPL,195.3">${esc(u.prices)}</textarea></label>
     <div class="grid g-3">
       <label class="small">달러 현금 (USD)<input id="us-cu" inputmode="decimal" value="${esc(u.cash_usd)}" placeholder="0"></label>
       <label class="small">원화 현금 (환전할 돈, 원)<input id="us-ck" inputmode="decimal" value="${esc(u.cash_krw)}" placeholder="0"></label>
@@ -123,12 +125,12 @@ async function viewUSOrder(el) {
   <div id="us-out"></div>`;
   const pairs = (s) => Object.fromEntries(s.split(/\n/).map((x) => x.split(",").map((y) => y.trim())).filter((x) => x.length === 2 && x[0] && x[1]));
   $("#us-go").onclick = async () => {
-    Object.assign(u, { holdings: $("#us-h").value, targets: $("#us-t").value, avg: $("#us-a").value, cash_usd: $("#us-cu").value, cash_krw: $("#us-ck").value, ytd: $("#us-y").value });
+    Object.assign(u, { holdings: $("#us-h").value, targets: $("#us-t").value, avg: $("#us-a").value, prices: $("#us-p").value, cash_usd: $("#us-cu").value, cash_krw: $("#us-ck").value, ytd: $("#us-y").value });
     const box = $("#us-out");
     box.innerHTML = skeleton();
     let r;
     try {
-      r = await post("/api/us-sheet", { holdings: pairs(u.holdings), targets: u.targets.trim() ? pairs(u.targets) : null, avg_cost: u.avg.trim() ? pairs(u.avg) : null,
+      r = await post("/api/us-sheet", { holdings: pairs(u.holdings), targets: u.targets.trim() ? pairs(u.targets) : null, avg_cost: u.avg.trim() ? pairs(u.avg) : null, prices: u.prices.trim() ? pairs(u.prices) : null,
         cash_usd: u.cash_usd, cash_krw: u.cash_krw, ytd_gain_krw: u.ytd });
     } catch (e) { r = { error: e.message }; }
     if (r.error) { box.innerHTML = card("", `<div class="veto">${esc(r.error)}</div>`); return; }
@@ -147,7 +149,8 @@ async function viewUSOrder(el) {
         <div class="xs">${t ? `실현 이익 ${num(t.gain_krw)}원 · 남은 공제 ${num(t.deduction_left)}원` : "매도 이익 없음 (평단을 넣으면 계산)"}</div></div></div>
     ${card(`주문 순서 <span class="small dim">매도 먼저 → 매수 · 환율 ${num(r.fx, 1)}원 (${esc(r.fx_source)}) · 목표 = ${esc(r.source)}</span>`,
       `<div class="scroll"><table class="tight"><thead><tr><th>종목</th><th>구분</th><th class="r">수량</th><th class="r">참고가</th><th class="r">금액</th><th class="r">수수료</th><th class="r">보유→목표</th><th class="r">목표 비중</th><th class="r">실현 이익</th></tr></thead><tbody>${rows}</tbody></table></div>
-      ${r.missing.length ? `<div class="xs warn-t">가격 없음(제외): ${r.missing.map(esc).join(", ")}</div>` : ""}`,
+      ${r.missing.length ? `<div class="xs warn-t">가격 없음(제외): ${r.missing.map(esc).join(", ")} — ${esc(r.missing_hint)}</div>` : ""}
+      <div class="xs dim">가격: ${esc(r.price_source)}</div>`,
       `<button class="btn-sm" id="us-csv">CSV 받기</button>`)}
     <div class="xs dim">${esc(r.note)}</div>`;
     $("#us-csv").onclick = () => {
@@ -173,7 +176,7 @@ async function viewReplay(el) {
     <div class="right"><button class="btn-sm" id="rp-prev">◀ ${esc(r.prev)}</button> <input type="date" id="rp-d" value="${esc(r.date)}"> <button class="btn-sm" id="rp-next">${esc(r.next)} ▶</button></div></div>
     <div class="mm-head">
       <div><div class="xs muted">${esc(r.date)} (${esc(r.weekday)})</div><div class="b">${r.trading ? "거래일" : `휴장${r.holiday ? ` · ${esc(r.holiday)}` : ""}`}</div></div>
-      ${r.index ? `<div><div class="xs muted">KOSPI</div><div class="big num">${num(r.index.close, 2)}</div><div class="num ${r.index.chg >= 0 ? "up" : "down"}">${P(r.index.chg, 2)}</div></div>` : ""}
+      ${r.index ? `<div><div class="xs muted">코스피 (시총가중 대용)</div><div class="big num">${num(r.index.close, 2)}</div><div class="num ${r.index.chg >= 0 ? "up" : "down"}">${P(r.index.chg, 2)}</div></div>` : ""}
       ${b.n ? `<div><div class="xs muted">시장 분위기</div><div class="xs">상승 <span class="up">${b.up}</span> · 하락 <span class="down">${b.down}</span> / ${b.n}종목</div>
         <div class="nb-bar" style="width:160px"><i style="flex:${b.up};background:var(--up)"></i><i style="flex:${b.n - b.up - b.down};background:var(--dim)"></i><i style="flex:${b.down};background:var(--down)"></i></div></div>` : ""}
       ${r.book ? `<div><div class="xs muted">가상 장부 (${esc(r.book.at)})</div><div class="b num">${num(r.book.equity)}원</div><div class="xs">보유 ${r.book.n}종목</div></div>` : ""}</div></div>
@@ -201,4 +204,16 @@ async function weeklyCard(root, anchorSel) {
       : empty("이번 주 보유·관심 종목 일정 없음 (관심종목을 ★ 하면 여기 모입니다)"));
   const anchor = anchorSel && root.querySelector(anchorSel);
   if (anchor) anchor.after(box); else root.append(box);
+}
+
+// ------------------------------------------------------------ 홈 맨 위 한 줄 브리핑 (시장 · 일정 · 내 위험 · AI 신뢰)
+async function homeOneLine(root) {
+  if (!root) return;
+  let o;
+  try { o = await api(`/api/oneline?${typeof pfModeQ === "function" ? pfModeQ() : ""}`); } catch { return; }
+  const IC = { ok: "🟢", good: "🟢", warn: "🟡", bad: "🔴" };
+  const box = document.createElement("div");
+  box.className = `oneline lv-${o.level}`;
+  box.innerHTML = o.items.map((x) => `<a href="${esc(x.link)}" class="ol-it"><span class="xs muted">${IC[x.level] || "•"} ${esc(x.label)}</span> <b class="small">${esc(x.text)}</b></a>`).join("") + `<span class="xs dim ol-at">${esc(o.as_of)}</span>`;
+  root.prepend(box);
 }

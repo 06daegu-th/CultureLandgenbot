@@ -84,3 +84,20 @@
 | `QUANT_MAX_DATA_AGE_DAYS` | 데이터가 이 영업일 수보다 오래되면 자동매매 중단 (기본 5) |
 | `QUANT_SELL_TAX_BPS` | 매도세 (2026년 20 = 0.20%) — 세법 바뀌면 수정 |
 | `QUANT_LIVE_*` | 실전 전환 때만 (docs/KIS_DEMO_RUNBOOK.md 8장) |
+
+## 7. V17 추가 값 (모두 선택)
+
+| 변수 | 값 |
+|---|---|
+| `QUANT_WEB_PASSWORD_HASH` | 로그인 비밀번호 해시 — `./run.sh auth-setup --password` 가 만들어 준다 (비밀번호 자체는 저장하지 않음) |
+| `QUANT_WEB_TOTP_SECRET` | 2단계 인증(구글 OTP 등) 비밀 — `auth-setup` 이 QR 주소와 함께 만든다 |
+| `QUANT_WEB_VIEWER_TOKEN` | 읽기 전용 토큰 (조회만, 버튼·주문 불가) — `auth-setup --viewer` |
+| `QUANT_AI_AUTO_DEMOTE` | 기본 `true` — AI 가 3일 연속 UNTRUSTED 면 주문에서 자동 제외 (SHADOW) |
+| `QUANT_AI_QUIET_THROTTLE` | 기본 `false` — 조용한 장 규칙이 검증되면 켜는 AI 매수 축소 |
+| `QUANT_US_COMMISSION_BPS` | 미국 주문표 수수료 (편도, 기본 25 = 0.25%) — 내 증권사 수수료로 |
+| `QUANT_FX_SPREAD_BPS` | 환전 스프레드 (기본 25 = 0.25%, 환율 우대 반영해서) |
+| `QUANT_US_TAX_RATE` | 해외주식 양도세율 (기본 0.22) — 세법 바뀌면 수정 |
+| `QUANT_US_TAX_DEDUCTION` | 연 기본공제 (기본 2500000) |
+
+'내 투자 한도'(원금·최대 손실)는 `.env` 가 아니라 화면(`#budget`)이나 `./run.sh budget ... --save` 로 정한다 — DB 에 저장되고 다음 시작 때도 적용된다.
+

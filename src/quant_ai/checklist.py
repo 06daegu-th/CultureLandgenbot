@@ -130,6 +130,18 @@ ITEMS = [
     ("PORTFOLIO", "Portfolio OS", "내 자산·주식/현금·업종 집중·최대 위험 한 문장 · 전략·위기 시뮬레이션", "portfolio_os.py", "test_lab_validation_portfolio_personal_failure"),
     ("OPERATIONS", "Validation tracker", "KIS 모의·WebSocket·실측 슬리피지·Forward·장기 — 진행률과 다음 할 일", "validation.py", "test_lab_validation_portfolio_personal_failure"),
     ("OPERATIONS", "Sentinel", "데이터 수집·AI 작업·스케줄러·DB·증권사 5분 감시 · 나빠짐/회복 알림", "sentinel.py", "test_sentinel_and_briefing_text"),
+    # v17
+    ("DATA", ".env hot reload", "키를 넣으면 5초 안에 반영 · 수집 작업은 항상 등록 · 줄 번호·형식·마지막 오류까지 진단", "keys.py", "test_key_added_while_running_is_picked_up_without_restart"),
+    ("DATA", "News structured extraction", "기사마다 이벤트·방향·확신도·요약 JSON(LLM) · 부정어 처리 · 같은 소식 묶기 · 매체 신뢰도", "news_llm.py", "test_news_extract_llm_json_clusters_and_board"),
+    ("AI", "Daily AI trust + auto demotion", "적중·Brier·ECE·알파 매일 기록 → 3일 연속 UNTRUSTED 면 주문에서 제외", "aitrack.py", "test_ai_track_trust_and_auto_demotion"),
+    ("AI", "Event strategy forward ledger", "실적 서프라이즈(PEAD) 신호를 결과 전에 봉인 · 전진/사후 분리 채점 · 주문엔 안 씀", "pead.py", "test_pead_forward_ledger_seal_and_scoring"),
+    ("SAFETY", "Budget → limits", "원금·최대 손실 → 모든 한도 자동 · 누적 손실이 한도에 닿으면 전체 정지(11번째 조건)", "budget.py", "test_budget_plan_apply_and_total_loss_guard"),
+    ("SAFETY", "Login · MFA · read-only", "비밀번호(scrypt)·TOTP·5회 실패 잠금 · 읽기 전용 토큰은 POST 403", "auth.py", "test_login_mfa_session_and_viewer_rbac"),
+    ("TRADING", "US manual order sheet", "미국 주문표: 매도 먼저 · 수수료·환전 스프레드 · 양도세 22%·250만원 공제 추정 · CSV", "usorder.py", "test_us_order_sheet_tax_fx_and_csv"),
+    ("TRADING", "Slippage by situation", "실측 슬리피지를 저유동·급등락·VI(근사)·보통으로 따로", "execreport.py", "test_slippage_segments_low_liquidity_big_move_vi"),
+    ("UX", "News board · market map", "같은 소식 한 장·톤 색·뉴스 이후 주가 · 업종별 지도(거래대금 크기·등락 색)", "board.py", "test_market_map_tiles_sectors_and_movers"),
+    ("UX", "Day replay", "날짜를 고르면 그날 알 수 있던 가격·뉴스·AI 판단만 (나중 결과는 따로)", "replay.py", "test_replay_day_only_knows_that_day"),
+    ("EVENT", "Weekly holdings schedule", "이번 주 보유·관심 종목 일정 + 월요일 알림 · 동종업체 실적 · 락업 공시", "center.py", "test_weekly_schedule_alert_and_lockup_strip"),
 ]
 
 
@@ -242,12 +254,9 @@ def evaluate(app) -> dict:
 
 def markdown() -> str:
     L = ["# 완성 기준 체크리스트", "", "각 항목: 무엇을 · 어디 · 검증 테스트. 실행 중 상태는 대시보드 **Truth Center → 완성 기준** 에서 실시간으로 본다.", ""]
-    area = None
-    for a, name, what, where, test in ITEMS:
-        if a != area:
-            L += ["", f"## {a}", "", "| 항목 | 무엇을 | 어디 | 검증 |", "|---|---|---|---|"]
-            area = a
-        L.append(f"| ✓ {name} | {what} | `{where}` | `{test}` |")
+    for area in dict.fromkeys(a for a, *_ in ITEMS):  # 영역별로 모아서 (처음 나온 순서)
+        L += ["", f"## {area}", "", "| 항목 | 무엇을 | 어디 | 검증 |", "|---|---|---|---|"]
+        L += [f"| ✓ {name} | {what} | `{where}` | `{test}` |" for a, name, what, where, test in ITEMS if a == area]
     return "\n".join(L) + "\n"
 
 

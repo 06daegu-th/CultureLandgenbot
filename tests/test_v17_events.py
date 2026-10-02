@@ -130,7 +130,8 @@ def test_news_extract_llm_json_clusters_and_board(app):
 def test_market_map_tiles_sectors_and_movers(app):
     from quant_ai import board
     m = board.market_map(app, now=_last_day(app))
-    assert len(m["tiles"]) == len(_syms(app)) and abs(sum(t["weight"] for t in m["tiles"]) - 1) < 0.01
+    assert len(m["tiles"]) == len(_syms(app)) - 1 and m["n_stale"] == 1  # 먼저 거래가 끝난 종목은 지도에서 빠지고 따로 센다
+    assert abs(sum(t["weight"] for t in m["tiles"]) - 1) < 0.01 and {t["date"] for t in m["tiles"]} == {m["date"]}
     assert m["breadth"]["up"] + m["breadth"]["down"] + m["breadth"]["flat"] == len(m["tiles"])
     assert m["gainers"][0]["chg"] >= m["losers"][0]["chg"] and m["sectors"]
     assert m["index"] is None or len(m["index"]["spark"]) == 60
@@ -189,6 +190,9 @@ def test_us_order_sheet_tax_fx_and_csv(app, monkeypatch):
     r2 = usorder.sheet(app, holdings={}, cash_krw=2_700_000, targets={"NVDA": 1})
     assert r2["summary"]["need_usd"] > 0 and r2["summary"]["fx_cost_krw"] == round(r2["summary"]["need_usd"] * 1350 * 0.0025)
     assert "error" in usorder.sheet(app, targets={})
+    r3 = usorder.sheet(app, holdings={"TSLA": 2}, cash_usd=500, targets={"TSLA": 1}, prices={"tsla": 250.0})  # 시세 없는 종목은 직접 입력 가격으로
+    assert not r3["missing"] and r3["rows"][0]["price"] == 250.0 and r3["price_source"] == "직접 입력"
+    assert usorder.sheet(app, holdings={"TSLA": 2}, targets={"TSLA": 1})["missing_hint"]
 
 
 # ------------------------------------------------------------------ 그날 재현 · 주간 일정 · 락업
@@ -279,3 +283,172 @@ def test_v17_views_are_wired():
     for v, fn in (("pead", "viewPead"), ("usorder", "viewUSOrder"), ("replay", "viewReplay"), ("map", "viewMarketMap"), ("news", "viewNewsBoard")):
         assert f'S.view === "{v}"' in app_js and f'["{v}",' in app_js and f"function {fn}(" in board_js
     assert "weeklyCard(" in app_js and "board.js" in (root / "index.html").read_text() and "board.js" in (root / "sw.js").read_text()
+
+
+# ------------------------------------------------------------------ AI 어시스턴트 v17 도구 · 링크 · 이어 묻기
+def test_assistant_v17_routes_tools_links_and_rule_answers(app, monkeypatch):
+    from datetime import date as _date
+
+    from quant_ai import assistant
+    from quant_ai.assistant import find_date, reply, route
+    no_llm = lambda st: (None, None)  # noqa: E731
+    today = _date(2026, 10, 2)
+    assert find_date("2026-09-03 에 무슨 일?", today) == _date(2026, 9, 3)
+    assert find_date("9월 3일 장 어땠어", today) == _date(2026, 9, 3)
+    assert find_date("12월 25일", today) == _date(2025, 12, 25)  # 미래 → 작년
+    assert find_date("어제 시장", today) == _date(2026, 10, 1)
+    assert find_date("2026-13-01", today) is None and find_date("내일 일정", today) is None
+    names = [n for n, _ in route(app, "DART 키 왜 안돼? 공시가 안 채워져")]
+    assert names[0] == "keys_status" or "keys_status" in names
+    assert "ai_trust" in [n for n, _ in route(app, "AI 믿어도 돼?")]
+    assert {"why_no_trade", "budget", "weekly_schedule", "market_map"} <= {n for n, _ in route(app, "왜 안 샀어? 내 투자 한도랑 이번 주 일정, 많이 오른 종목")}
+    r = route(app, "2020-12-01 에 무슨 일 있었어? 뉴스도")
+    assert ("replay_day", {"date": "2020-12-01"}) in r and "news_board" not in [n for n, _ in r]
+
+    monkeypatch.setenv("DART_API_KEY", "")
+    r = reply(app, "DART 키 왜 안돼?", "k1", client_factory=no_llm)
+    assert "데이터 키 진단" in r["answer"] and "붙여넣지 마세요" in r["answer"]
+    assert {"label": "데이터 건강 · 키 진단", "href": "#datahealth"} in r["links"]
+    r = reply(app, "AI 믿어도 돼?", "k2", client_factory=no_llm)
+    assert "AI 믿어도 되나" in r["answer"] and "실수 방지" in r["answer"] and any(x["href"] == "#scorecard" for x in r["links"])
+    assert r["followups"]
+    r = reply(app, "오늘 많이 오른 종목은?", "k3", client_factory=no_llm)
+    assert "증시 지도" in r["answer"] and "▲" in r["answer"]
+    r = reply(app, "내 투자 한도 알려줘", "k4", client_factory=no_llm)
+    assert "내 투자 한도" in r["answer"] and "#budget" in [x["href"] for x in r["links"]]
+    r = reply(app, "실적 이벤트 전략 결과", "k5", client_factory=no_llm)
+    assert "PEAD" in r["answer"]
+    d = pd.Timestamp(app.market_data()[0][_syms(app)[0]].index[-10]).date()
+    r = reply(app, f"{d.isoformat()} 그날 시장 어땠어?", "k6", client_factory=no_llm)
+    assert f"{d.isoformat()}" in r["answer"] and "재현" in r["answer"] and {"label": "그날 재현", "href": f"#replay/{d.isoformat()}"} in r["links"]
+    # 종목을 물으면 AI 성적도 함께 조회되고, 종목 페이지 링크와 '그 종목 뉴스/왜 안 샀나' 이어 묻기가 붙는다
+    from quant_ai.data.db import session_scope
+    from quant_ai.data.models import Instrument
+    sym = _syms(app)[0]
+    with session_scope(app.engine) as s:
+        name = s.query(Instrument).filter_by(symbol=sym).one().name
+    r = reply(app, f"{name} 뉴스 어때?", "k7", client_factory=no_llm)
+    tools = [u["tool"] for u in r["tools_used"]]
+    assert tools[0] == "stock_overview" and "ai_trust" in tools and any(x["href"] == f"#analysis/{sym}" for x in r["links"])
+    assert next(u for u in r["tools_used"] if u["tool"] == "news_board")["args"] == {"symbol": sym}
+    assert r["answer"].index(f"### {name}") < r["answer"].index("AI 믿어도 되나")
+    assert not any("뉴스" in q for q in r["followups"])
+    hist = assistant.history(app.engine, "k2")
+    assert hist[-1]["links"] and hist[-1]["followups"]
+
+
+def test_assistant_llm_can_call_v17_tools(app):
+    from quant_ai.assistant import reply
+
+    class Fake:
+        model = "fake-model"
+        n = 0
+
+        def chat(self, messages, tools=None, **kw):
+            Fake.n += 1
+            if Fake.n == 1:
+                names = {t["function"]["name"] for t in tools}
+                assert {"ai_trust", "keys_status", "news_board", "market_map", "budget", "event_strategy", "why_no_trade",
+                        "weekly_schedule", "replay_day"} <= names
+                return {"choices": [{"message": {"content": "", "tool_calls": [
+                    {"id": "c1", "function": {"name": "weekly_schedule", "arguments": "{}"}},
+                    {"id": "c2", "function": {"name": "replay_day", "arguments": '{"date": "nope"}'}}]}}]}
+            tool_msgs = [m for m in messages if m["role"] == "tool"]
+            assert "rows" in tool_msgs[0]["content"] and "YYYY-MM-DD" in tool_msgs[1]["content"]
+            return {"choices": [{"message": {"content": "이번 주 일정 정리 (자세히: #calendar)"}}]}
+
+    import quant_ai.assistant as A
+    orig = A._chat_call
+    A._chat_call = lambda client, msgs, tools: client.chat(msgs, tools)
+    try:
+        r = reply(app, "음 뭐가 있지", "l1", client_factory=lambda st: (Fake(), "claude"))
+    finally:
+        A._chat_call = orig
+    assert r["mode"] == "llm" and "#calendar" in r["answer"]
+    assert {"label": "일정 (D-Day)", "href": "#calendar"} in r["links"]
+    assert [u["ok"] for u in r["tools_used"]] == [True, False]
+
+
+# ------------------------------------------------------------------ 차트 급등락·AI 신호 변화 · 상황별 슬리피지 · 홈 한 줄
+def test_chart_big_moves_and_ai_signal_changes(app):
+    from quant_ai import stockplus
+    from quant_ai.data.db import session_scope
+    from quant_ai.data.models import ConsensusRecord
+    ix = pd.date_range("2026-01-01", periods=120, freq="B", tz="UTC")
+    rng = np.random.default_rng(1)
+    c = pd.Series(10000 * np.cumprod(1 + rng.normal(0, 0.01, 120)), index=ix)
+    c.iloc[80:] *= 1.12   # 하루 +12%
+    c.iloc[100:] *= 0.94  # 하루 −6%
+    mv = stockplus.big_moves(c)
+    assert [m["date"] for m in mv] == [str(ix[80].date()), str(ix[100].date())] and mv[0]["chg"] > 0.1 and "급락" in mv[1]["title"]
+    sym = _syms(app)[1]
+    t0 = datetime(2026, 3, 2, tzinfo=UTC)
+    with session_scope(app.engine) as s:
+        for i, act in enumerate(["HOLD", "HOLD", "BUY", "BUY", "SELL"]):
+            s.add(ConsensusRecord(symbol=sym, as_of=t0 + timedelta(days=i), action=act, prob_up=0.5, confidence=50.0, conflict="low", payload={}))
+    ch = stockplus.ai_changes(app, sym, t0 - timedelta(days=1))
+    assert [(x["from"], x["to"]) for x in ch] == [("HOLD", "BUY"), ("BUY", "SELL")] and ch[0]["date"] == "2026-03-04"
+    ov = stockplus.overlay(app, sym)  # 차트 표시 목록에 AI 신호 변화가 들어간다 (일봉 기간 밖이면 빠짐)
+    assert all({"date", "kind", "title"} <= set(m) for m in ov["marks"])
+
+
+def test_slippage_segments_low_liquidity_big_move_vi(app):
+    from quant_ai import execreport
+    from quant_ai.data.db import session_scope
+    from quant_ai.data.models import OrderRecord
+    ix = pd.date_range("2026-01-01", periods=40, freq="B", tz="UTC")
+    close = np.full(40, 1000.0)
+    close[30] = 1070.0   # +7% 급등 날
+    close[35] = close[34]
+    hi, lo = close * 1.01, close * 0.99
+    hi[35] = close[34] * 1.12  # 장중 +12% (VI 근사)
+    vol = np.full(40, 1e7)  # 1000원 × 1천만주 = 100억 (충분)
+    liq = pd.DataFrame({"close": close, "high": hi, "low": lo, "volume": vol}, index=ix)
+    thin = liq.assign(volume=1e5)  # 1억 → 저유동
+    assert execreport._segment(liq, ix[30] + timedelta(hours=1)) == "big_move"
+    assert execreport._segment(liq, ix[35] + timedelta(hours=1)) == "vi"
+    assert execreport._segment(liq, ix[25] + timedelta(hours=1)) == "normal"
+    assert execreport._segment(thin, ix[25] + timedelta(hours=1)) == "low_liq"
+    assert execreport._segment(None, ix[25]) == "normal"
+    sym = _syms(app)[0]
+    with session_scope(app.engine) as s:
+        for i in range(3):
+            s.add(OrderRecord(mode="live", created_at=datetime.now(UTC) - timedelta(days=1, minutes=i), symbol=sym, side="buy", qty=10,
+                              order_type="limit", status="filled", ref_price=1000.0, avg_price=1000.0 + 2 * (i + 1), filled_qty=10))
+    r = execreport.costs(app)
+    live = next(x for x in r["rows"] if x["mode"] == "live")
+    segs = live["segments"]
+    assert sum(g["n"] for g in segs) == 3 and all({"key", "label", "mean_bps", "enough"} <= set(g) for g in segs)
+    assert not any(g["enough"] for g in segs)
+
+
+def test_home_oneline_and_route(app, server):
+    from quant_ai import center
+    o = center.oneline(app)
+    keys = [x["key"] for x in o["items"]]
+    assert keys == ["market", "event", "risk", "ai"] and all(x["link"].startswith("#") for x in o["items"])
+    assert o["items"][3]["level"] in ("bad", "warn", "ok") and o["level"] in ("ok", "warn", "bad")
+    ops.set_state(app.engine, "ai_demotion", {"on": True, "since": datetime.now(UTC).isoformat()})
+    assert "SHADOW" in center.oneline(app)["items"][3]["text"] and center.oneline(app)["level"] == "bad"
+    ops.set_state(app.engine, "ai_demotion", {})
+    st, body = _req(server, "GET", "/api/oneline")
+    assert st == 200 and len(body["items"]) == 4
+
+
+def test_frontend_has_no_duplicate_globals():
+    """화면 스크립트는 전역 이름을 공유한다 — 같은 이름이 두 번 있으면 나중에 로드된 파일이 조용히 덮어쓴다
+    (예: 증시 지도 색 함수가 AI 확률 색 함수에 덮여 모든 타일이 빨강, '실험·승격' 화면이 연구 결과 함수에 덮여 오류)."""
+    import re
+    from collections import Counter
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "src/quant_ai/web/static"
+    names = Counter()
+    for f in root.glob("*.js"):
+        if f.name == "sw.js":
+            continue
+        names.update(re.findall(r"^(?:async )?function ([A-Za-z0-9_]+)|^(?:const|let) ([A-Za-z0-9_]+) =", f.read_text(), re.M))
+    flat = Counter()
+    for (a, b), n in names.items():
+        flat[a or b] += n
+    assert [k for k, n in flat.items() if n > 1] == []
+

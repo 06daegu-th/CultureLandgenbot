@@ -273,6 +273,7 @@ async function viewValidation(el) {
     <div class="lesson small">${esc(v.headline)}</div><div class="val-grid" style="margin-top:10px">${it}</div></div>
   ${card("거래 비용 — 예상 vs 실제", `<div class="scroll"><table class="tight"><thead><tr><th>장부</th><th class="r">주문</th><th class="r">체결률</th><th class="r">슬리피지</th><th class="r">p90</th><th class="r">수수료</th><th class="r">왕복</th></tr></thead><tbody>${rows || '<tr><td colspan="7">' + empty("주문 기록 없음") + "</td></tr>"}</tbody></table></div>
     <div class="kv-grid" style="margin-top:8px">${kv("가정 슬리피지", c.assumed.slippage_bps + "bp")}${kv("가정 수수료", c.assumed.commission_bps + "bp")}${kv("매도세", c.assumed.sell_tax_bps + "bp")}${kv("가정 왕복", c.assumed.roundtrip_bps + "bp")}${kv("보정", c.calibrated?.applied ? "실측 적용" : "미적용")}</div>
+    ${segTable(c.rows || [])}
     <div class="lesson small" style="margin-top:8px">${esc(c.verdict)}</div><div class="xs dim">${esc(c.note)}</div>`, '<a class="link" href="#execution">체결 · 증권사 검증</a>')}`;
 }
 
@@ -335,4 +336,13 @@ async function viewBudget(el) {
     toast({ title: "투자 한도 저장", body: `원금 ${num(r.principal)}원 · 최대 손실 ${num(r.max_loss)}원`, level: "good" });
     render();
   };
+}
+
+// 상황별 슬리피지 (저유동 · 급등락 · VI 근사 · 보통) — 실측(live) 우선, 없으면 다른 장부
+function segTable(rows) {
+  const r = rows.find((x) => x.measured && (x.segments || []).length) || rows.find((x) => (x.segments || []).length);
+  if (!r) return '<div class="xs dim" style="margin-top:8px">상황별 슬리피지: 체결 기록이 쌓이면 저유동 · 급등락 · VI 가능 날을 따로 보여줍니다</div>';
+  return `<div class="small b" style="margin-top:10px">상황별 슬리피지 <span class="xs dim">${esc(r.mode)} 장부${r.measured ? " · 실측" : " · 모델 체결이라 참고"}</span></div>
+    <table class="tight"><thead><tr><th>상황</th><th class="r">건수</th><th class="r">평균</th><th class="r">p90</th></tr></thead><tbody>${r.segments.map((g) =>
+      `<tr><td class="small">${esc(g.label)}${g.enough ? "" : ' <span class="xs dim">표본 적음</span>'}</td><td class="r num">${g.n}</td><td class="r num ${g.mean_bps > 20 ? "warn-t" : ""}">${g.mean_bps}bp</td><td class="r num">${g.p90_bps ?? "-"}bp</td></tr>`).join("")}</tbody></table>`;
 }
