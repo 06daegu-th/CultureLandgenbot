@@ -246,9 +246,17 @@ def verdict(app, symbol: str, now=None) -> dict:
     junk = ("휴리스틱", "국면 ", "기권")
     pro = [f"{x['ai']}: {x['summary']}" if x.get("summary") and not any(j in x["summary"] for j in junk) else f"{x['ai']} 상승 확률 {x['prob_up']:.0%}"
            for x in (ex.get("for") or [])] if rec.prob_up >= 0.5 else []
-    def _ko(w: str) -> str:  # '[primary] 20일 모멘텀 상승' → '뉴스 AI: 20일 모멘텀 상승'
+    regime_ko = {"bull_quiet": "안정적 상승", "bull_volatile": "변동성 상승", "sideways": "횡보", "bear_quiet": "완만한 하락",
+                 "bear_volatile": "변동성 하락", "crisis": "위기"}
+
+    def _ko(w: str) -> str:  # '[primary] 20일 모멘텀 상승' → '뉴스 AI: 20일 모멘텀 상승' · 'sideways' → '횡보'
         m = re.match(r"^\[(\w+)\]\s*(.*)$", w or "")
-        return f"{LABELS.get(m.group(1), m.group(1))}: {m.group(2)}" if m else w
+        if m:
+            lab, body = LABELS.get(m.group(1), m.group(1)), m.group(2)
+            w = body if body.startswith(lab) else f"{lab}: {body}"
+        for k, v in regime_ko.items():
+            w = w.replace(k, v)
+        return w
     why_buy = [_ko(w) for w in list(p.get("reasons") or []) + pro if w and not any(j in w for j in junk)][:3]
     why_not = (all_blocks + list(p.get("risks") or []) + [x["summary"] for x in (ex.get("against") or []) if x.get("summary")])
     why_not = [_ko(w) for w in dict.fromkeys(why_not) if w and "휴리스틱" not in w][:3]

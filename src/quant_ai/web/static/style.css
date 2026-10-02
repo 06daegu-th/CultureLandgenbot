@@ -1225,3 +1225,18 @@ img.lg { border-radius: 50%; vertical-align: middle; object-fit: contain; backgr
 .pos-risk { margin: 8px 0 2px; } .pos-lv { font-size: 22px; font-weight: 800; margin-left: 6px; }
 .th-row { display: grid; grid-template-columns: 110px 1fr 48px; gap: 4px 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .th-row .xs { grid-column: 1 / -1; }
+
+/* v19: 휴대폰 상단을 한 줄로 (메뉴 · 장 상태 · 설정 · 알림) — 화면의 1/3 을 차지하지 않게 */
+@media (max-width: 640px) {
+  .top { gap: 8px; padding: 8px 12px; flex-wrap: wrap; }
+  .top-right { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 6px; min-width: 0; flex: 1 1 0; justify-content: flex-start; }
+  .top-right::-webkit-scrollbar { display: none; }
+  #sys-status:not(.bad), #avatar, #theme-btn { display: none; }
+  .top-right .icon-btn { width: 32px; height: 32px; flex: none; }
+  .mkt-badges { flex: none; } .mkt-badges .pill { white-space: nowrap; }
+  .mkt-badges .pill .mono, .mkt-badges .pill b { display: none; }  /* 🇰🇷 🔴 장마감 · 🇺🇸 🟢 장중 — 국기로 충분 */
+  .search input { font-size: 15px; }
+  .start-guide .sg-step:not(.cur) .small, .start-guide .sg-step.done .xs { display: none; }
+  .start-guide .sg-step:not(.cur) { padding: 6px 10px; }
+}
+.sr-none { padding: 10px 12px; line-height: 1.6; border-bottom: 1px solid var(--line); }

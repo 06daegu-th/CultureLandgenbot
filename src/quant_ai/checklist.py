@@ -151,6 +151,14 @@ ITEMS = [
     ("UX", "Home 5 · AI state", "오늘 시장·내 자산·AI 상태(🟢검증됨/🟡검증 중/🔴사용 금지)·중요한 뉴스·오늘 할 일", "center.home5", "test_home5_sections_and_route"),
     ("EVENT", "Exchange status · holiday notice", "🟢장중/🟡시간외/🔴장마감 · '오늘 미국 증시는 휴장입니다 (독립기념일)' · 서머타임", "clock.clock_status", "test_clock_light_holiday_notice_and_dst"),
     ("PORTFOLIO", "Holdings × AI", "보유종목 옆 AI 마지막 판단 (🟢 BUY 64%)", "web/api._portfolio", "test_portfolio_rows_show_ai_badge"),
+    # v19
+    ("UX", "Easy mode · start guide", "쉬운 화면(메뉴 6개 + 고급 접기) · 처음 안내(데이터→한도→관심 3개→오늘 할 일) · 홈 맨 위 '오늘 할 일 3개'", "center.today3/start_guide · easy.js", "test_today3_priorities_and_start_guide"),
+    ("AI", "Final verdict · NO TRADE first", "AI 별 의견 → FINAL 하나 · 데이터 부족/오래됨/장중 가격 20분 지연/실적 D-1/변동성 과다/AI 사용 금지면 BUY 막음 · 판단에 쓴 데이터 시각", "explain.verdict", "test_verdict_final_votes_no_trade_gates_and_data_used"),
+    ("AI", "Plain scorecard", "최근 100회 중 n회 적중 · 비용 뒤 · 지수 대비 초과수익 · 틀린 사례(원인 후보) · 상승/횡보/하락장별", "scorecard.plain", "test_plain_scorecard_counts_money_vs_index_failures_and_regimes"),
+    ("SAFETY", "Earnings gate (smart)", "실적 발표 D-1 이내 신규 매수 보류(×0) · D-3 이내 ×0.75", "engines/events.event_caps", "test_event_caps_use_todays_dday_not_stored_one"),
+    ("PORTFOLIO", "Themes · same bet", "테마 집중도('반도체·AI 집중 43% — 사실상 같은 베팅') · 보유 종목 AI·중요 뉴스·실적 D-day", "portfolio_os.themes/holding_extras", "test_portfolio_themes_and_holding_extras"),
+    ("UX", "US stock AI", "미국 종목도 일봉+지수를 받아 같은 AI 합의로 분석 (주문 없음)", "actions.analyze_symbol", "test_us_ticker_can_be_analyzed"),
+    ("OPERATIONS", "Offline · local chart lib", "서버 연결 실패 안내 화면(자동 재연결) · 차트 라이브러리 서버 직접 제공 · 2단계 인증 설정 오류 표시", "easy.js · web/static/vendor", "test_totp_without_password_is_warned_and_assets_are_local"),
     ("EVENT", "Weekly holdings schedule", "이번 주 보유·관심 종목 일정 + 월요일 알림 · 동종업체 실적 · 락업 공시", "center.py", "test_weekly_schedule_alert_and_lockup_strip"),
 ]
 

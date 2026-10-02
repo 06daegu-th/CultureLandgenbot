@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pandas as pd
 from sqlalchemy import select
 
 from . import ops
@@ -374,9 +375,18 @@ def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) ->
     for d in a.get("disclosures") or []:
         add(60 if d["held"] else 40, "📑", f"{d['name']} 중요 공시 — {d['title'][:30]}", f"#analysis/{d['symbol']}",
             "보유 종목" if d["held"] else "관심 종목", d["symbol"], "disclosure", d["name"])
+    from zoneinfo import ZoneInfo
+    bars_all, _ = app._all_bars()
+    today_kst = now.astimezone(ZoneInfo("Asia/Seoul")).date()
     for c in a.get("check") or []:
         if any("움직임" in w for w in c.get("why") or []):
             mv = next(w for w in c["why"] if "움직임" in w)
+            b = bars_all.get(c["symbol"])
+            if b is not None and len(b):  # 오늘 움직임이 아니면 날짜를 붙인다 (오래된 데이터를 오늘 일처럼 보이지 않게)
+                d = pd.Timestamp(b.index[-1]).tz_localize("UTC") if pd.Timestamp(b.index[-1]).tzinfo is None else pd.Timestamp(b.index[-1])
+                d = d.tz_convert("Asia/Seoul").date()
+                if (today_kst - d).days >= 1 and c["symbol"][:1].isdigit():
+                    mv = f"{mv} ({d.month}/{d.day} 종가 기준)"
             add(35 if c["held"] else 25, "📈" if "+" in mv else "📉", f"{c['name']} {mv}", f"#analysis/{c['symbol']}",
                 "보유 종목" if c["held"] else "관심 종목", c["symbol"], "move", c["name"])
     seen, out = set(), []

@@ -456,7 +456,7 @@ cmd_auto() {
   ok "대시보드: http://127.0.0.1:$PORT"
   open_browser "http://127.0.0.1:$PORT"
   # 빈 화면 채우기 (뉴스·공시·거시 수집 · AI 판단 1회 · 미국 장부) — 대시보드는 바로 쓰고 뒤에서 진행
-  ( qa warmup; [[ "$(env_get QUANT_US)" == "false" ]] || qa us ) >"$LOG_DIR/warmup.log" 2>&1 &
+  ( qa warmup; [[ "$(env_get QUANT_US)" == "false" ]] || qa us; qa logos --top 60 ) >"$LOG_DIR/warmup.log" 2>&1 &
   WARM_PID=$!
   ok "뒤에서 데이터 채우는 중 (뉴스·AI 판단·미국 장부) — 진행: logs/warmup.log · 대시보드 '시작 체크리스트'"
   if [[ "$mode" == "paper" ]]; then
