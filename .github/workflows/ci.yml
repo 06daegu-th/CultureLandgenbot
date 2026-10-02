@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11", cache: pip }
-      - run: pip install -e ".[dev,postgres,ai]" alembic  # pyarrow 는 기본 의존성
+      - run: pip install -e ".[dev,postgres,ai,live]" alembic  # pyarrow 는 기본 의존성 · live = websockets·cryptography (건너뜀 0개 위해)
       - run: ruff check src tests
       - name: 마이그레이션 (PostgreSQL)
         env: { DATABASE_URL: "postgresql://quant:quant@localhost:5432/quant" }
