@@ -762,7 +762,7 @@ class QuantAI:
             log.info("미국 일봉 없음: %s", e)
         return build(self.engine, bars, sector_map(self.engine))
 
-    RETRAIN_VARIANTS = (("logistic", 750), ("logistic", 500), ("gbm", 750))
+    RETRAIN_VARIANTS = (("gbm", 750), ("logistic", 750), ("logistic", 500))  # v20: 16년 실데이터에서 GBM 순위 모델이 가장 나음 (RESEARCH_QUANT_V2 6장)
 
     def auto_retrain(self, now: datetime | None = None, force: bool = False, max_variants: int = 2) -> dict:
         """재학습 후보 자동 생성. 트리거: 데이터 드리프트 · champion 전진 성과 하락 · 마지막 후보 7일 경과.
