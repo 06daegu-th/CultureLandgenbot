@@ -158,6 +158,8 @@ def build_default_scheduler(app, mode) -> Scheduler:
             raise
     sch.add("macro", fred, 3 * 3600, "closed")
     sch.add("keys_reload", lambda now: _keys_refresh(app), 60, "always")  # .env 를 고치면 1분 안에 반영
+    from .aitrack import snapshot as _ai_track
+    sch.add("ai_track", lambda now: _ai_track(app, now), 24 * 3600, "closed")  # AI 성적 매일 기록 · 나쁘면 자동 SHADOW
 
     if mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE) and st.strategy == "core_satellite":
         # 코어는 20거래일마다, AI 거부권·긴급청산·위성은 매 사이클 점검 (일봉 기반이라 한 시간에 한 번이면 충분)

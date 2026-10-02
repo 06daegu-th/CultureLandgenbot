@@ -209,6 +209,10 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.ai_card(sym))
                     if url.path == "/api/ai-verify":
                         return self._json(api.ai_verify(sym))
+                    if url.path == "/api/ai-alpha":
+                        return self._json(api.ai_alpha())
+                    if url.path == "/api/ai-track":
+                        return self._json(api.ai_track(arg("refresh", "") == "1"))
                     if url.path == "/api/ai-public":
                         return self._json(api.ai_public(int(arg("n", "1000") or 1000)))
                     if url.path == "/api/action-center":

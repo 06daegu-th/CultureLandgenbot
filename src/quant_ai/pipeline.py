@@ -577,7 +577,10 @@ class QuantAI:
 
         실제 돈: 검증 사다리 '소액 Live' 이상일 때만 (설정과 무관한 안전장치).
         가상/모의: 설정(QUANT_CORE_ONLY=false) 또는 자동 승격(QUANT_AUTO_PROMOTE)으로 사다리 'Paper' 이상."""
+        from .aitrack import demoted
         from .review.ladder import rank
+        if demoted(self.engine):  # 성적이 계속 나쁘면 자동 SHADOW — 판단·채점은 계속, 주문에는 코어만
+            return False
         st, r = self.settings, rank(self.ladder_stage())
         if self._real_money(mode):
             return r >= rank("live_small") and (st.auto_promote or not st.core_only)
@@ -1131,6 +1134,11 @@ class QuantAI:
                                         *[s for s in held if s in bars]]))
         decisions = self.decide(as_of=as_of, symbols=shortlist, scenarios=False) if cfg.use_ai else []
         vetoes, exits, buys = self._ai_overlay(decisions)
+        if buys and as_of is None:  # 사전 등록 규칙(옵트인): 조용한 장에서는 AI 위성 매수를 쉰다 — 거부권·긴급청산은 그대로
+            from .alphascore import throttle
+            buys, why = throttle(self, buys)
+            if why:
+                DBJournal(mode.value, self.engine).note(ts, "skip", why, None, category="ai_quiet")
         by_sym = {d.symbol: d for d in decisions}
 
         def due(st: dict) -> bool:

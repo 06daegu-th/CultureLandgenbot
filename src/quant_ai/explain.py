@@ -45,6 +45,8 @@ def explain(payload: dict, action: str, prob_up: float, confidence: float, gates
         blocks.append(f"이벤트: {g['event']}")
     if g.get("data"):
         blocks.append(f"데이터 품질: {g['data']}")
+    if g.get("demoted"):
+        blocks.append(f"AI 자동 강등(SHADOW) — 주문에는 쓰지 않음: {g['demoted']}")
     plan = p.get("plan") or {}
     to_buy = max(cfg.buy_prob - prob_up, 0.0)
     to_sell = max(prob_up - cfg.sell_prob, 0.0)
@@ -72,6 +74,9 @@ def explain(payload: dict, action: str, prob_up: float, confidence: float, gates
         change.append(f"판단이 틀렸다고 인정하는 가격: {plan['stop']:,.2f} ({plan.get('stop_pct', 0):+.1%})")
     plain = _plain(action, prob_up, confidence, for_, against, blocks, cfg, up)
     effective = action
+    if g.get("demoted") and action in ("BUY", "SELL") and not g.get("data"):
+        effective = "NO_TRADE"
+        head = f"AI {action} {prob_up:.0%} — 하지만 AI 가 성적 불량으로 SHADOW 강등 → 주문에 쓰지 않음"
     if g.get("data") and action in ("BUY", "SELL"):  # 판단은 기록대로 두고, 실행 여부만 막는다 (fail-closed)
         effective = "NO_TRADE"
         head = f"AI {action} {prob_up:.0%} — 하지만 데이터 품질 LOW → 거래하지 않음 ({g['data']})"
@@ -126,6 +131,9 @@ def for_symbol(app, symbol: str) -> dict | None:
         r = next((x for x in ops.get_state(app.engine, "event_calendar").get("risk") or [] if x["symbol"] == symbol), None)
         if r and r.get("buy_multiplier", 1) < 1:
             gates["event"] = f"{r.get('reason')} → 매수 ×{r['buy_multiplier']}"
+        dm = ops.get_state(app.engine, "ai_demotion")
+        if dm.get("on"):
+            gates["demoted"] = dm.get("reason") or "AI 성적 불량"
         dh = ops.get_state(app.engine, "data_health")
         if dh.get("trading") == "BLOCKED":
             gates["data"] = dh.get("block_reason") or f"데이터 건강 {dh.get('overall', 0)}%"

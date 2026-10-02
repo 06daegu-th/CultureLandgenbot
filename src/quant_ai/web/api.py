@@ -1220,6 +1220,16 @@ class DashboardAPI:
         from ..scorecard import verify_now
         return verify_now(self.app, symbol)
 
+    def ai_track(self, refresh: bool = False) -> dict:
+        from .. import aitrack
+        if refresh or not _ops.get_state(self.engine, aitrack.HIST).get("rows"):
+            aitrack.snapshot(self.app)
+        return aitrack.report(self.app)
+
+    def ai_alpha(self) -> dict:
+        from .. import alphascore
+        return self._cached("ai_alpha", 300, lambda: {"alpha": alphascore.alpha_card(self.app), "quiet": alphascore.quiet_rule(self.app)})
+
     def ai_public(self, n: int = 1000) -> dict:
         from ..scorecard import public_report
         return self._cached(f"aipublic:{n}", 300, lambda: public_report(self.app, max(50, min(n, 5000))))

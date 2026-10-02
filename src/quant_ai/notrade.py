@@ -30,6 +30,8 @@ CATS = [
     ("dedupe", "중복 주문 방지", ("중복",)),
     ("broker", "증권사 미체결 · 취소", ("unfilled", "cancelled", "미체결", "잔량 취소")),
     ("ai_off", "AI 오버레이 꺼짐 (코어 전용)", ("코어 전용",)),
+    ("ai_demoted", "AI 자동 강등 (성적 불량 → SHADOW)", ("SHADOW 강등", "자동 강등")),
+    ("ai_quiet", "조용한 장 — AI 위성 매수 쉼 (사전 등록 규칙)", ("조용한 장",)),
 ]
 LABEL = {k: v for k, v, _ in CATS}
 

@@ -67,6 +67,8 @@ JOBS = {
     "risk_hist": ("organize", "포트폴리오 위험 기록", "6시간", 6 * 3600),
     "data_health": ("collect", "데이터 건강 점수 · 가격 지연 차단", "1시간", 3600),
     "failure_lab": ("score", "틀린 예측 자동 연구", "하루", 24 * 3600),
+    "ai_track": ("score", "AI 성적 기록 · 자동 SHADOW 강등", "하루", 24 * 3600),
+    "keys_reload": ("collect", ".env 키 다시 읽기", "1분", 60),
     "model_decay": ("score", "모델 노후 감지", "야간 12시간", 12 * 3600),
     "prediction_power": ("score", "예측력 전진 검증 (SPRT)", "6시간", 6 * 3600),
     "slippage_cal": ("compare", "실측 슬리피지 → 비용 보정", "하루 1회", 86400),
