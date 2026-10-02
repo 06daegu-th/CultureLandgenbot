@@ -623,6 +623,20 @@ def cmd_auth_setup(args):
     print(f"# 지금 코드(확인용): {totp(sec)}")
 
 
+def cmd_budget(args):
+    """원금·최대 손실 → 모든 한도 계산 (--save 면 저장해 바로 적용)."""
+    from .budget import plan, save
+    app = _app(args)
+    p = save(app, {"principal": args.principal, "max_loss": args.max_loss, "first_stage": args.first_stage}) if args.save \
+        else plan(args.principal, args.max_loss, args.first_stage)
+    for x in p["plain"]:
+        print(x)
+    print("# 한도 (근거)")
+    for k, v in p["limits"].items():
+        print(f"  {k:<20} {v:>14,}   {p['why'][k]}" if isinstance(v, int) else f"  {k:<20} {v:>14.2%}   {p['why'][k]}")
+    print("저장됨 — 웹·스케줄러가 바로 이 한도를 씁니다" if args.save else "미리 보기 — 저장하려면 --save")
+
+
 def cmd_netcheck(args):
     """외부 데이터 소스 연결 점검 (공개 소스 + DART·FRED·ECOS 키)."""
     from .netcheck import run
@@ -701,6 +715,12 @@ def main(argv: list[str] | None = None) -> None:
     au.add_argument("--viewer", action="store_true", help="읽기 전용 토큰도 만들기")
     au.set_defaults(fn=cmd_auth_setup)
     sub.add_parser("netcheck", help="외부 데이터 소스 연결 점검").set_defaults(fn=cmd_netcheck)
+    bg = sub.add_parser("budget", help="원금·최대 손실 → 모든 한도 계산 (--save 로 저장)")
+    bg.add_argument("--principal", type=float, required=True)
+    bg.add_argument("--max-loss", type=float, required=True)
+    bg.add_argument("--first-stage", type=float, default=0.10)
+    bg.add_argument("--save", action="store_true")
+    bg.set_defaults(fn=cmd_budget)
     k = sub.add_parser("keys", help="DART·FRED·ECOS 키 진단 (--probe: 실제 연결 시험)")
     k.add_argument("--probe", action="store_true")
     k.set_defaults(fn=cmd_keys)

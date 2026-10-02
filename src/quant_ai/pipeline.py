@@ -99,6 +99,11 @@ class QuantAI:
         _alerts.configure(self.notifier, {k.strip() for k in kinds.split(",") if k.strip()} if kinds else None,
                           _push_sender(self.engine, self.settings.artifacts_dir),
                           {k.strip() for k in pkinds.split(",") if k.strip()} if pkinds else None)
+        try:  # 사용자가 정한 원금·최대 손실에서 계산한 한도 (모든 프로세스가 같은 값)
+            from .budget import apply as _budget_apply
+            _budget_apply(self)
+        except Exception as e:  # noqa: BLE001 - 한도 저장값이 깨져도 기본(.env) 한도로 동작
+            log.warning("투자 한도 적용 실패: %s", e)
 
     # ================================================================ 데이터
     def symbols(self, include_index: bool = False) -> list[str]:

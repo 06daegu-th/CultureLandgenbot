@@ -39,6 +39,7 @@ CONDITIONS = [
     ("model", "Model anomaly", "모델 이상"),
     ("risk_engine", "Risk engine unavailable", "리스크 엔진"),
     ("database", "Database unavailable", "데이터베이스"),
+    ("total_loss", "Total loss limit", "원금 대비 최대 손실"),
 ]
 OPEN = ("pending", "submitted", "partial")
 
@@ -142,6 +143,22 @@ def check_daily_loss(app, mode: str, now: datetime | None = None) -> dict:
     return _c("daily_loss", "ok", f"당일 {pnl:+.2%} (한도 -{lim:.1%})", value=round(pnl, 5))
 
 
+def check_total_loss(app, mode: str) -> dict:
+    """사용자가 정한 '최대로 감당할 손실'(내 투자 한도)에 닿으면 전체 정지 — 80% 부터 경고."""
+    from ..budget import total_loss
+    t = total_loss(app, mode)
+    if t is None:
+        return _c("total_loss", "ok", "투자 한도 미설정 — '내 투자 한도'에서 원금·최대 손실을 정하세요")
+    if t["equity"] is None:
+        return _c("total_loss", "ok", f"평가 기록 없음 (한도 {t['limit']:,}원)")
+    detail = f"손실 {t['loss']:,}원 / 한도 {t['limit']:,}원 ({t['used']:.0%})"
+    if t["used"] >= 1:
+        return _c("total_loss", "critical", detail + " → 최대 손실 도달", value=t["used"])
+    if t["used"] >= 0.8:
+        return _c("total_loss", "warn", detail + " → 한도의 80% 이상", value=t["used"])
+    return _c("total_loss", "ok", detail, value=t["used"])
+
+
 def check_volatility(bench, vix=None) -> dict:
     if bench is None or len(bench) < 30:
         return _c("volatility", "na", "지수 데이터 부족")
@@ -188,7 +205,7 @@ def check_risk_engine(app) -> dict:
 
 def evaluate(app, mode: str | None = None, act: bool = True, now: datetime | None = None,
              market_open: bool = False) -> dict:
-    """10개 조건 점검 → 하나라도 critical 이면 HALTED (+ 모델 이상이면 자동 롤백)."""
+    """11개 조건 점검 → 하나라도 critical 이면 HALTED (+ 모델 이상이면 자동 롤백)."""
     mode = mode or (app.settings.mode.value if app.settings.mode.value in ("paper", "shadow", "live") else "paper")
     now = now or datetime.now(UTC)
     db = check_database(app)
@@ -206,7 +223,7 @@ def evaluate(app, mode: str | None = None, act: bool = True, now: datetime | Non
         log.warning("guardian: 시장 데이터 읽기 실패: %s", e)
     conds = [check_broker(app, mode), check_quotes(app, mode, bars_last, now, market_open), check_position(app, mode),
              check_duplicates(app, mode), check_daily_loss(app, mode, now), check_volatility(bench, vix),
-             check_data_conflict(app, mode), check_model(app), check_risk_engine(app), db]
+             check_data_conflict(app, mode), check_model(app), check_risk_engine(app), db, check_total_loss(app, mode)]
     critical = [c for c in conds if c["status"] == "critical"]
     ks = ops.get_state(app.engine, "kill_switch")
     state = "HALTED" if critical or ks.get("halt") else "DEGRADED" if any(c["status"] == "warn" for c in conds) \

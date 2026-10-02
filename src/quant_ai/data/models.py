@@ -101,6 +101,8 @@ class NewsArticle(Base):
     events: Mapped[list | None] = mapped_column(JSONType)
     importance: Mapped[float | None] = mapped_column(Float)
     collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 데이터 출처 추적: 우리가 받은 시각
+    extract: Mapped[dict | None] = mapped_column(JSONType)  # v17 구조화: 이벤트·방향·확신도·요약·루머·출처 신뢰도 (news_llm)
+    cluster: Mapped[str | None] = mapped_column(String(16))  # v17 같은 소식 묶음 id
 
 
 class Disclosure(Base):

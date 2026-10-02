@@ -158,6 +158,12 @@ def build_default_scheduler(app, mode) -> Scheduler:
             raise
     sch.add("macro", fred, 3 * 3600, "closed")
     sch.add("keys_reload", lambda now: _keys_refresh(app), 60, "always")  # .env 를 고치면 1분 안에 반영
+    from .news_llm import extract_pending as _news_extract
+    sch.add("news_extract", lambda now: _news_extract(app, now=now), 1800, "always")  # 뉴스 구조화(규칙 전부 + LLM 최근 40건) · 같은 소식 묶기
+    from . import pead as _pead
+    from .center import weekly_alert as _weekly
+    sch.add("pead_scan", lambda now: _pead.scan(app, now), 6 * 3600, "always")  # 실적 서프라이즈 → 이벤트 전략 장부에 봉인 (전진 기록)
+    sch.add("weekly_schedule", lambda now: _weekly(app, now), 6 * 3600, "always")  # 월요일: 이번 주 보유 종목 일정 알림
     from .aitrack import snapshot as _ai_track
     sch.add("ai_track", lambda now: _ai_track(app, now), 24 * 3600, "closed")  # AI 성적 매일 기록 · 나쁘면 자동 SHADOW
 

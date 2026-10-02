@@ -1068,9 +1068,9 @@ function viewSettings(d) {
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
   // v16 메뉴: 홈 · 종목 · 시장 · 뉴스/공시 · AI · 포트폴리오 · 리스크 · 백테스트 · AI 성적표 · 일정 · 투자일지 (+ 신뢰 · 시스템)
-  ["핵심", [["dashboard", "home", "홈"], ["action", "bell", "오늘 할 일 · Action Center"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["market", "market", "시장"], ["news", "news", "뉴스 · 공시"], ["calendar", "bell", "일정 (D-Day)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
-  ["AI", [["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI Lab · 실패 연구"], ["ai", "score", "AI 성적 · 보정"], ["aihealth", "pulse", "AI · 모델 Health"], ["power", "learn", "실제 예측력"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["graph", "models", "지식 그래프 · 업종"]]],
-  ["포트폴리오 · 리스크", [["pos", "portfolio", "Portfolio OS"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 · 증권사 검증"], ["sheet", "sheet", "리밸런싱 주문표"]]],
+  ["핵심", [["dashboard", "home", "홈"], ["action", "bell", "오늘 할 일 · Action Center"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["map", "market", "증시 지도"], ["market", "market", "시장 국면 · 지표"], ["news", "news", "뉴스 보드"], ["newslist", "news", "뉴스 · 공시 원문"], ["calendar", "bell", "일정 (D-Day)"], ["replay", "review", "그날 재현 (날짜 선택)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
+  ["AI", [["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI Lab · 실패 연구"], ["ai", "score", "AI 성적 · 보정"], ["aihealth", "pulse", "AI · 모델 Health"], ["power", "learn", "실제 예측력"], ["pead", "evidence", "실적 이벤트 전략 (전진 기록)"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["graph", "models", "지식 그래프 · 업종"]]],
+  ["포트폴리오 · 리스크", [["budget", "risk", "내 투자 한도"], ["pos", "portfolio", "Portfolio OS"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 · 증권사 검증"], ["sheet", "sheet", "리밸런싱 주문표"], ["usorder", "sheet", "미국 주식 주문표"]]],
   ["기록 · 연구", [["myjournal", "journal", "투자일지 vs AI"], ["profile", "settings", "내 투자 성향"], ["journal", "journal", "AI 판단 저널"], ["research", "research", "백테스트 · 리서치"], ["lab", "lab", "실험 · 승격"], ["review", "review", "복기 리포트"], ["reports", "review", "리포트 · 브리핑"], ["models", "models", "모델 · 검증"]]],
   ["신뢰 · 시스템", [["datahealth", "data", "데이터 건강"], ["readiness", "check", "매매 준비"], ["truth", "shield", "Truth Center"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "24H 관제실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
 ];
@@ -1092,7 +1092,7 @@ async function render() {
   const d = S.data;
   if (!d) { el.innerHTML = skeleton(); return; }
   try {
-    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); todayCard(el).then(() => osHomeBrief(el)); applyHomeLayout(el); }
+    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); todayCard(el).then(() => osHomeBrief(el)).then(() => weeklyCard(el, "#home-brief")); applyHomeLayout(el); }
     else if (S.view === "analysis") await viewAnalysis(el);
     else if (S.view === "market") {
       el.innerHTML = viewMarket(d);
@@ -1103,7 +1103,9 @@ async function render() {
       const pf = d.portfolios[S.pfMode];
       if (pf?.curve?.length) lineChart($("#eq-chart"), [{ data: pf.curve, color: "#3b82f6", title: S.pfMode }]);
     } else if (S.view === "trades") el.innerHTML = viewTrades(d);
-    else if (S.view === "news") el.innerHTML = viewNews(d);
+    else if (S.view === "news") await viewNewsBoard(el);  // v17: 보는 뉴스 보드
+    else if (S.view === "newslist") el.innerHTML = viewNews(d);  // 원문 목록 (예전 화면)
+    else if (S.view === "map") await viewMarketMap(el);
     else if (S.view === "review") await viewReview(el);
     else if (S.view === "models") el.innerHTML = viewModels(d);
     else if (S.view === "ops") await viewOps(el);
@@ -1125,7 +1127,7 @@ async function render() {
     else if (S.view === "compare") await viewCompare(el);
     else if (S.view === "aihealth") await viewAIHealth(el);
     else if (S.view === "power") await viewPower(el);
-    else if (S.view === "calendar") await viewCalendar(el);
+    else if (S.view === "calendar") { await viewCalendar(el); weeklyCard(el, null); }
     else if (S.view === "execution") await viewExecution(el);
     else if (S.view === "myjournal") await viewMyJournal(el);
     else if (S.view === "accounts") await viewAccounts(el);
@@ -1150,6 +1152,10 @@ async function render() {
     else if (S.view === "validation") await viewValidation(el);
     else if (S.view === "governance") await viewGovernance(el);
     else if (S.view === "manual") await viewManual(el);
+    else if (S.view === "budget") await viewBudget(el);
+    else if (S.view === "pead") await viewPead(el);
+    else if (S.view === "usorder") await viewUSOrder(el);
+    else if (S.view === "replay") await viewReplay(el);
     else el.innerHTML = card("페이지 없음", empty(`'${esc(S.view)}' 화면이 없습니다`));
   } catch (e) {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);

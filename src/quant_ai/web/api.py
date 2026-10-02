@@ -867,6 +867,87 @@ class DashboardAPI:
             self._risk_cache.pop("setup", None)
         return self._cached("setup", 15, lambda: setup_status(self.app))
 
+    def news_board(self, days: int = 3, only: str = "", symbol: str = "") -> dict:
+        from ..board import news_board
+        if only not in ("", "mine", "긍정", "부정", "중립"):
+            raise ValueError("only 는 mine / 긍정 / 부정 / 중립")
+        d = max(1, min(int(days), 14))
+        return self._cached(f"nb:{d}:{only}:{symbol}", 60, lambda: news_board(self.app, d, only or None, symbol or None))
+
+    def market_map(self) -> dict:
+        from ..board import market_map
+        return self._cached("market_map", 60, lambda: market_map(self.app))
+
+    def news_extract(self) -> dict:
+        from ..news_llm import extract_pending
+        self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith("nb:")}
+        return extract_pending(self.app)
+
+    def pead(self) -> dict:
+        from .. import pead
+        return self._cached("pead", 120, lambda: pead.report(self.app))
+
+    def us_sheet(self, body: dict) -> dict:
+        from ..usorder import sheet
+
+        def nums(d, cast):
+            try:
+                return {str(k).upper()[:10]: cast(v) for k, v in (d or {}).items() if str(v).strip() != ""}
+            except (TypeError, ValueError):
+                raise ValueError("수량·비중·평단은 숫자로") from None
+        h = body.get("holdings") or {}
+        if isinstance(h, str):  # "AAPL,10\nMSFT,5"
+            h = dict(x.split(",", 1) for x in h.strip().splitlines() if "," in x)
+        t = body.get("targets")
+        if isinstance(t, str) and t.strip():
+            t = dict(x.split(",", 1) for x in t.strip().splitlines() if "," in x)
+        try:
+            cu, ck, yg = float(body.get("cash_usd") or 0), float(body.get("cash_krw") or 0), float(body.get("ytd_gain_krw") or 0)
+        except (TypeError, ValueError):
+            raise ValueError("현금·올해 실현 이익은 숫자로") from None
+        return sheet(self.app, nums(h, lambda v: int(float(v))), cu, ck, nums(t, float) if t else None,
+                     nums(body.get("avg_cost"), float) if body.get("avg_cost") else None, yg)
+
+    def replay(self, d: str) -> dict:
+        from datetime import date as _date
+
+        from ..replay import day
+        try:
+            dd = _date.fromisoformat(d) if d else datetime.now(UTC).date() - pd.Timedelta(days=1)
+        except ValueError:
+            raise ValueError("날짜는 YYYY-MM-DD") from None
+        return self._cached(f"replay:{dd}", 120, lambda: day(self.app, dd))
+
+    def weekly(self) -> dict:
+        from ..center import weekly_schedule
+        return self._cached("weekly", 300, lambda: weekly_schedule(self.app))
+
+    def budget(self, principal: str = "", max_loss: str = "") -> dict:
+        from .. import budget
+        cur = budget.get(self.app)
+        out = {"saved": cur or None, "current": {"live_max_capital": self.app.settings.live_max_capital,
+                                                 "live_small_capital": self.app.settings.live_small_capital,
+                                                 **{k: getattr(self.app.settings.risk, k) for k in ("max_daily_loss_pct", "max_position_weight",
+                                                                                                    "max_order_value", "max_var95", "max_sector_weight")}}}
+        if principal and max_loss:
+            try:
+                out["preview"] = budget.plan(float(principal), float(max_loss))
+            except (TypeError, ValueError) as e:
+                raise ValueError(str(e)) from None
+        mode = self.app.settings.mode.value if self.app.settings.mode.value in ("paper", "shadow", "live") else "paper"
+        out["usage"] = budget.total_loss(self.app, mode)
+        return out
+
+    def budget_write(self, body: dict) -> dict:
+        from .. import budget
+        try:
+            p = budget.save(self.app, body)
+        except (TypeError, ValueError) as e:
+            raise ValueError(str(e) or "원금·최대 손실을 숫자로") from None
+        self._risk_cache.clear()
+        self._audit("budget", f"원금 {p['principal']:,} · 최대 손실 {p['max_loss']:,}")
+        return {"ok": True, **p}
+
     def netcheck(self, run: bool = False) -> dict:
         from .. import netcheck
         if run:

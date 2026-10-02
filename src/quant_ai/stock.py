@@ -242,14 +242,18 @@ def digest(app, symbol: str, now: datetime | None = None) -> dict:
 
 # ------------------------------------------------------------------ 일정 (D-day)
 # 종목 화면에 항상 보여줄 시장 일정 (중요도와 무관): FOMC · CPI · 고용 · 옵션 만기 · 지수 편입/편출 · 금통위
-ALWAYS_KINDS = {"fomc", "cpi", "nfp", "options_expiry", "quad_witching", "index_rebalance", "bok"}
-US_FOR_KR = {"fomc", "cpi", "nfp"}  # 국내 종목도 미국 거시 일정의 영향을 받는다
+ALWAYS_KINDS = {"fomc", "cpi", "nfp", "pce", "options_expiry", "quad_witching", "index_rebalance", "bok"}
+US_FOR_KR = {"fomc", "cpi", "nfp", "pce"}  # 국내 종목도 미국 거시 일정의 영향을 받는다
 def events(app, symbol: str, now: datetime | None = None, days: int = 45) -> list[dict]:
     from zoneinfo import ZoneInfo
     now = now or datetime.now(UTC)
     today = now.astimezone(ZoneInfo("Asia/Seoul")).date()
     kr = symbol[:1].isdigit()
     out = []
+    from .engines.sector import sector_map
+    secs = sector_map(app.engine)
+    my_sec = secs.get(symbol)
+    peers_seen = 0
     for e in ops.get_state(app.engine, "event_calendar").get("events") or []:
         try:
             d = date.fromisoformat(str(e["date"])[:10])
@@ -261,12 +265,38 @@ def events(app, symbol: str, now: datetime | None = None, days: int = 45) -> lis
         mine = e.get("symbol") == symbol
         mkt_ok = e.get("market") in (("KR", "GLOBAL") if kr else ("US", "GLOBAL")) or (kr and e.get("kind") in US_FOR_KR)
         market = not e.get("symbol") and mkt_ok and (e.get("kind") in ALWAYS_KINDS or e.get("importance", 0) >= 0.7)
+        # 동종업체 실적: 같은 업종 다른 종목의 실적 발표 (14일 안 · 최대 3개) — 업종 분위기가 먼저 반영되는 날
+        peer = (not mine and e.get("kind") == "earnings" and e.get("symbol") and my_sec and my_sec != "미분류"
+                and secs.get(e.get("symbol")) == my_sec and 0 <= dd <= 14 and peers_seen < 3)
+        if peer:
+            peers_seen += 1
+            out.append({"date": d.isoformat(), "d_day": dd, "d_label": "D-Day" if dd == 0 else f"D-{dd}", "kind": "peer_earnings",
+                        "title": f"동종업체 실적: {e.get('title')}", "estimated": bool(e.get("estimated")), "scope": "동종",
+                        "source": e.get("source"), "importance": 0.5})
+            continue
         if mine or (market and dd <= 21):
             out.append({"date": d.isoformat(), "d_day": dd, "d_label": "D-Day" if dd == 0 else f"D-{dd}" if dd > 0 else f"D+{-dd}",
                         "kind": e.get("kind"), "title": e.get("title"), "estimated": bool(e.get("estimated")), "scope": "종목" if mine else "시장",
                         "source": e.get("source"), "importance": e.get("importance")})
+    out += _lockup(app, symbol, today)
     out.sort(key=lambda x: (x["d_day"] < 0, abs(x["d_day"]), x["scope"] != "종목"))
     return out[:16]
+
+
+LOCKUP_WORDS = ("보호예수", "의무보유", "매각제한", "락업", "lock-up", "lockup")
+
+
+def _lockup(app, symbol: str, today: date) -> list[dict]:
+    """락업(보호예수·의무보유) 관련 공시 — 해제일 자체는 공시 원문에만 있어 '공시가 나왔다'만 띠에 올린다 (해제일은 원문 확인)."""
+    from .data.db import session_scope
+    from .data.models import Disclosure
+    with session_scope(app.engine) as s:
+        rows = s.scalars(select(Disclosure).where(Disclosure.symbol == symbol, Disclosure.filed_at >= today - timedelta(days=60))
+                         .order_by(Disclosure.filed_at.desc()).limit(200)).all()
+        hits = [(r.filed_at, r.title, r.url) for r in rows if any(w in (r.title or "").lower() for w in LOCKUP_WORDS)]
+    return [{"date": d.isoformat(), "d_day": (d - today).days, "d_label": f"D+{(today - d).days}" if d < today else "D-Day", "kind": "lockup",
+             "title": f"락업 관련 공시: {t[:40]} (해제일은 원문 확인)", "estimated": False, "scope": "종목", "source": "DART", "url": u,
+             "importance": 0.6} for d, t, u in hits[:2]]
 
 
 def page(app, symbol: str, mode: str = "paper") -> dict:

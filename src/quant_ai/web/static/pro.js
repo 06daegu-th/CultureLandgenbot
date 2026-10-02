@@ -285,7 +285,7 @@ function setupBanner(s) {
   const act = s.action || {};
   return `<div class="card setup-card"><div class="setup-h"><div><b>시작 체크리스트</b><span class="small muted"> — 비어 있는 화면은 아래 항목이 채워지면 자동으로 채워집니다</span></div>
     <button class="btn-sm primary" id="warmup-btn" ${act.running ? "disabled" : ""}>${act.running ? "채우는 중…" : "지금 채우기"}</button></div>
-    <div class="setup-steps">${s.steps.map((x) => `<div class="ss ${x.done ? "done" : x.optional ? "opt" : ""}"><span class="ssi">${x.done ? "✓" : x.optional ? "○" : "!"}</span><div><b>${esc(x.label)}</b>${x.optional ? ' <span class="xs dim">선택</span>' : ""}<div class="xs muted">${esc(x.detail)}</div>${x.done ? "" : `<div class="xs" style="color:var(--accent-3)">${esc(x.fix)}</div>`}</div></div>`).join("")}</div>
+    <div class="setup-steps">${s.steps.map((x) => `<div class="ss ${x.done ? "done" : x.optional ? "opt" : ""}"><span class="ssi">${x.done ? "✓" : x.optional ? "○" : "!"}</span><div><b>${esc(x.label)}</b>${x.optional ? ' <span class="xs dim">선택</span>' : ""}<div class="xs muted">${esc(x.detail)}</div>${x.done ? "" : `<div class="xs" style="color:var(--accent-3)">${x.link ? `<a href="${esc(x.link)}">${esc(x.fix)}</a>` : esc(x.fix)}</div>`}</div></div>`).join("")}</div>
     ${keyHelp(s)}
     <div class="small dim" id="warmup-msg">${act.running ? esc(act.progress || "") : act.error ? "실패: " + esc(act.error) : act.finished_at ? "마지막 채우기 " + time(act.finished_at, true) : ""}</div></div>`;
 }

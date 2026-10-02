@@ -244,8 +244,8 @@ function initRecentSearch() {
 }
 
 // ------------------------------------------------------------ 키보드 단축키
-const KEYS = [["/", "종목 검색"], ["g h", "홈"], ["g o", "오늘 할 일 (Action Center)"], ["g m", "시장"], ["g w", "관심종목"], ["g s", "AI 성적표"], ["g t", "Truth Center"], ["g r", "매매 준비"], ["g p", "Portfolio OS"], ["g k", "리스크"], ["g e", "이벤트 캘린더"], ["g c", "종목 비교"], ["g a", "종목 (AI 분석)"], ["g n", "뉴스 · 공시"], ["g d", "데이터 건강"], ["s", "관심종목 별표 (종목 화면)"], ["d", "다크/라이트 전환"], ["?", "단축키 도움말"], ["Esc", "닫기"]];
-const GO = { h: "#dashboard", o: "#action", m: "#market", w: "#watch", s: "#scorecard", t: "#truth", r: "#readiness", p: "#pos", k: "#risk", e: "#calendar", c: "#compare", a: "#analysis", n: "#news", d: "#datahealth" };
+const KEYS = [["/", "종목 검색"], ["g h", "홈"], ["g o", "오늘 할 일 (Action Center)"], ["g m", "증시 지도"], ["g w", "관심종목"], ["g s", "AI 성적표"], ["g t", "Truth Center"], ["g r", "매매 준비"], ["g p", "Portfolio OS"], ["g k", "리스크"], ["g e", "이벤트 캘린더"], ["g c", "종목 비교"], ["g a", "종목 (AI 분석)"], ["g n", "뉴스 · 공시"], ["g d", "데이터 건강"], ["s", "관심종목 별표 (종목 화면)"], ["d", "다크/라이트 전환"], ["?", "단축키 도움말"], ["Esc", "닫기"]];
+const GO = { h: "#dashboard", o: "#action", m: "#map", w: "#watch", s: "#scorecard", t: "#truth", r: "#readiness", p: "#pos", k: "#risk", e: "#calendar", c: "#compare", a: "#analysis", n: "#news", d: "#datahealth" };
 function initShortcuts() {
   let g = 0;
   document.addEventListener("keydown", (e) => {

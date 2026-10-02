@@ -302,3 +302,37 @@ async function viewManual(el) {
     ${rows ? `<div class="scroll" style="margin-top:8px"><table class="tight"><thead><tr><th>종목</th><th class="r">수량</th><th class="r">평단</th><th class="r">현재가</th><th class="r">손익</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty("아직 모의 주문이 없습니다 — 종목 검색(/) → 종목 → [모의 주문]")}`,
   '<a class="link" href="#orders">주문 내역</a>');
 }
+
+// ------------------------------------------------------------ v17: 내 투자 한도 (원금 · 최대 손실 → 모든 한도)
+async function viewBudget(el) {
+  const b = await api("/api/budget");
+  const sv = b.saved;
+  const LBL = { live_max_capital: "실전 운용 상한", live_small_capital: "소액 Live 상한 (첫 단계)", max_daily_loss_pct: "일 손실 한도",
+    max_position_weight: "종목당 최대 비중", max_order_value: "1회 주문 상한", max_var95: "1일 VaR95 한도", max_sector_weight: "업종 최대 비중" };
+  const fmt = (k, v) => (k.includes("capital") || k === "max_order_value") ? "₩" + num(v) : R(v, 1);
+  const table = (p) => `<table class="tight"><thead><tr><th>한도</th><th class="r">값</th><th>근거</th></tr></thead><tbody>${Object.entries(p.limits).map(([k, v]) =>
+    `<tr><td class="small b">${LBL[k] || k}</td><td class="r num">${fmt(k, v)}</td><td class="xs muted">${esc(p.why[k])}</td></tr>`).join("")}</tbody></table>`;
+  const u = b.usage;
+  el.innerHTML = `
+  ${card("내 투자 한도 <span class='small dim'>원금과 '최대로 감당할 손실'을 먼저 — 모든 한도가 여기서 계산됩니다</span>", `
+    <div class="form-grid"><label>원금 (원)<input id="bg-p" type="number" inputmode="numeric" step="100000" value="${sv?.principal ?? ""}" placeholder="예: 10000000"></label>
+      <label>최대로 감당할 손실 (원)<input id="bg-l" type="number" inputmode="numeric" step="10000" value="${sv?.max_loss ?? ""}" placeholder="예: 1000000"></label>
+      <label>실전 첫 단계 비율<input id="bg-f" type="number" step="0.01" min="0.01" max="0.5" value="${sv?.first_stage ?? 0.1}"></label></div>
+    <div style="margin-top:10px;display:flex;gap:8px"><button class="btn-sm" id="bg-prev">미리 보기</button><button class="btn-sm primary" id="bg-save">저장 · 바로 적용</button></div>
+    <div id="bg-out" style="margin-top:12px">${sv ? `<div class="lesson small">${sv.plain.map(esc).join("<br>")}</div>${table(sv)}` : '<div class="xs dim">아직 정하지 않았습니다 — 지금은 .env 의 기본 한도로 동작합니다.</div>'}</div>`)}
+  ${u ? card("원금 대비 손실 (자동 정지 기준)", u.equity == null ? empty("평가 기록 없음") : `<div class="kv-grid">${kv("평가금액", "₩" + num(u.equity))}${kv("손실", "₩" + num(u.loss), "down")}${kv("한도", "₩" + num(u.limit))}${kv("사용", R(u.used, 0))}</div>
+      <div style="margin-top:8px">${hbar(u.used, 1, u.used >= 0.8 ? "neg" : u.used >= 0.5 ? "warn" : "pos")}</div><div class="xs dim">80% 경고 · 100% 이면 자동 매매 전체 정지(HALTED)</div>`) : ""}
+  ${card("지금 적용 중인 한도", `<table class="tight"><tbody>${Object.entries(b.current).map(([k, v]) => `<tr><td class="small">${LBL[k] || k}</td><td class="r num">${fmt(k, v)}</td></tr>`).join("")}</tbody></table>`)}`;
+  const vals = () => ({ principal: $("#bg-p").value, max_loss: $("#bg-l").value, first_stage: $("#bg-f").value });
+  $("#bg-prev").onclick = async () => {
+    const v = vals();
+    const r = await api(`/api/budget?principal=${encodeURIComponent(v.principal)}&max_loss=${encodeURIComponent(v.max_loss)}`).catch((e) => ({ error: e.message }));
+    $("#bg-out").innerHTML = r.error ? `<div class="veto">${esc(r.error)}</div>` : `<div class="lesson small">${r.preview.plain.map(esc).join("<br>")}</div>${table(r.preview)}<div class="xs dim">미리 보기 — 저장해야 적용됩니다</div>`;
+  };
+  $("#bg-save").onclick = async () => {
+    const r = await post("/api/budget", vals());
+    if (r.error) { $("#bg-out").innerHTML = `<div class="veto">${esc(r.error)}</div>`; return; }
+    toast({ title: "투자 한도 저장", body: `원금 ${num(r.principal)}원 · 최대 손실 ${num(r.max_loss)}원`, level: "good" });
+    render();
+  };
+}

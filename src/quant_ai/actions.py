@@ -70,6 +70,7 @@ def setup_status(app) -> dict:
          "detail": f"{n_cons}건 (채점 {n_scored}건)" + (
              f" · 지금 판단 중 {prog.get('done', 0)}/{prog.get('total', 0)}" if prog.get("running") else ""), "fix": "'지금 채우기' 를 누르면 코어 후보를 AI 가 한 번 판단 (무료 한도 내)",
          "action": "warmup"},
+        _budget_step(app),
         {"key": "book", "label": "운용 장부 (가상/모의)", "done": n_snap > 0, "detail": f"스냅샷 {n_snap}개",
          "fix": "./run.sh 로 사이클 1회 (리밸런싱 날이 아니면 주문 없음)"},
         _key_step("disclosures", "공시 (DART)", items["disclosures"], st.dart_api_key, diag["DART_API_KEY"], "DART_API_KEY"),
@@ -81,6 +82,14 @@ def setup_status(app) -> dict:
     need = [x for x in steps if not x["done"] and not x.get("optional")]
     return {"ready": not need, "steps": steps, "confidence": conf["score"], "confidence_label": conf["label"],
             "action": get_action("warmup")}
+
+
+def _budget_step(app) -> dict:
+    from .budget import get
+    b = get(app)
+    return {"key": "budget", "label": "내 투자 한도 (원금 · 최대 손실)", "done": bool(b.get("principal")),
+            "detail": f"원금 {b['principal']:,}원 · 최대 손실 {b['max_loss']:,}원 ({b['loss_pct']:.1%})" if b.get("principal") else "아직 안 정함",
+            "fix": "먼저 정하세요 → 모든 한도(실전 상한·일 손실·종목 비중·VaR)가 여기서 계산됨 (#budget)", "link": "#budget"}
 
 
 def _key_step(key: str, label: str, item: dict, has_key, diag: dict, env: str) -> dict:

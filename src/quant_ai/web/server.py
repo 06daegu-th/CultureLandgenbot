@@ -177,6 +177,18 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.keys())
                     if url.path == "/api/netcheck":
                         return self._json(api.netcheck())
+                    if url.path == "/api/news-board":
+                        return self._json(api.news_board(int(arg("days", "3") or 3), arg("only", "")[:4], arg("symbol", "")[:12]))
+                    if url.path == "/api/market-map":
+                        return self._json(api.market_map())
+                    if url.path == "/api/pead":
+                        return self._json(api.pead())
+                    if url.path == "/api/replay":
+                        return self._json(api.replay(arg("date", "")[:10]))
+                    if url.path == "/api/weekly":
+                        return self._json(api.weekly())
+                    if url.path == "/api/budget":
+                        return self._json(api.budget(arg("principal", "")[:15], arg("max_loss", "")[:15]))
                     if url.path == "/api/server":
                         return self._json(api.server())
                     if url.path == "/api/db":
@@ -370,6 +382,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json(api.prefs_write(body))
                 if url.path == "/api/netcheck":
                     return self._json(api.netcheck(run=True))
+                if url.path == "/api/news-extract":
+                    return self._json(api.news_extract())
+                if url.path == "/api/us-sheet":
+                    return self._json(api.us_sheet(body))
+                if url.path == "/api/budget":
+                    return self._json(api.budget_write(body))
                 if url.path == "/api/keys/reload":
                     return self._json(api.keys_reload())
                 if url.path == "/api/keys/probe":

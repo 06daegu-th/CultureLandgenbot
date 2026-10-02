@@ -220,3 +220,42 @@ def _aware(t):
 
 
 __all__ = ["action_center", "watchlist", "set_group", "risk_simple", "market_type"]
+
+
+# ------------------------------------------------------------------ v17: 보유 종목 주간 일정 알림
+def weekly_schedule(app, now: datetime | None = None, days: int = 7) -> dict:
+    """보유·관심 종목의 다음 7일 일정(실적·배당락·공시·동종업체 실적) + 시장 큰 일정(FOMC·CPI·PCE·만기)."""
+    from .alerts import focus_symbols
+    from .stock import events
+    now = now or datetime.now(UTC)
+    focus = list(focus_symbols(app))[:30]
+    rows, seen = [], set()
+    for sym in focus:
+        for e in events(app, sym, now, days=days):
+            if not 0 <= e["d_day"] <= days:
+                continue
+            key = (e["title"], e["date"]) if e["scope"] == "시장" else (sym, e["title"], e["date"])
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(e | {"symbol": sym if e["scope"] != "시장" else None})
+    rows.sort(key=lambda x: (x["d_day"], x["scope"] != "종목"))
+    return {"rows": rows, "n": len(rows), "as_of": label(now)}
+
+
+def weekly_alert(app, now: datetime | None = None) -> int:
+    """월요일(한국 시간)에 한 번: 이번 주 보유 종목 일정을 알림으로."""
+    from zoneinfo import ZoneInfo
+
+    from .alerts import push
+    now = now or datetime.now(UTC)
+    k = now.astimezone(ZoneInfo("Asia/Seoul"))
+    if k.weekday() != 0:
+        return 0
+    w = weekly_schedule(app, now)
+    if not w["rows"]:
+        return 0
+    body = " · ".join(f"{e['d_label']} {e['title']}" for e in w["rows"][:8])
+    r = push(app.engine, "event", f"이번 주 일정 {w['n']}건", body, level="info", link="#calendar",
+             dedupe=f"weekly_schedule:{k.isocalendar().year}-{k.isocalendar().week}")
+    return int(r is not None)

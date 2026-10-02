@@ -1,7 +1,7 @@
 """News Intelligence.
 
-기본 구현은 한/영 키워드 사전 기반이다 (빠르고, 설명 가능하고, 오프라인에서 동작).
-``NewsAnalyzer`` 를 상속해 ``analyze`` 만 바꾸면 LLM 기반 분석기로 교체할 수 있다.
+기본 구현은 한/영 키워드 사전 + 부정어 처리 (빠르고, 설명 가능하고, 오프라인에서 동작).
+LLM 키가 있으면 news_llm.extract 가 기사마다 이벤트·방향·확신도를 JSON 으로 다시 뽑아 이 값을 덮어쓴다.
 """
 
 from __future__ import annotations
@@ -46,23 +46,56 @@ class NewsAnalysis:
     matched: list[str] = field(default_factory=list)
 
 
+# 부정·반전 표현: 키워드 바로 뒤(같은 절)에 오면 뜻이 뒤집힌다. "어닝쇼크는 아니다" · "적자 우려 해소" · "not a miss"
+NEGATORS_KO = ("않", "아니", "아닌", "없", "무산", "부인", "철회", "해소", "벗어", "피했", "피해", "모면", "불식", "일축", "반박", "그쳤")
+NEGATORS_EN = ("not ", "no ", "n't", "denies", "denied", "avoid", "avoided", "eased", "dismiss", "rules out", "ruled out")
+CLAUSE_END = re.compile(r"[.!?。…,;·\n]|(?:지만|으나|는데|면서)")
+# 출처 신뢰도 (중요도에 곱함) — 공식 공시·통신사 > 경제지 > 일반 > 커뮤니티
+SOURCE_WEIGHT = {"dart": 1.0, "연합": 1.0, "yna": 1.0, "reuters": 1.0, "bloomberg": 1.0, "한국경제": 0.9, "hankyung": 0.9,
+                 "매일경제": 0.9, "mk.co": 0.9, "이데일리": 0.85, "머니투데이": 0.85, "mt.co": 0.85, "yahoo": 0.8,
+                 "naver": 0.8, "rss": 0.75, "stocktwits": 0.3, "토론": 0.3, "community": 0.3}
+
+
+def source_weight(source: str | None, url: str | None = None) -> float:
+    s = f"{source or ''} {url or ''}".lower()
+    return max((w for k, w in SOURCE_WEIGHT.items() if k in s), default=0.7)
+
+
+NEG_BEFORE_EN = re.compile(r"\b(not|no|never|didn't|did not|doesn't|does not|won't|without)\s+(\w+\s+){0,2}$")
+
+
+def _negated(text: str, end: int, start: int | None = None) -> bool:
+    """키워드 뒤 같은 절 안(최대 14자)에 부정·반전 표현이 있나 (영어는 앞 2단어 안의 not/no/never 도)."""
+    if start is not None and NEG_BEFORE_EN.search(text[max(0, start - 25):start]):
+        return True
+    tail = text[end:end + 14]
+    m = CLAUSE_END.search(tail)
+    if m:
+        tail = tail[:m.start()]
+    return any(n in tail for n in NEGATORS_KO) or any(n in tail for n in NEGATORS_EN)
+
+
 class NewsAnalyzer:
     def analyze(self, title: str, body: str = "") -> NewsAnalysis:
-        # 제목에 가중치 2배
-        text_title, text_body = title.lower(), body.lower()
+        """키워드 + 부정어 처리. 제목 가중치 2배 · 띄어쓰기 차이 무시("어닝 쇼크" = "어닝쇼크") ·
+        키워드 뒤 같은 절에 '아니다/않다/해소/모면/not' 이 오면 반대로(절반 세기) 센다."""
         score, matched = 0.0, []
-        for words, sign in ((POSITIVE, 1), (NEGATIVE, -1)):
-            for w, weight in words.items():
-                hits = 2 * text_title.count(w) + text_body.count(w)
-                if hits:
-                    score += sign * weight * hits
-                    matched.append(w)
-        # 부정 표현 "~않" 등은 단순 사전의 한계. LLM 분석기로 교체 시 해결.
+        for part, mult in ((title, 2), (body, 1)):
+            low = (part or "").lower()
+            nospace = re.sub(r"\s+", "", low)
+            for words, sign in ((POSITIVE, 1), (NEGATIVE, -1)):
+                for w, weight in words.items():
+                    hay, key = (nospace, w.replace(" ", "")) if not w.isascii() else (low, w)
+                    for m in re.finditer(re.escape(key), hay):
+                        neg = _negated(hay, m.end(), m.start() if w.isascii() else None)
+                        score += (-0.5 if neg else 1.0) * sign * weight * mult
+                        matched.append(f"{w}{'(부정)' if neg else ''}")
         sentiment = math.tanh(score / 3.0)
-        text = f"{text_title} {text_body}"
+        text = f"{(title or '').lower()} {(body or '').lower()}"
         events = [e for e, kws in EVENTS.items() if any(k in text for k in kws)]
-        importance = min(1.0, 0.2 + 0.1 * len(matched) + 0.15 * sum(EVENT_WEIGHT[e] for e in events))
-        return NewsAnalysis(sentiment=sentiment, importance=importance, events=events, matched=matched)
+        uniq = list(dict.fromkeys(matched))
+        importance = min(1.0, 0.2 + 0.1 * len(uniq) + 0.15 * sum(EVENT_WEIGHT[e] for e in events))
+        return NewsAnalysis(sentiment=sentiment, importance=importance, events=events, matched=uniq)
 
 
 def tag_symbols(text: str, aliases: dict[str, list[str]]) -> list[str]:
