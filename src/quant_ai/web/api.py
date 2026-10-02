@@ -41,6 +41,8 @@ REGIME_LABELS = {"bull_quiet": "안정적 상승", "bull_volatile": "변동성 �
                  "bear_quiet": "완만한 하락", "bear_volatile": "변동성 하락", "crisis": "위기"}
 from ..analysts.analysts import ROLE_TITLES as ANALYST_LABELS  # noqa: E402
 
+AI_ICON = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡", "NO_TRADE": "⚪"}
+
 ROLE_DESC = {"primary": "뉴스 · 이벤트 · 선반영", "nvidia": "거시 · 시장 상태 · 해외 연동", "risk": "사지 말아야 할 이유 · 거부권",
              "panel": "공시 · 실적 · 기업 이벤트"}
 
@@ -382,6 +384,15 @@ class DashboardAPI:
                               "pnl_pct": _f(px / p["avg_price"] - 1 if p["avg_price"] else 0),
                               "weight": _f(val / last.equity if last.equity else 0)})
         positions.sort(key=lambda x: -(x["value"] or 0))
+        if positions:  # v18: 보유종목 옆 AI 판단 (NVDA 🟢 BUY)
+            held = [p["symbol"] for p in positions]
+            sub = select(ConsensusRecord.symbol, func.max(ConsensusRecord.id).label("mid")).where(
+                ConsensusRecord.symbol.in_(held)).group_by(ConsensusRecord.symbol).subquery()
+            ai = {c.symbol: c for c in s.scalars(select(ConsensusRecord).join(sub, ConsensusRecord.id == sub.c.mid))}
+            for p in positions:
+                c = ai.get(p["symbol"])
+                p["ai"] = None if c is None else {"action": c.action, "icon": AI_ICON.get(c.action, "⚪"),
+                                                  "prob_up": _f(c.prob_up), "at": _ts(c.as_of)}
         first = snaps[0].equity
         return {"cash": _f(last.cash, 0), "equity": _f(last.equity, 0), "ts": _ts(last.ts),
                 "return_pct": _f(last.equity / self.app.settings.initial_cash - 1),

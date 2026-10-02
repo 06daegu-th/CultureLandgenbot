@@ -144,6 +144,13 @@ ITEMS = [
     ("DATA", "SEC EDGAR filings", "미국 원천 공시 (8-K·10-Q·10-K…) · 8-K 2.02 실적 발표 → 실적 이벤트", "data/collectors/sec.py", "test_sec_edgar_filings_and_earnings_event"),
     ("DATA", "Data conflict board", "가격(KRX↔Yahoo·증권사↔DB) · 실적일(소스별) · 뉴스 해석(매체별 톤) 충돌 표시", "conflicts.py", "test_conflicts_price_earnings_and_news"),
     ("SAFETY", "Budget replay", "과거 데이터로 '이 한도였으면 연 몇 번 정지했나' · 권장 한도 · 입출금 반영 손실 · 정지 후 처리", "budget.py", "test_budget_replay_counts_triggers_and_stop_sheet"),
+    # v18
+    ("UX", "Company logos", "검색·관심·포트폴리오·종목 상세·뉴스 칩에 회사 로고 · 직접 넣은 파일 > 공개 이미지 > 이니셜 · 7일 실패 캐시", "logos.py", "test_logo_sources_cache_fallback_and_safety"),
+    ("UX", "News/disclosure detail", "원문·출처·발행 시각(ET/KST) · 번역 · 쉬운 설명 · 용어 풀이 · 중요 숫자 · 🔴🟠🟡⚪ · 영향 종목 · AI 판단 변화 · 전후 주가", "newsdetail.py", "test_news_detail_times_terms_level_chain_and_explain"),
+    ("UX", "Stock today · earnings banner", "오늘 중요한 것 · 실적 D-Day(장전/장후) 최상단 · AI 1/5/20일 확률 · 평단·예상 범위·52주·거래량 급증·FOMC/CPI 표시", "stockplus.header/overlay", "test_stock_today_banner_horizons_and_chart_extras"),
+    ("UX", "Home 5 · AI state", "오늘 시장·내 자산·AI 상태(🟢검증됨/🟡검증 중/🔴사용 금지)·중요한 뉴스·오늘 할 일", "center.home5", "test_home5_sections_and_route"),
+    ("EVENT", "Exchange status · holiday notice", "🟢장중/🟡시간외/🔴장마감 · '오늘 미국 증시는 휴장입니다 (독립기념일)' · 서머타임", "clock.clock_status", "test_clock_light_holiday_notice_and_dst"),
+    ("PORTFOLIO", "Holdings × AI", "보유종목 옆 AI 마지막 판단 (🟢 BUY 64%)", "web/api._portfolio", "test_portfolio_rows_show_ai_badge"),
     ("EVENT", "Weekly holdings schedule", "이번 주 보유·관심 종목 일정 + 월요일 알림 · 동종업체 실적 · 락업 공시", "center.py", "test_weekly_schedule_alert_and_lockup_strip"),
 ]
 

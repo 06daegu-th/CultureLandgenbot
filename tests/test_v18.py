@@ -244,3 +244,25 @@ def test_home5_sections_and_route(app, server, monkeypatch):
     monkeypatch.undo()
     st, body, _ = _get(server, "/api/home5?mode=paper")
     assert st == 200 and set(json.loads(body)) >= {"market", "assets", "ai", "news", "todo"}
+
+
+def test_portfolio_rows_show_ai_badge(app):
+    from datetime import UTC, datetime
+
+    from quant_ai.data.db import session_scope
+    from quant_ai.data.models import ConsensusRecord, Instrument, PortfolioSnapshot
+    from quant_ai.web.api import DashboardAPI
+    a, b = _syms(app)[:2]
+    bars = app.market_data()[0]
+    now = datetime.now(UTC)
+    with session_scope(app.engine) as s:
+        s.add(PortfolioSnapshot(mode="shadow", ts=now, cash=1e6, equity=3e6,
+                                positions={a: {"qty": 10, "avg_price": 1000.0}, b: {"qty": 5, "avg_price": 2000.0}}))
+        s.add(ConsensusRecord(symbol=a, as_of=now - timedelta(days=2), action="HOLD", prob_up=0.5, confidence=50, conflict="low", payload={}))
+        s.add(ConsensusRecord(symbol=a, as_of=now, action="BUY", prob_up=0.64, confidence=60, conflict="low", payload={}))
+    with session_scope(app.engine) as s:
+        inst = {i.symbol: i for i in s.query(Instrument).all()}
+        pf = DashboardAPI(app)._portfolio(s, "shadow", bars, inst)
+    rows = {p["symbol"]: p for p in pf["positions"]}
+    assert rows[a]["ai"]["action"] == "BUY" and rows[a]["ai"]["icon"] == "🟢" and rows[a]["ai"]["prob_up"] == 0.64
+    assert rows[b]["ai"] is None

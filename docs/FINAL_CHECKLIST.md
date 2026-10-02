@@ -48,6 +48,7 @@
 | ✓ rebalance | KOSPI200 정기변경 · MSCI 리뷰 · S&P 분기 | `engines/events.py` | `test_event_calendar_builds_every_kind_with_sources` |
 | ✓ estimated flag | 규칙으로 추정한 날짜는 '추정' 표시 | `engines/events.py` | `test_event_calendar_builds_every_kind_with_sources` |
 | ✓ event risk | 이벤트 위험 점수 · 실적 D-1 매수 ×0.5 · 금통위/FOMC 고베타 ×0.75 | `engines/events.py · risk.py` | `test_risk_engine_gates_block_and_shrink_buys_only` |
+| ✓ Exchange status · holiday notice | 🟢장중/🟡시간외/🔴장마감 · '오늘 미국 증시는 휴장입니다 (독립기념일)' · 서머타임 | `clock.clock_status` | `test_clock_light_holiday_notice_and_dst` |
 | ✓ Weekly holdings schedule | 이번 주 보유·관심 종목 일정 + 월요일 알림 · 동종업체 실적 · 락업 공시 | `center.py` | `test_weekly_schedule_alert_and_lockup_strip` |
 
 ## AI
@@ -99,6 +100,7 @@
 | ✓ Position sizing | 반켈리 · 변동성 목표 · 한도 × 이벤트 × 준비 상태 | `trading/trade_plan.py` | `test_trade_plan_sizing_entry_and_invalidation` |
 | ✓ Thesis | 왜 샀나·무엇이 틀리면 판다·목표·무효화·점검일 → 30분마다 감시·알림 | `thesis.py` | `test_thesis_validation_breach_and_alert` |
 | ✓ Portfolio OS | 내 자산·주식/현금·업종 집중·최대 위험 한 문장 · 전략·위기 시뮬레이션 | `portfolio_os.py` | `test_lab_validation_portfolio_personal_failure` |
+| ✓ Holdings × AI | 보유종목 옆 AI 마지막 판단 (🟢 BUY 64%) | `web/api._portfolio` | `test_portfolio_rows_show_ai_badge` |
 
 ## TRADING
 
@@ -179,3 +181,7 @@
 | ✓ Manual paper ticket | 검색→종목→[모의 주문] 3탭 · 같은 리스크 엔진 · 전략 장부와 분리 | `ticket.py` | `test_manual_ticket_fail_closed_and_place` |
 | ✓ News board · market map | 같은 소식 한 장·톤 색·뉴스 이후 주가 · 업종별 지도(거래대금 크기·등락 색) | `board.py` | `test_market_map_tiles_sectors_and_movers` |
 | ✓ Day replay | 날짜를 고르면 그날 알 수 있던 가격·뉴스·AI 판단만 (나중 결과는 따로) | `replay.py` | `test_replay_day_only_knows_that_day` |
+| ✓ Company logos | 검색·관심·포트폴리오·종목 상세·뉴스 칩에 회사 로고 · 직접 넣은 파일 > 공개 이미지 > 이니셜 · 7일 실패 캐시 | `logos.py` | `test_logo_sources_cache_fallback_and_safety` |
+| ✓ News/disclosure detail | 원문·출처·발행 시각(ET/KST) · 번역 · 쉬운 설명 · 용어 풀이 · 중요 숫자 · 🔴🟠🟡⚪ · 영향 종목 · AI 판단 변화 · 전후 주가 | `newsdetail.py` | `test_news_detail_times_terms_level_chain_and_explain` |
+| ✓ Stock today · earnings banner | 오늘 중요한 것 · 실적 D-Day(장전/장후) 최상단 · AI 1/5/20일 확률 · 평단·예상 범위·52주·거래량 급증·FOMC/CPI 표시 | `stockplus.header/overlay` | `test_stock_today_banner_horizons_and_chart_extras` |
+| ✓ Home 5 · AI state | 오늘 시장·내 자산·AI 상태(🟢검증됨/🟡검증 중/🔴사용 금지)·중요한 뉴스·오늘 할 일 | `center.home5` | `test_home5_sections_and_route` |

@@ -62,6 +62,8 @@ LICENSES = [
     {"source": "KIS Open API (한국투자증권)", "used": "실시간 시세·호가·주문·잔고", "personal": "본인 계좌 사용",
      "commercial": "시세 재배포는 별도 계약 · 타인 주문 대행은 일임/인가 문제", "risk": "high"},
     {"source": "Wikipedia 조회수 · 네이버 데이터랩", "used": "대체 데이터(관심도)", "personal": "가능", "commercial": "약관·API 조건 확인", "risk": "medium"},
+    {"source": "회사 로고 (FMP 공개 이미지 · 구글 파비콘)", "used": "종목 식별용 아이콘 (검색·관심·포트폴리오)", "personal": "가능 — 식별 표시로만",
+     "commercial": "로고는 각 회사의 상표 — 식별 목적 표시는 흔하나 변형·광고 사용 금지 · 이미지 제공처 약관 확인 · QUANT_LOGOS=off 로 끌 수 있음", "risk": "medium"},
     {"source": "LLM API (Gemini·NVIDIA·Groq 등 무료 구간)", "used": "AI 분석·요약", "personal": "무료 구간 약관 내",
      "commercial": "무료 구간은 상용·대량 사용 제한이 흔함 — 유료 요금제·데이터 처리 약관 확인", "risk": "medium"},
 ]

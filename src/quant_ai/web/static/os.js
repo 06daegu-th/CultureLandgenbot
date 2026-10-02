@@ -262,12 +262,33 @@ async function osEarnings(sym) {
     <td class="r ${r.beat ? "up" : r.beat === false ? "down" : ""}">${spct(r.eps_surprise_pct ?? r.base_surprise_pct)}</td>
     <td class="r">${spct(r.revenue_surprise_pct)}</td>
     <td class="r ${r.reaction_1d >= 0 ? "up" : "down"}">${P(r.reaction_1d, 2)}</td><td class="r">${P(r.drift_20d, 1)}</td><td class="xs dim">${esc(r.source)}</td></tr>`).join("");
+  const trend = earnTrend(e.rows || []);
   const up = e.upcoming || (e.kr_upcoming ? { date: e.kr_upcoming.date || e.kr_upcoming, estimated: true } : null);
   box.innerHTML = card(`실적 <span class="small dim">예상 vs 실제 · 서프라이즈 · 발표 후 반응(시장 대비)</span>`, `
     <div class="kv-grid">${kv("다음 발표", up ? esc(String(up.date).slice(0, 10)) + (up.estimated ? " (추정)" : "") : "-")}${kv("예상 EPS", up?.eps_estimate != null ? num(up.eps_estimate, 2) : "-")}
       ${kv("상회 비율", R(e.beat_rate, 0))}${kv("상회 시 반응", P(e.avg_reaction_beat, 2))}${kv("하회 시 반응", P(e.avg_reaction_miss, 2))}${kv("매출 YoY", P(e.revenue_yoy, 1))}</div>
+    ${trend}
     ${rows ? `<div class="scroll" style="margin-top:8px"><table class="tight"><thead><tr><th>발표</th><th class="r">EPS 예상</th><th class="r">EPS 실제</th><th class="r">EPS 서프</th><th class="r">매출 서프</th><th class="r">다음날</th><th class="r">20일</th><th>출처</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty("실적 이력 없음 — 종목 상세·국내 컨센서스 수집 후 채워집니다")}
     <div class="xs muted" style="margin-top:6px">가이던스: ${esc(e.guidance)}</div><div class="xs dim">${esc(e.note)} · 출처 ${(e.sources || []).map(esc).join(", ")}</div>`);
+}
+
+// v18: 최근 실적 추세 — 분기별 EPS 예상(회색) vs 실제(상회 초록 · 하회 빨강) 막대
+function earnTrend(rows) {
+  const xs = rows.filter((r) => r.eps_actual != null).slice(0, 12).reverse();
+  if (xs.length < 2) return "";
+  const vals = xs.flatMap((r) => [r.eps_actual, r.eps_estimate ?? r.eps_actual]);
+  const hi = Math.max(0, ...vals), lo = Math.min(0, ...vals), span = hi - lo || 1;
+  const W = 560, H = 140, pad = 18, bw = (W - pad * 2) / xs.length;
+  const y = (v) => pad + (hi - v) / span * (H - pad * 2);
+  const bar = (x, v, w, c) => { const a = y(Math.max(v, 0)), b = y(Math.min(v, 0)); return `<rect x="${x.toFixed(1)}" y="${a.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(1, b - a).toFixed(1)}" fill="${c}" rx="2"/>`; };
+  const bars = xs.map((r, i) => {
+    const x = pad + i * bw, w = bw * 0.36;
+    const c = r.beat === false ? "var(--down)" : r.beat ? "var(--up)" : "#64748b";
+    return (r.eps_estimate != null ? bar(x + bw * 0.1, r.eps_estimate, w, "rgba(148,163,184,.55)") : "") + bar(x + bw * 0.1 + w + 2, r.eps_actual, w, c)
+      + `<text x="${(x + bw / 2).toFixed(1)}" y="${H - 3}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".6">${esc(String(r.period || r.date || "").slice(0, 7))}</text>`;
+  }).join("");
+  return `<div class="earn-trend"><div class="xs muted">최근 실적 추세 — <span style="color:#94a3b8">■</span> EPS 예상 · <span class="up">■</span> 실제(상회) · <span class="down">■</span> 실제(하회)</div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="분기별 EPS 예상 대비 실제"><line x1="${pad}" x2="${W - pad}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="currentColor" opacity=".25"/>${bars}</svg></div>`;
 }
 
 // ------------------------------------------------------------ 종목 리스크

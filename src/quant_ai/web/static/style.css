@@ -1141,14 +1141,15 @@ img.lg { border-radius: 50%; vertical-align: middle; object-fit: contain; backgr
 
 /* v18: 홈 첫 화면 5칸 */
 .home5 { margin-bottom: 14px; }
-.h5-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.h5-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.h5-grid .h5 { grid-column: span 2; }
 .h5-grid .h5 { margin: 0; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.h5-grid .h5-wide { grid-column: span 2; }
+.h5-grid .h5-wide { grid-column: span 4; }
 .h5-h { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .02em; margin-bottom: 2px; }
 .h5-big { font-size: 20px; font-weight: 800; }
 .h5-news { cursor: pointer; padding: 4px 0; border-bottom: 1px dashed var(--line, rgba(127,127,127,.2)); }
 .h5-news:hover .small { text-decoration: underline; }
 .h5-ai.ai-verified { border-left: 4px solid #22c55e; } .h5-ai.ai-checking { border-left: 4px solid #eab308; } .h5-ai.ai-banned { border-left: 4px solid var(--down); }
 .h5-at { margin-top: 6px; text-align: right; }
-@media (max-width: 1100px) { .h5-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .h5-grid { grid-template-columns: 1fr; } .h5-grid .h5-wide { grid-column: auto; } }
+@media (max-width: 1100px) { .h5-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .h5-grid .h5 { grid-column: auto; } .h5-grid .h5-wide { grid-column: span 2; } }
+@media (max-width: 640px) { .h5-grid { grid-template-columns: 1fr; } .h5-grid .h5, .h5-grid .h5-wide { grid-column: auto; } }
