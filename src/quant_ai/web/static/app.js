@@ -50,10 +50,9 @@ const empty = (msg = "아직 기록 없음") => `<div class="empty">${esc(msg)}<
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   if (S.token) headers["X-Token"] = S.token;
-  const r = await fetch(path, { ...opts, headers });
-  if (r.status === 401) {
-    const t = prompt("접속 토큰 (QUANT_WEB_TOKEN)");
-    if (t) { S.token = t; safeSet("qa_token", t); return api(path, opts); }
+  const r = await fetch(path, { ...opts, headers, credentials: "same-origin" });
+  if (r.status === 401 && !path.startsWith("/api/login")) {
+    if (await loginDialog()) return api(path, opts);  // v17: 비밀번호 + 2단계 인증 (또는 토큰)
   }
   if (!r.ok) {
     let msg = `${path} ${r.status}`;
@@ -61,6 +60,50 @@ async function api(path, opts = {}) {
     throw new Error(msg);
   }
   return r.json();
+}
+
+// v17: 로그인 (비밀번호 · OTP 6자리 · 또는 접속 토큰) — 세션은 HttpOnly 쿠키라 스크립트가 읽을 수 없음
+let _loginP = null;
+function loginDialog() {
+  if (_loginP) return _loginP;
+  _loginP = (async () => {
+    let info = {};
+    try { info = await (await fetch("/api/auth")).json(); } catch { /* 서버 연결 안 됨 */ }
+    if (!info.password) {
+      const t = prompt("접속 토큰 (QUANT_WEB_TOKEN 또는 읽기 전용 QUANT_WEB_VIEWER_TOKEN)");
+      if (t) { S.token = t; safeSet("qa_token", t); return true; }
+      return false;
+    }
+    return await new Promise((resolve) => {
+      const d = document.createElement("div");
+      d.className = "kbd-help login-dlg";
+      d.innerHTML = `<form class="card" style="max-width:360px"><h3>Quant AI 로그인</h3>
+        <label class="small muted">비밀번호<input type="password" name="pw" autocomplete="current-password" required></label>
+        ${info.mfa ? '<label class="small muted">2단계 인증 코드 (OTP 앱 6자리)<input name="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label>' : ""}
+        <div class="xs bad-t" id="lg-err"></div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn-sm primary" type="submit">로그인</button>${info.viewer_token ? '<button class="btn-sm" type="button" id="lg-tok">토큰으로</button>' : ""}</div>
+        <div class="xs dim" style="margin-top:8px">로그인 실패 5번이면 15분 잠금 · 세션 12시간</div></form>`;
+      const f = d.querySelector("form");
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+          body: JSON.stringify({ password: f.pw.value, otp: f.otp ? f.otp.value : "" }) });
+        if (r.ok) { d.remove(); resolve(true); return; }
+        let m = "로그인 실패"; try { m = (await r.json()).error || m; } catch { /* 무시 */ }
+        d.querySelector("#lg-err").textContent = m;
+      };
+      const tb = d.querySelector("#lg-tok");
+      if (tb) tb.onclick = () => { const t = prompt("읽기 전용 토큰"); if (t) { S.token = t; safeSet("qa_token", t); d.remove(); resolve(true); } };
+      document.body.appendChild(d);
+      setTimeout(() => f.pw.focus(), 50);
+    });
+  })();
+  _loginP.finally(() => { _loginP = null; });
+  return _loginP;
+}
+async function logout() {
+  await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", credentials: "same-origin" });
+  S.token = ""; safeSet("qa_token", ""); location.reload();
 }
 
 // ------------------------------------------------------------ 작은 시각화 (SVG)

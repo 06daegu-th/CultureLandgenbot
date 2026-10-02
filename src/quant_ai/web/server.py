@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import mimetypes
@@ -15,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from ..auth import Auth
 from .api import DashboardAPI
 
 STATIC = Path(__file__).parent / "static"
@@ -28,7 +28,10 @@ CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
 
-def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
+def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], auth: Auth | None = None):
+    auth = auth or Auth()
+    auth.admin_token = token  # 인자로 받은 관리자 토큰이 우선 (없으면 토큰 인증 없음)
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "QuantAI"
         sys_version = ""
@@ -36,11 +39,25 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
         def log_message(self, fmt, *args):  # noqa: D401 - 조용히
             log.debug(fmt, *args)
 
-        def _authorized(self, qs) -> bool:
-            if not token:
-                return True
+        def _sid(self) -> str | None:
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "qa_session":
+                    return v
+            return None
+
+        def _role(self, qs) -> str | None:
+            """admin / viewer / None. 인증을 하나도 설정하지 않았으면 (이 PC 전용) admin."""
+            if not auth.enabled:
+                return "admin"
             got = self.headers.get("X-Token") or (qs.get("token") or [""])[0]
-            return hmac.compare_digest(got, token)
+            return auth.role_for_token(got) or auth.session_role(self._sid())
+
+        def _authorized(self, qs) -> bool:
+            return self._role(qs) is not None
+
+        def _ip(self) -> str:
+            return self.client_address[0] if self.client_address else "?"
 
         def _host_ok(self) -> bool:
             """DNS rebinding 방어: 허용된 Host 로 들어온 요청만 처리."""
@@ -59,6 +76,17 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
             self.end_headers()
             self.wfile.write(body)
 
+        def _json_cookie(self, obj, cookie: str) -> None:
+            body = json.dumps(obj, ensure_ascii=False).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Set-Cookie", cookie)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _json(self, obj, code: int = 200) -> None:
             self._send(code, json.dumps(obj, ensure_ascii=False, default=str).encode(), "application/json; charset=utf-8")
 
@@ -67,6 +95,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
             qs = parse_qs(url.query)
             if not self._host_ok():
                 return self._send(421, b"misdirected request", "text/plain")
+            if url.path == "/api/auth":  # 로그인 화면이 무엇을 물어볼지 (비밀 정보 없음)
+                return self._json(auth.info() | {"role": self._role(qs)})
             if url.path == "/api/health":  # 인증 없이 최소 정보 (로드밸런서/모니터링용)
                 h = api.health()
                 return self._json(h, 200 if h["ok"] else 503)
@@ -145,6 +175,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                         return self._json(api.setup())
                     if url.path == "/api/keys":
                         return self._json(api.keys())
+                    if url.path == "/api/netcheck":
+                        return self._json(api.netcheck())
                     if url.path == "/api/server":
                         return self._json(api.server())
                     if url.path == "/api/db":
@@ -274,8 +306,6 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
             url = urlparse(self.path)
             if not self._host_ok():
                 return self._send(421, b"misdirected request", "text/plain")
-            if not self._authorized(parse_qs(url.query)):
-                return self._json({"error": "unauthorized"}, 401)
             # CSRF 방어: JSON 만 받는다 (다른 사이트의 form POST 는 preflight 없이 JSON 을 보낼 수 없음)
             if not (self.headers.get("Content-Type") or "").startswith("application/json"):
                 return self._json({"error": "application/json 필요"}, 415)
@@ -287,6 +317,22 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                 body = json.loads(self.rfile.read(length) or b"{}")
             except json.JSONDecodeError:
                 return self._json({"error": "잘못된 JSON"}, 400)
+            if url.path == "/api/login":
+                sid, msg = auth.login(self._ip(), str(body.get("password", ""))[:200], str(body.get("otp", ""))[:12])
+                api._audit("login" if sid else "login_fail", f"{self._ip()} · {msg}")
+                if not sid:
+                    return self._json({"error": msg}, 401)
+                secure = "; Secure" if (self.headers.get("X-Forwarded-Proto") or "").lower() == "https" else ""
+                return self._json_cookie({"ok": True, "role": "admin"},
+                                         f"qa_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={12 * 3600}{secure}")
+            if url.path == "/api/logout":
+                auth.logout(self._sid())
+                return self._json_cookie({"ok": True}, "qa_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
+            role = self._role(parse_qs(url.query))
+            if role is None:
+                return self._json({"error": "unauthorized"}, 401)
+            if role != "admin":  # 읽기 전용 권한(RBAC): 긴급 정지·설정·주문·키 등 쓰기 불가
+                return self._json({"error": "읽기 전용 권한입니다 (관리자로 로그인 필요)"}, 403)
             if url.path == "/api/killswitch":
                 api.app.set_kill_switch(bool(body.get("on")), str(body.get("reason", ""))[:200], by="dashboard")
                 api._audit("killswitch", f"{'ON' if body.get('on') else 'OFF'} {str(body.get('reason', ''))[:100]}")
@@ -322,6 +368,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
                     return self._json(api.star(body))
                 if url.path == "/api/prefs":
                     return self._json(api.prefs_write(body))
+                if url.path == "/api/netcheck":
+                    return self._json(api.netcheck(run=True))
                 if url.path == "/api/keys/reload":
                     return self._json(api.keys_reload())
                 if url.path == "/api/keys/probe":
@@ -352,10 +400,21 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str]):
 
 def serve(app, host: str = "127.0.0.1", port: int = 8050) -> None:
     token = os.environ.get("QUANT_WEB_TOKEN") or None
-    if host not in ("127.0.0.1", "localhost") and not token:
-        raise SystemExit("외부 바인딩 시 QUANT_WEB_TOKEN 설정이 필요합니다")
+    auth = Auth()
+    if host not in ("127.0.0.1", "localhost") and not (token or auth.pw_hash):
+        raise SystemExit("외부 바인딩 시 로그인(./run.sh auth-setup) 또는 QUANT_WEB_TOKEN 설정이 필요합니다")
     allowed = {"127.0.0.1", "localhost", "::1", host.lower()}
     allowed |= {h.strip().lower() for h in os.environ.get("QUANT_WEB_ALLOWED_HOSTS", "").split(",") if h.strip()}
-    httpd = ThreadingHTTPServer((host, port), make_handler(DashboardAPI(app), token, allowed))
+    api = DashboardAPI(app)
+    httpd = ThreadingHTTPServer((host, port), make_handler(api, token, allowed, auth))
+
+    def _warm():  # 첫 화면이 기다리지 않게: 전 종목 일봉·대시보드를 미리 계산해 둔다 (실패해도 무시)
+        for f in (app.market_data, api.dashboard, api.setup, api.today):
+            try:
+                f()
+            except Exception as e:  # noqa: BLE001
+                log.info("예열 실패 %s: %s", getattr(f, "__name__", f), e)
+    import threading
+    threading.Thread(target=_warm, name="warm", daemon=True).start()
     print(f"Quant AI 대시보드: http://{host}:{port}" + ("  (토큰: ?token=...)" if token else ""))
     httpd.serve_forever()

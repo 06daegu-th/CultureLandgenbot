@@ -30,12 +30,18 @@ def progress(app, now: datetime | None = None) -> dict:
     st = app.settings
     kis = st.broker == "kis"
     items = []
+    import os
+    kis_keys = {k: bool(os.environ.get(k)) for k in ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT")}
     v = ops.get_state(app.engine, "kis_validation")
     steps = [bool(v.get("ok")), bool(v.get("order_path_verified")), bool(v.get("fill_path_verified") or v.get("fill_verified"))]
     items.append({"key": "kis", "title": "KIS 모의계좌 검증", "progress": round(sum(steps) / 3, 3) if kis else 0.0,
                   "status": "ok" if all(steps) else "warn" if kis else "setup",
                   "detail": (f"스위트 {'통과' if steps[0] else '미통과'} · 주문 경로 {'확인' if steps[1] else '미확인'} · 실체결 {'확인' if steps[2] else '미확인'}"
-                             + (f" · {label(v.get('at'))}" if v.get("at") else "")) if kis else "KIS 키 미설정 — 가짜 서버 테스트만 통과한 상태",
+                             + (f" · {label(v.get('at'))}" if v.get("at") else "")) if kis else
+                            "KIS 미설정 — 가짜 서버 테스트만 통과한 상태 · 키: " + " · ".join(f"{k.replace('KIS_', '')} {'✓' if ok else '✗'}" for k, ok in kis_keys.items()),
+                  "steps": ["모의투자 신청 (한국투자증권 앱·홈페이지)", ".env 에 KIS_APP_KEY · KIS_APP_SECRET · KIS_ACCOUNT · KIS_ENV=demo",
+                            "./run.sh kis-check --suite (시세·잔고·주문·취소·정정 경로)", "장중 ./run.sh kis-check --suite --fill (1주 실제 체결)",
+                            "서버 재시작 후 잔고 대조 (재시작 복구) — 하루 1회 자동 재검증"],
                   "next": "./run.sh kis-check --suite --fill (장중, 모의투자)" if not all(steps) else "하루 1회 자동 재검증 중"})
     ws = ops.get_state(app.engine, "kis_ws")
     lq = ops.get_state(app.engine, "live_quotes")
@@ -49,6 +55,10 @@ def progress(app, now: datetime | None = None) -> dict:
     with session_scope(app.engine) as s:
         live_fills = s.scalar(select(func.count()).select_from(OrderRecord).where(OrderRecord.mode == "live", OrderRecord.status.in_(("filled", "partial")),
                                                                                   OrderRecord.ref_price.is_not(None))) or 0
+        from datetime import timedelta
+        recent = s.scalar(select(func.count()).select_from(OrderRecord).where(
+            OrderRecord.mode == "live", OrderRecord.status.in_(("filled", "partial")), OrderRecord.ref_price.is_not(None),
+            OrderRecord.created_at >= now - timedelta(days=14))) or 0
         n_sealed = s.scalar(select(func.count()).select_from(ConsensusRecord).where(ConsensusRecord.row_hash.is_not(None))) or 0
         first = s.scalar(select(func.min(ConsensusRecord.created_at)).where(ConsensusRecord.row_hash.is_not(None)))
         n_scored_sealed = s.scalar(select(func.count()).select_from(ConsensusRecord).where(ConsensusRecord.row_hash.is_not(None),
@@ -56,7 +66,9 @@ def progress(app, now: datetime | None = None) -> dict:
     par = ops.get_state(app.engine, "execution_parity").get("rows") or []
     items.append({"key": "slippage", "title": "실측 슬리피지", "progress": _pct(live_fills, 100),
                   "status": "ok" if live_fills >= 100 else "warn" if live_fills else "setup" if not kis else "warn",
-                  "detail": f"실체결 {live_fills}건 (50건: 비용 보정 적용 · 100건: 체결 시뮬레이터 검증) · parity 기록 {len(par)}건",
+                  "detail": f"실체결 {live_fills}건 (50건: 비용 보정 적용 · 100건: 체결 시뮬레이터 검증) · parity 기록 {len(par)}건"
+                            + (f" · 최근 14일 하루 {recent / 14:.1f}건 → 50건까지 약 {max(0, 50 - live_fills) / (recent / 14):.0f}일 · 100건까지 약 {max(0, 100 - live_fills) / (recent / 14):.0f}일"
+                               if recent else " · 최근 14일 체결 없음 → 예상 완료일 계산 불가"),
                   "next": "모의투자로 소액 코어 매매를 운영해 체결을 쌓기" if live_fills < 100 else "보정 자동 적용 중"})
     fw = ops.get_state(app.engine, "prediction_power").get("forward") or {}
     need = (fw.get("n") or 0) + (fw.get("more_needed") or 0)

@@ -122,19 +122,27 @@ def upsert_bars(session: Session, symbol: str, bars: pd.DataFrame, interval: str
 
 
 def load_bars(session: Session, symbols: Iterable[str], interval: str = "1d") -> dict[str, pd.DataFrame]:
+    """종목별 일봉. 컬럼만 묶음으로 읽는다 (ORM 객체 14만 개를 만들지 않음 → 전 종목 로딩이 몇 배 빠름). 순서는 symbols 순."""
+    syms = list(dict.fromkeys(symbols))
     out: dict[str, pd.DataFrame] = {}
-    for symbol in symbols:
-        rows = session.scalars(
-            select(PriceBar)
-            .where(PriceBar.symbol == symbol, PriceBar.interval == interval)
-            .order_by(PriceBar.ts)
+    if not syms:
+        return out
+    cols = ["ts", "open", "high", "low", "close", "volume"]
+    groups: dict[str, list] = {}
+    for i in range(0, len(syms), 200):  # IN 절 크기 제한 (SQLite 변수 한도)
+        chunk = syms[i:i + 200]
+        rows = session.execute(
+            select(PriceBar.symbol, PriceBar.ts, PriceBar.open, PriceBar.high, PriceBar.low, PriceBar.close, PriceBar.volume)
+            .where(PriceBar.symbol.in_(chunk), PriceBar.interval == interval)
+            .order_by(PriceBar.symbol, PriceBar.ts)
         ).all()
-        if not rows:
+        for r in rows:
+            groups.setdefault(r[0], []).append(r[1:])
+    for symbol in syms:
+        g = groups.get(symbol)
+        if not g:
             continue
-        df = pd.DataFrame(
-            [(r.ts, r.open, r.high, r.low, r.close, r.volume) for r in rows],
-            columns=["ts", "open", "high", "low", "close", "volume"],
-        ).set_index("ts")
+        df = pd.DataFrame(g, columns=cols).set_index("ts")
         df.index = to_utc_index(df.index)
         out[symbol] = df
     return out

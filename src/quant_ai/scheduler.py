@@ -347,6 +347,8 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("retrain_candidate", lambda now: app.auto_retrain(now), 24 * 3600, "closed")
     else:
         sch.add("retrain_candidate", lambda now: app.train_candidate(), 24 * 3600, "closed")
+    from .governance import guard_scheduler
+    guard_scheduler(sch, app)  # 상용 모드면 상용 불가 소스(네이버·Yahoo 등) 수집을 실행 시점에 멈춘다
     return sch
 
 

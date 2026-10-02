@@ -603,6 +603,36 @@ def cmd_kill(args):
     print(f"킬스위치 {args.state.upper()}")
 
 
+def cmd_auth_setup(args):
+    """웹 로그인 설정값 만들기: 비밀번호 해시 + 2단계 인증(TOTP) 비밀값 + 읽기 전용 토큰. .env 에 붙여 넣는다."""
+    import getpass
+    import secrets
+
+    from .auth import hash_password, new_secret, provisioning_uri, totp
+    pw = args.password or getpass.getpass("새 웹 비밀번호 (10자 이상): ")
+    if len(pw) < 10:
+        sys.exit("비밀번호는 10자 이상")
+    sec = new_secret()
+    print("# ---- .env 에 아래 줄을 넣으세요 (값은 아무에게도 보여주지 마세요)")
+    print(f"QUANT_WEB_PASSWORD_HASH={hash_password(pw)}")
+    print(f"QUANT_WEB_TOTP_SECRET={sec}")
+    if args.viewer:
+        print(f"QUANT_WEB_VIEWER_TOKEN={secrets.token_urlsafe(24)}")
+    print("# OTP 앱(Google Authenticator·1Password 등)에 아래 주소를 등록하거나 비밀값을 직접 입력:")
+    print(f"# {provisioning_uri(sec)}")
+    print(f"# 지금 코드(확인용): {totp(sec)}")
+
+
+def cmd_netcheck(args):
+    """외부 데이터 소스 연결 점검 (공개 소스 + DART·FRED·ECOS 키)."""
+    from .netcheck import run
+    r = run(_app(args))
+    icon = {"ok": "✔", "missing": "○"}
+    for x in r["rows"]:
+        print(f"{icon.get(x['status'], '✖')} {x['title']:<28} {x['detail']} ({x.get('ms') or 0}ms)")
+    print(r["headline"])
+
+
 def cmd_keys(args):
     """.env 의 DART·FRED·ECOS 키 진단 (+ --probe: 실제 연결 시험). 키 값은 출력하지 않는다."""
     from .keys import diagnose, probe
@@ -666,6 +696,11 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--years", type=int, default=5)
     c.add_argument("--days", type=int, default=7)
     c.set_defaults(fn=cmd_collect)
+    au = sub.add_parser("auth-setup", help="웹 로그인(비밀번호·2단계 인증·읽기 전용 토큰) 설정값 만들기")
+    au.add_argument("--password", help="비대화형 (생략하면 입력 받음)")
+    au.add_argument("--viewer", action="store_true", help="읽기 전용 토큰도 만들기")
+    au.set_defaults(fn=cmd_auth_setup)
+    sub.add_parser("netcheck", help="외부 데이터 소스 연결 점검").set_defaults(fn=cmd_netcheck)
     k = sub.add_parser("keys", help="DART·FRED·ECOS 키 진단 (--probe: 실제 연결 시험)")
     k.add_argument("--probe", action="store_true")
     k.set_defaults(fn=cmd_keys)

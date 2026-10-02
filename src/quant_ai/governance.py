@@ -68,10 +68,52 @@ LICENSES = [
 def licenses(app) -> dict:
     usage = getattr(app.settings, "service_level", "personal")
     high = [x["source"] for x in LICENSES if x["risk"] == "high"]
-    return {"usage": usage, "rows": LICENSES,
-            "warning": None if usage == "personal" else f"상용 모드인데 상용 불가·계약 필요 소스 {len(high)}개 사용 중: {', '.join(high)}",
+    return {"usage": usage, "rows": LICENSES, "blocked_sources": blocked_sources(app.settings),
+            "blocked_jobs": ops.get_state(app.engine, "license_blocked"),
+            "warning": None if usage == "personal" else f"상용 모드 — 상용 불가 소스 {len(high)}개는 자동으로 수집을 멈춤 (가드): {', '.join(high)}",
             "path": ["개발용(무료) 데이터", "상용 데이터 계약 (KRX·벤더)", "라이선스 범위 확인 (사용자 수·재배포)", "사용자 수 증가", "비용 관리"],
             "note": "여기 적힌 약관 해석은 참고용 — 각 제공자의 최신 약관과 계약서가 우선 (법률 검토 필요)"}
+
+
+# ------------------------------------------------------------------ 라이선스 가드 (상용 모드에서 상용 불가 소스 자동 차단)
+# 소스 → 상용(서비스) 사용 가능 여부. personal 이 아니면 False 인 소스는 수집·조회를 하지 않는다 (기존에 저장된 값은 그대로 표시)
+COMMERCIAL_OK = {"krx_marcap": False, "yahoo": False, "naver": False, "stocktwits": False, "wiseindex": False,
+                 "wiki": False, "datalab": False, "dart": True, "fred": True, "ecos": True, "kis": True, "rss": True}
+JOB_SOURCES = {"price_watch": ("naver", "yahoo"), "community": ("naver", "stocktwits"), "investor_flow": ("naver",),
+               "kr_consensus": ("naver",), "gap_fill": ("yahoo",), "us_cycle": ("yahoo",), "wics": ("wiseindex",),
+               "altdata": ("wiki", "datalab"), "sector_fill": ("yahoo",), "vkospi": ("krx_marcap",)}
+
+
+def source_allowed(settings, source: str) -> bool:
+    if getattr(settings, "service_level", "personal") == "personal":
+        return True
+    return COMMERCIAL_OK.get(source, False)
+
+
+def blocked_sources(settings) -> list[str]:
+    return [k for k in COMMERCIAL_OK if not source_allowed(settings, k)]
+
+
+def guard_scheduler(sch, app) -> list[str]:
+    """스케줄러의 수집 작업을 라이선스 가드로 감싼다 — 실행 시점의 서비스 단계로 판단 (설정을 바꾸면 바로 적용)."""
+    wrapped = []
+    for job in sch.jobs:
+        srcs = JOB_SOURCES.get(job.name)
+        if not srcs:
+            continue
+        fn = job.fn
+
+        def run(now, _fn=fn, _srcs=srcs, _name=job.name):
+            bad = [x for x in _srcs if not source_allowed(app.settings, x)]
+            if bad:
+                st = ops.get_state(app.engine, "license_blocked")
+                st[_name] = {"at": datetime.now(UTC).isoformat(), "sources": bad}
+                ops.set_state(app.engine, "license_blocked", st)
+                return {"skipped": "license", "sources": bad}
+            return _fn(now)
+        job.fn = run
+        wrapped.append(job.name)
+    return wrapped
 
 
 # ------------------------------------------------------------------ 감사 로그 · 보안 현황
@@ -95,6 +137,9 @@ def audit_log(engine, limit: int = 200) -> list[dict]:
 def security(app) -> dict:
     import os
     token = bool(os.environ.get("QUANT_WEB_TOKEN"))
+    pw = bool(os.environ.get("QUANT_WEB_PASSWORD_HASH") or os.environ.get("QUANT_WEB_PASSWORD"))
+    mfa = bool(os.environ.get("QUANT_WEB_TOTP_SECRET"))
+    viewer = bool(os.environ.get("QUANT_WEB_VIEWER_TOKEN"))
     items = [
         ("비밀 키 보관", "partial", ".env 파일에만 (저장소·DB·화면에 표시 안 함) — 서비스화 시 Secret Manager 로 이전"),
         ("웹 접근 제어", "ok" if token else "partial", "원격 접속 시 토큰 필수 · 로컬(127.0.0.1)만 무토큰 허용" + (" · 토큰 설정됨" if token else "")),
@@ -103,7 +148,11 @@ def security(app) -> dict:
         ("감사 로그", "ok", f"민감한 조작 {len(ops.get_state(app.engine, AUDIT_KEY).get('rows') or [])}건 기록 (추가만 가능)"),
         ("예측 장부 위변조 방지", "ok", "해시 봉인 · 해시 사슬 · 외부 공증(OpenTimestamps · 선택)"),
         ("백업 · 복구", "ok", "SQLite 백업 7개 보관 · 무결성 검사 · 재시작 따라잡기"),
-        ("MFA · 사용자별 권한(RBAC)", "missing", "개인용이라 없음 — 다중 사용자 서비스 전 필수"),
+        ("로그인 · 2단계 인증(MFA)", "ok" if (pw and mfa) else "partial" if (pw or token) else "missing",
+         ("비밀번호 + OTP 6자리 · 실패 5번 잠금 · HttpOnly 세션" if pw and mfa else "비밀번호만 (OTP 미설정)" if pw else
+          "토큰만" if token else "없음 (이 PC 전용 접속)") + " — ./run.sh auth-setup"),
+        ("역할 권한(RBAC)", "partial" if viewer else "missing",
+         "관리자 / 읽기 전용(QUANT_WEB_VIEWER_TOKEN: 조회만, 쓰기 403)" if viewer else "역할 1개 — 읽기 전용 토큰 미설정 · 사용자별 계정은 서비스화 때"),
         ("DB 암호화", "missing", "SQLite 평문 — 서비스화 시 디스크/컬럼 암호화 (계좌·거래내역)"),
         ("침투 테스트 · 취약점 관리", "missing", "미실시 — 서비스 전 외부 점검 필요"),
         ("AI 보안 (프롬프트 주입)", "partial", "외부 텍스트(뉴스·공시)는 '데이터'로만 넣고 지시문을 따르지 않게 프롬프트 고정 · AI 는 주문 권한 없음"),
@@ -113,4 +162,4 @@ def security(app) -> dict:
             "note": "개인 사용 기준 점검 — 금융 서비스 수준(MFA·RBAC·암호화·침투 테스트)은 아직 아님"}
 
 
-__all__ = ["service_level", "licenses", "audit", "audit_log", "security", "LEVELS", "FEATURES", "LICENSES"]
+__all__ = ["service_level", "licenses", "source_allowed", "blocked_sources", "guard_scheduler", "audit", "audit_log", "security", "LEVELS", "FEATURES", "LICENSES"]

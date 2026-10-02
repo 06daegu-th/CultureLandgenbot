@@ -1061,3 +1061,5 @@ kbd { font: 600 11px "JetBrains Mono", monospace; padding: 1px 6px; border-radiu
 #pf-body > section { scroll-margin-top: 120px; }
 /* v17 — 키 도움말 */
 .key-help { margin: 10px 0 6px; padding: 10px 12px; border-radius: 10px; background: var(--panel-2); border-left: 3px solid var(--warn); }
+.login-dlg form label { display: grid; gap: 4px; margin-top: 10px; }
+.login-dlg form input { background: var(--panel-2); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 10px; font: inherit; }

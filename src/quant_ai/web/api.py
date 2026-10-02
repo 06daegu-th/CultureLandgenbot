@@ -817,6 +817,11 @@ class DashboardAPI:
             if inst is not None and inst.market == "INDEX":
                 return {"symbol": symbol, "events": [], "skipped": "지수"}
             b = self._bars(s, [symbol]).get(symbol)
+        from ..governance import source_allowed
+        if not (source_allowed(self.app.settings, "yahoo") and source_allowed(self.app.settings, "naver")):
+            cached = (_ops.get_state(self.engine, f"profile:{symbol}").get("data") or {})  # 상용 모드: 새로 받지 않고 저장분만
+            return {"symbol": symbol, "events": cached.get("events") or [], "stats": cached.get("stats") or {},
+                    "sources": [], "license_blocked": "상용 모드 — Yahoo·네이버 종목 상세는 상용 계약 전까지 새로 받지 않음"}
         try:
             p = stock_profile(self.engine, symbol, refresh=refresh)
         except Exception as e:  # noqa: BLE001 - 상세가 없어도 분석 화면은 떠야 한다
@@ -861,6 +866,13 @@ class DashboardAPI:
         if refresh(self.app).get("changed"):  # .env 를 고쳤으면 캐시를 버리고 바로 보여준다
             self._risk_cache.pop("setup", None)
         return self._cached("setup", 15, lambda: setup_status(self.app))
+
+    def netcheck(self, run: bool = False) -> dict:
+        from .. import netcheck
+        if run:
+            self._audit("netcheck", "외부 연결 점검 실행")
+            return netcheck.run(self.app)
+        return netcheck.last(self.app) or {"rows": [], "headline": "아직 점검 안 함 — [연결 점검] 을 누르세요"}
 
     def keys(self) -> dict:
         from ..keys import diagnose, refresh

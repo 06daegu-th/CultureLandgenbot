@@ -166,6 +166,21 @@ async function viewDataHealth(el) {
   </div>`;
   $("#dh-re").onclick = async (e) => { e.target.disabled = true; await api("/api/data-health?refresh=1"); render(); };
   keysCard(el);
+  netCard(el);
+}
+
+// v17: 외부 연결 점검 — 소스마다 작은 요청 1번 (정상 / 키 / 네트워크 차단 / 서버 / 형식 변경)
+async function netCard(el) {
+  const box = document.createElement("div");
+  el.appendChild(box);
+  const draw = (r) => {
+    const IC = { ok: "🟢", missing: "⚪", format: "🟡", rate: "🟡", timeout: "🔴", blocked: "🔴", dns: "🔴", tls: "🔴", server: "🟠", key_or_net: "🔴", error: "🔴" };
+    box.innerHTML = card(`외부 연결 점검 <span class="small dim">${esc(r.as_of || "")}</span>`, `${r.rows?.length ? `<div class="small b" style="margin-bottom:6px">${esc(r.headline)}</div>
+      <table class="tight"><tbody>${r.rows.map((x) => `<tr><td>${IC[x.status] || "⚪"}</td><td class="small b">${esc(x.title)}</td><td class="xs">${esc(x.detail)}</td><td class="r xs dim num">${x.ms ?? "-"}ms</td></tr>`).join("")}</tbody></table>` : `<div class="xs dim">${esc(r.headline || "아직 점검 안 함")}</div>`}
+      <div class="xs dim" style="margin-top:6px">네트워크가 되는 곳으로 옮긴 뒤 한 번 · 터미널: <code>./run.sh netcheck</code></div>`, '<button class="btn-sm" id="nc-run">연결 점검</button>');
+    $("#nc-run").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "점검 중… (최대 1분)"; draw(await post("/api/netcheck", {})); };
+  };
+  try { draw(await api("/api/netcheck")); } catch { box.remove(); }
 }
 
 // v17: API 키 진단 (DART · FRED · ECOS) — 값은 끝 4자리만
@@ -250,7 +265,8 @@ async function viewProfile(el) {
 async function viewValidation(el) {
   const [v, c] = await Promise.all([api("/api/validation"), api("/api/exec-costs")]);
   const it = (v.items || []).map((x) => `<div class="val-it"><div class="val-h"><b>${OS_ST[x.status] || (x.status === "setup" ? "⚙️" : "⚪")} ${esc(x.title)}</b><span class="num">${R(x.progress, 0)}</span></div>${bar100(x.progress)}
-    <div class="xs muted">${esc(x.detail)}</div><div class="xs">다음: <code>${esc(x.next)}</code></div></div>`).join("");
+    <div class="xs muted">${esc(x.detail)}</div><div class="xs">다음: <code>${esc(x.next)}</code></div>
+    ${x.steps ? `<details class="xs"><summary>설정 순서</summary><ol style="margin:4px 0 0 16px">${x.steps.map((t) => `<li>${esc(t)}</li>`).join("")}</ol></details>` : ""}</div>`).join("");
   const rows = (c.rows || []).map((r) => `<tr><td><b>${esc(r.mode)}</b>${r.measured ? ' <span class="chip xs pos">실측</span>' : ' <span class="chip xs">모델</span>'}</td><td class="r num">${r.orders}</td><td class="r num">${R(r.fill_rate, 0)}</td><td class="r num">${r.slippage_bps ?? "-"}bp</td><td class="r num">${r.slippage_p90_bps ?? "-"}bp</td><td class="r num">${r.commission_bps ?? "-"}bp</td><td class="r num">${r.roundtrip_bps}bp</td></tr>`).join("");
   el.innerHTML = `
   <div class="card"><div class="card-h"><h3>실전 검증 진행표 <span class="small dim">${esc(v.as_of)}</span></h3><div class="right"><span class="big num">${R(v.overall, 0)}</span></div></div>
