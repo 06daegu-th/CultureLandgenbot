@@ -108,6 +108,9 @@
 | ✓ Themes · same bet | 테마 집중도('반도체·AI 집중 43% — 사실상 같은 베팅') · 보유 종목 AI·중요 뉴스·실적 D-day | `portfolio_os.themes/holding_extras` | `test_portfolio_themes_and_holding_extras` |
 | ✓ Core vs index ETF baseline | 16년 연구(코어 vs KOSPI) + 실제 장부 vs 같은 돈·같은 입금의 'ETF 그림자 장부' · 고정 규칙 권고 | `baseline.py` | `test_baseline_compare_and_route` |
 | ✓ Goal plan · monthly DCA | 목표(예: 500만→1억)를 몬테카를로 확률로 · 방식별/적립액별 비교 · 필요한 월 적립 · 월 적립 자동 입금(모의)/알림(실계좌) | `goal.py` | `test_goal_plan_honesty_and_compare` |
+| ✓ Tax accounts in plan | 같은 돈·같은 방식을 일반/ISA/연금저축에 넣었을 때 목표 확률 (세금·세액공제 반영 · 연금은 개별 종목 불가 · 55세 전 해지 경고) | `goal.tax_compare` | `test_tax_compare_accounts_rules` |
+| ✓ ETF monthly DCA book | 월 적립을 지수 ETF 로 — 코어 장부와 분리한 'ETF 적립 장부'에서 원금부터 · 가격을 못 받으면 현금으로 기다렸다 다음 거래일 매수 · 실계좌는 주문표(몇 주) 알림 | `goal.etf_buy · dca_run` | `test_etf_dca_book_buys_and_waits_for_price` |
+| ✓ Accounts vs system book | 내 자산: 입력한 계좌 / 시스템 모의 장부 전환 | `portfolio_os.overview(source)` | `test_portfolio_overview_source_toggle` |
 
 ## TRADING
 
@@ -161,6 +164,8 @@
 | ✓ Sentinel | 데이터 수집·AI 작업·스케줄러·DB·증권사 5분 감시 · 나빠짐/회복 알림 | `sentinel.py` | `test_sentinel_and_briefing_text` |
 | ✓ Offline · local chart lib | 서버 연결 실패 안내 화면(자동 재연결) · 차트 라이브러리 서버 직접 제공 · 2단계 인증 설정 오류 표시 | `easy.js · web/static/vendor` | `test_totp_without_password_is_warned_and_assets_are_local` |
 | ✓ Always-on service · ops status | ./run.sh install-service(launchd/systemd 자동 재시작) · status · update · 24시간 운영 꺼짐·데이터 밀림·뉴스 0건·업종 미분류를 '오늘 할 일' 맨 위에 | `run.sh · center.ops_status` | `test_ops_status_flags_stopped_scheduler_and_stale_data` |
+| ✓ Honest status pill | DB 만 살아 있으면 '시스템 정상' 이던 상단 표시 → 24시간 운영·데이터 날짜·뉴스·업종까지 보고 '점검 필요 n' | `center.ops_status · /api/ops-status` | `test_ops_status_route_and_home_numbers` |
+| ✓ Shareable check report | ./run.sh report — 키·계좌번호·금액 없이 운영·데이터·외부 연결·실패 작업·검증 진행을 한 글로 (마지막에 키 모양 문자열 한 번 더 지움) | `report.py` | `test_report_has_facts_but_no_secrets` |
 
 ## UX
 
@@ -197,4 +202,5 @@
 | ✓ Home 5 · AI state | 오늘 시장·내 자산·AI 상태(🟢검증됨/🟡검증 중/🔴사용 금지)·중요한 뉴스·오늘 할 일 | `center.home5` | `test_home5_sections_and_route` |
 | ✓ Easy mode · start guide | 쉬운 화면(메뉴 6개 + 고급 접기) · 처음 안내(데이터→한도→관심 3개→오늘 할 일) · 홈 맨 위 '오늘 할 일 3개' | `center.today3/start_guide · easy.js` | `test_today3_priorities_and_start_guide` |
 | ✓ US stock AI | 미국 종목도 일봉+지수를 받아 같은 AI 합의로 분석 (주문 없음) | `actions.analyze_symbol` | `test_us_ticker_can_be_analyzed` |
+| ✓ Plain words · status dots | 쉬운 화면은 우리말(매수·관망·쉬어가기 · 뉴스/경제/차트·통계) · 상태 이모지 대신 색 점 · 전문가용 카드는 '전체' 화면이나 펼치기로 · 홈은 내 자산+목표가 주인공 | `words.js · easy.js` | `test_ui_words_and_calm_layout_static` |
 | ✓ Stock tabs · chart declutter | 종목 페이지 탭(전체·차트·뉴스·공시·실적·재무·AI·위험·내 보유) · 차트 가격 라벨 겹침 정리 · 표시 글자 겹침 정리 · 홈 자산 미니 차트 | `os.js · app.js · easy.js` | `test_stock_tabs_and_chart_declutter_static` |

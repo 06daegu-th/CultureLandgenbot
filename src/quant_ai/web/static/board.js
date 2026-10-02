@@ -43,7 +43,7 @@ async function viewNewsBoard(el) {
     <div class="xs muted">긍정 ${c["긍정"] || 0} (${Math.round((c["긍정"] || 0) / tot * 100)}%) · 중립 ${c["중립"] || 0} · 부정 ${c["부정"] || 0} · 기사 ${num(d.n_articles)}건 ·
       ${d.extract?.llm_on ? `AI 구조화 켜짐 (${esc(d.extract.at || "-")})` : "AI 구조화 꺼짐 — 키워드+부정어 규칙 (LLM 키를 넣으면 기사마다 이벤트·방향·확신도·한 줄 요약)"}</div></div>
   <div id="nb-sr"></div>
-  <div class="nb-grid">${(d.cards || []).map(cardHtml).join("") || card("", empty("이 기간 뉴스가 없습니다 — 뉴스 수집이 돌면 채워집니다"))}</div>
+  <div class="nb-grid">${(d.cards || []).map(cardHtml).join("") || card("", `<div class="empty-act"><b>이 기간에 모인 뉴스가 없습니다</b><div class="small muted">뉴스는 24시간 운영이 켜져 있을 때 모입니다 (장중 5분 · 장 밖 30분마다). 지금 바로 받으려면 터미널에서 <code>qa collect news</code></div><a class="btn-sm" href="#server">운영 상태 보기</a></div>`)}</div>
   <div class="xs dim">${esc(d.note)}</div>`;
   el.querySelectorAll("#nb-days button").forEach((b) => b.onclick = () => { S.nb.days = +b.dataset.k; render(); });
   el.querySelectorAll("#nb-only button").forEach((b) => b.onclick = () => { S.nb.only = b.dataset.k; render(); });

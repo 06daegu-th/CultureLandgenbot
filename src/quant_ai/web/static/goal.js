@@ -35,7 +35,7 @@ async function viewGoal(el) {
   const cmp = g.compare.map((c) => `<tr class="${c.key === i.strategy ? "sel" : ""}"><td>${esc(c.name)}</td><td class="r b">${pct(c.p_target)}</td><td class="r">${c.median_years ? c.median_years + "년" : "30년+"}</td><td class="r down">${c.mdd_p50 ? P(c.mdd_p50, 0) : "0%"}</td></tr>`).join("");
   const wi = g.what_if.map((w) => `<tr class="${w.monthly === i.monthly ? "sel" : ""}"><td>매달 ${won(w.monthly)}원</td><td class="r b">${pct(w.p_target)}</td><td class="r">${w.median_years ? w.median_years + "년" : "30년+"}</td></tr>`).join("");
   el.innerHTML = `
-  <div class="card goal-hero"><div class="card-h"><h3>🎯 내 목표 — 확률로 보는 계획</h3><div class="right xs dim">${esc(g.assumption.source)}</div></div>
+  <div class="card goal-hero"><div class="card-h"><h3>내 목표 — 확률로 보는 계획</h3><div class="right xs dim">${esc(g.assumption.source)}</div></div>
     <div class="goal-form">
       <label>지금 원금<input id="g-principal" inputmode="numeric" value="${num(i.principal)}"></label>
       <label>매달 적립<input id="g-monthly" inputmode="numeric" value="${num(i.monthly)}"></label>
@@ -50,19 +50,26 @@ async function viewGoal(el) {
       <div class="small muted">${i.target_years}년 안에 50% 확률로 닿으려면 매달 <b>${g.need_monthly.p50 ? won(g.need_monthly.p50) + "원" : "불가"}</b> · 80% 확률이면 <b>${g.need_monthly.p80 ? won(g.need_monthly.p80) + "원" : "불가"}</b></div>
       <div class="small muted">가는 길에 겪을 가장 큰 하락(중간값) <b class="down">${P(sim.mdd_p50, 0)}</b> · −30% 넘게 떨어지는 구간을 겪을 확률 ${pct(sim.p_mdd30)}</div></div></div>
     ${goalFan(sim.yearly, i.goal, i.target_years)}
-    ${(g.honest || []).map((h) => `<div class="lesson small" style="margin-top:6px">💡 ${esc(h)}</div>`).join("")}
+    ${(g.honest || []).map((h) => `<div class="lesson small" style="margin-top:6px">${esc(h)}</div>`).join("")}
   </div>
   <div class="grid g-2">
     ${card("투자 방식별 — 같은 원금·적립액으로", `<table class="tight"><thead><tr><th>방식</th><th class="r">${i.target_years}년 안 확률</th><th class="r">절반의 경우</th><th class="r">중간 최대 하락</th></tr></thead><tbody>${cmp}</tbody></table>
       <div class="xs dim" style="margin-top:6px">AI 위성 전략은 넣지 않았습니다 — 검증을 통과하기 전까지 계획에 쓰지 않습니다 (지금 성적은 지수보다 나쁨).</div>`)}
     ${card("적립액을 바꾸면", `<table class="tight"><thead><tr><th>적립</th><th class="r">${i.target_years}년 안 확률</th><th class="r">절반의 경우</th></tr></thead><tbody>${wi}</tbody></table>`)}
   </div>
+  ${(g.tax || []).length ? card("어느 계좌에 넣을까 — 같은 돈 · 같은 방식, 세금만 다르게", `<table class="tight tax-tbl"><thead><tr><th>계좌</th><th class="r">${i.target_years}년 안 확률</th><th class="r">절반의 경우</th><th>조건</th></tr></thead><tbody>
+      ${g.tax.map((t) => `<tr class="${t.best ? "sel" : ""}"><td class="b">${esc(t.name)}${t.best ? ' <span class="chip xs ok">가장 유리</span>' : ""}</td>
+        ${t.ok ? `<td class="r b">${pct(t.p_target)}</td><td class="r">${t.median_years ? t.median_years + "년" : "30년+"}</td>` : `<td class="r dim" colspan="2">${esc(t.why_not || "불가")}</td>`}
+        <td class="xs muted">${esc(t.note)}${t.refund_year ? ` · 해마다 돌려받는 세금 약 ${won(t.refund_year)}원` : ""}</td></tr>`).join("")}</tbody></table>
+    <div class="xs dim" style="margin-top:6px">2026년 세법 기준 단순 추정입니다. 연금저축은 55세 전에 깨면 공제받은 세금을 돌려줘야 하니 나이와 기간을 먼저 확인하세요. ISA 는 3년을 채워야 혜택이 있습니다.</div>`) : ""}
   ${card("월 적립식 — 정한 날 자동으로", `<div class="goal-form">
       <label class="chk-row"><span>자동 적립</span><span><input type="checkbox" id="d-on" ${d.on ? "checked" : ""}> 켜기</span></label>
       <label>매달 며칠 (1~28)<input id="d-day" inputmode="numeric" value="${d.day || 25}"></label>
       <label>금액<input id="d-amount" inputmode="numeric" value="${num(d.amount || i.monthly)}"></label>
-      <label>장부<select id="d-mode"><option value="paper" ${d.mode !== "live" ? "selected" : ""}>모의 (자동 입금 → 코어가 투자)</option><option value="live" ${d.mode === "live" ? "selected" : ""}>실계좌 (알림 + 주문표만)</option></select></label></div>
-    <div class="xs muted">휴장일이면 다음 거래일 · 한 달에 한 번만 · 실계좌는 돈을 옮길 수 없으므로 알림만 보냅니다${d.last ? ` · 마지막 적립 ${esc(d.last)}` : ""}</div>
+      <label>장부<select id="d-mode"><option value="paper" ${d.mode !== "live" ? "selected" : ""}>모의 (자동으로 넣고 삼)</option><option value="live" ${d.mode === "live" ? "selected" : ""}>실계좌 (알림 + 주문표만)</option></select></label>
+      <label>무엇을 살까<select id="d-target"><option value="core" ${d.target !== "etf" ? "selected" : ""}>코어 전략 (시스템이 종목 선택)</option><option value="etf" ${d.target === "etf" ? "selected" : ""}>지수 ETF 하나만</option></select></label>
+      <label>ETF<select id="d-etf">${Object.entries(g.etfs || {}).map(([k, v]) => `<option value="${k}" ${(d.etf || "069500") === k ? "selected" : ""}>${esc(v)} (${k})</option>`).join("")}</select></label></div>
+    <div class="xs muted">휴장일이면 다음 거래일 · 한 달에 한 번만 · ETF 는 따로 만든 'ETF 적립 장부'에서 원금부터 함께 굴립니다 (코어 장부와 섞지 않음) · 실계좌는 돈을 옮길 수 없어서 알림과 주문표(몇 주 살지)만 보냅니다${d.last ? ` · 마지막 적립 ${esc(d.last)}` : ""}</div>
     <button class="btn-sm" id="d-save" style="margin-top:8px">적립 설정 저장</button>`)}
   <div id="g-base"></div>
   ${pr.set ? card("진행률", goalBar(pr)) : ""}
@@ -78,7 +85,7 @@ async function viewGoal(el) {
     if (!r.error) { S.goalQ = null; setTimeout(render, 600); }
   };
   $("#g-save").onclick = () => save();
-  $("#d-save").onclick = () => save({ dca: { on: $("#d-on").checked, day: Number(val("#d-day")), amount: Number(val("#d-amount")), mode: $("#d-mode").value } });
+  $("#d-save").onclick = () => save({ dca: { on: $("#d-on").checked, day: Number(val("#d-day")), amount: Number(val("#d-amount")), mode: $("#d-mode").value, target: $("#d-target").value, etf: $("#d-etf").value } });
 }
 
 function goalBar(pr) {
@@ -107,6 +114,6 @@ async function baselineCard(box) {
     <table class="tight"><thead><tr><th>${esc(rs.period)}</th><th class="r">연수익</th><th class="r">흔들림</th><th class="r">최대 하락</th></tr></thead><tbody>
       <tr><td>${esc(rs.core.name)}</td>${row(rs.core)}</tr><tr><td>${esc(rs.index.name)}</td>${row(rs.index)}</tr></tbody></table>
     <div class="xs muted">${esc(rs.verdict)}</div>${live}
-    <div class="lesson small ${rc.level === "bad" ? "down" : ""}" style="margin-top:8px">${rc.level === "good" ? "🟢" : rc.level === "bad" ? "🔴" : rc.level === "warn" ? "🟡" : "💡"} ${esc(rc.text || "")}</div>
+    <div class="lesson small ${rc.level === "bad" ? "down" : ""}" style="margin-top:8px">${lvDot({ good: "good", bad: "bad", warn: "warn" }[rc.level] || "idle")}${esc(rc.text || "")}</div>
     <div class="xs dim">지수는 배당 제외 · ETF 보수 연 0.15% 반영 — 실제 ETF 는 배당만큼 더 유리하므로 이 비교는 코어 쪽에 기울어 있습니다</div>`);
 }

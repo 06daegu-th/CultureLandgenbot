@@ -320,7 +320,8 @@ def ai_state(app) -> dict:
     except Exception as e:  # noqa: BLE001 - 성적표 실패가 홈을 막지 않게
         pl = {"n": 0, "headline": f"성적 계산 실패: {type(e).__name__}"}
     easy = {"headline": pl.get("headline"), "money": (pl.get("money") or {}).get("text"), "earned": (pl.get("money") or {}).get("earned"),
-            "beat_base": pl.get("beat_base"), "strong": pl.get("strong"), "weak": pl.get("weak"), "n": pl.get("n", 0)}
+            "beat_base": pl.get("beat_base"), "strong": pl.get("strong"), "weak": pl.get("weak"), "n": pl.get("n", 0),
+            "hits": pl.get("hits"), "base_hits": pl.get("base_hits"), "excess": (pl.get("money") or {}).get("excess")}
     # v20 알파 채점: 시장이 다 같이 오를 때 '오른다' 고 한 적중은 실력이 아니다 → 시장 대비로 다시 채점
     try:
         from .alphascore import alpha_card

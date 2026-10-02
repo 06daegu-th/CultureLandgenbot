@@ -694,7 +694,7 @@ async function viewAnalysis(el) {
   const d = S.data;
   const sym = S.symbol || d.watchlist[0]?.symbol;
   if (!sym) { el.innerHTML = card("AI 종목 분석", empty()); return; }
-  if (S.stockTabSym !== sym) { S.stockTab = "all"; S.stockTabSym = sym; }  // v20: 다른 종목으로 가면 탭은 '전체'부터
+  if (S.stockTabSym !== sym) { S.stockTab = "sum"; S.stockTabSym = sym; }  // 다른 종목으로 가면 탭은 '요약'부터
   const a = await api(`/api/analysis?symbol=${encodeURIComponent(sym)}`);
   const selList = [...(d.all_symbols || d.watchlist)];
   if (!selList.some((w) => w.symbol === sym)) selList.unshift({ symbol: sym, name: a.name || sym });
@@ -743,18 +743,19 @@ async function viewAnalysis(el) {
     <div class="small muted" style="margin:12px 0 6px"><b style="color:var(--text)">다가오는 일정</b> · 실적 발표 · 배당 · 공시</div>
     <div id="pf-events"><div class="ev-none small dim">일정 불러오는 중…</div></div>${globalNote}${anCard}</div>`;
   const aiSections = c || scen.includes("scen") || hist ? `
-  <div class="grid g-2">
+  <div class="grid g-2 pro-only">
     ${card("AI 합의 신호 <span class='small dim'>플랫폼 AI · 매일 채점</span>", consensusBlock(c, labels), c ? `<span class="small dim">${time(c.as_of, true)}</span>` : "")}
     ${card("다음 거래일 시나리오", scen)}
   </div>
-  ${ops ? card("AI 별 독립 의견 <span class='small dim'>서로의 의견을 모른 채 판단 · Risk AI 거부권은 희석되지 않음</span>", `<div class="op-grid">${ops}</div>`) : ""}
-  ${hist ? card("판단 이력 · 채점", `<div class="scroll" style="max-height:360px"><table><thead><tr><th>일자</th><th>신호</th><th class="r">P(상승)</th><th class="r">신뢰도</th><th class="r">실제</th><th class="r"></th></tr></thead><tbody>${hist}</tbody></table></div>`) : ""}` : "";
+  ${ops ? `<div class="pro-only">` + card("AI 별 독립 의견 <span class='small dim'>서로의 의견을 모른 채 판단 · Risk AI 거부권은 희석되지 않음</span>", `<div class="op-grid">${ops}</div>`) + "</div>" : ""}
+  ${hist ? `<div class="pro-only">` + card("판단 이력 · 채점", `<div class="scroll" style="max-height:360px"><table><thead><tr><th>일자</th><th>신호</th><th class="r">P(상승)</th><th class="r">신뢰도</th><th class="r">실제</th><th class="r"></th></tr></thead><tbody>${hist}</tbody></table></div>`) + "</div>" : ""}
+  <div class="xs dim easy-only" style="margin:6px 2px">AI 별 의견 · 판단 이력 · 과거 비슷한 사례는 왼쪽 아래 [전체] 화면에서 볼 수 있습니다</div>` : "";
   // v16 순서: 차트 → 뉴스 → 공시 → 실적 → 재무 → 수급 → AI → Risk → 내 보유 (섹션은 ⚙ 로 숨기기·순서 변경, 서버 저장)
   el.innerHTML = `${head}
   <div id="pf-nav" class="pf-nav"></div>
   <div id="pf-body">
   <section data-w="pf-chart"><div class="grid g-21">
-    ${card("차트 <span class='small dim'>AI 매수 관심구간 · 목표 · 위험 · 지지/저항 · 뉴스·공시·실적 표시</span>", `<div id="pf-top1" class="pf-top1"></div><div id="an-chart" class="chart"></div>`)}
+    ${card("차트", `<div id="pf-top1" class="pf-top1"></div><div id="an-chart" class="chart"></div>`)}
     ${card("투자 전 체크 <span class='small dim'>핵심 지표</span>", `<div id="pf-stats"><div class="ev-none small dim">불러오는 중…</div></div>`)}
   </div></section>
   <section data-w="pf-news"><div id="pf-news"></div></section>
@@ -763,7 +764,7 @@ async function viewAnalysis(el) {
   <section data-w="pf-fin"><div id="pf-sections"></div></section>
   <section data-w="pf-flow"><div id="pf-extra"></div></section>
   <section data-w="pf-ai"><div id="pf-why"></div><div id="pf-verify"></div><div id="pf-desk"></div>${aiSections}
-    ${sim ? card("과거 유사 사례 (RAG 메모리)", `<div class="scroll"><table><tbody>${sim}</tbody></table></div>`) : ""}</section>
+    ${sim ? `<div class="pro-only">` + card("과거 비슷한 사례", `<div class="scroll"><table><tbody>${sim}</tbody></table></div>`) + "</div>" : ""}</section>
   <section data-w="pf-risk"><div class="grid g-2"><div id="pf-risk"></div><div id="pf-pretrade"></div></div><div id="pf-ticket"></div></section>
   <section data-w="pf-mine"><div id="pf-hold"></div><div class="grid g-2"><div id="pf-story"></div><div id="pf-thesis"></div></div></section>
   </div>
@@ -942,7 +943,7 @@ async function viewCore(el) {
 }
 
 // ------------------------------------------------------------ 전략 건강검진
-const H_ICON = { ok: "🟢", warn: "🟡", critical: "🔴", insufficient: "⚪" };
+const H_ICON = { ok: lvDot("good"), warn: lvDot("warn"), critical: lvDot("bad"), insufficient: lvDot("idle") };
 const H_LABEL = { ok: "정상 범위", warn: "주의 (과거 하위 5%)", critical: "위험 (과거에 없던 수준)", insufficient: "판단 보류" };
 function healthCard(h) {
   if (!h) return "";
@@ -1149,10 +1150,17 @@ function buildNav() {
   const link = ([v, ic, label]) => `<a href="#${v}" data-view="${v}">${ICONS[ic] || ""}<span>${label}</span></a>`;
   const nAdv = NAV.reduce((a, [, it]) => a + it.filter((x) => !easyIds.has(x[0])).length, 0);
   let h = `<div class="grp">자주 쓰는 것</div>${NAV_EASY.map(link).join("")}`;
-  if (easy) h += `<button class="nav-more" id="nav-more">${open ? "고급 메뉴 접기 ▴" : `고급 메뉴 ${nAdv}개 펼치기 ▾`}</button>`;
+  if (easy) h += `<button class="nav-more" id="nav-more">${open ? "기능 접기 ▴" : `더 많은 기능 ${nAdv}개 ▾`}</button>`;
+  if (open) h += `<input class="nav-filter" id="nav-filter" placeholder="기능 찾기 (예: 세금, 주문, 성적)" autocomplete="off">`;
   if (open) h += NAV.map(([g, items]) => { const xs = items.filter((x) => !easyIds.has(x[0])); return xs.length ? `<div class="grp">${g}</div>${xs.map(link).join("")}` : ""; }).join("");
   h += `<div class="ui-mode"><span class="xs dim">화면</span><button data-ui="easy" class="${easy ? "on" : ""}" title="자주 쓰는 6개 메뉴만">쉬운</button><button data-ui="pro" class="${easy ? "" : "on"}" title="모든 메뉴·자세한 홈">전체</button></div>`;
   $("#nav").innerHTML = h;
+  const nf = $("#nav-filter");
+  if (nf) nf.oninput = () => {  // v21: 46개 메뉴를 다 훑지 않고 이름으로 찾기
+    const q = nf.value.trim();
+    $("#nav").querySelectorAll("a[data-view]").forEach((a) => { a.style.display = !q || a.textContent.includes(q) ? "" : "none"; });
+    $("#nav").querySelectorAll(".grp").forEach((g) => { g.style.display = q ? "none" : ""; });
+  };
   const mb = $("#nav-more");
   if (mb) mb.onclick = () => { safeSet("qa_nav_open", open ? "0" : "1"); buildNav(); markNav(); };
   document.querySelectorAll(".ui-mode button").forEach((b) => b.onclick = () => { if (b.dataset.ui !== uiMode()) setUiMode(b.dataset.ui); });
@@ -1273,8 +1281,8 @@ function modeInfo(d) {
   if (mode === "live" && sys.broker === "kis") return sys.kis_env === "real"
     ? { title: "실전 거래", sub: "KIS 실계좌 · 실제 돈", color: "#ef4444", icon: "●" }
     : { title: "모의투자 자동매매", sub: "KIS 모의계좌 · 실제 돈 아님", color: "#22c55e", icon: "▶" };
-  if (mode === "shadow") return { title: "Shadow Trading", sub: "호가 기준 가상 체결", color: "#8b5cf6", icon: "◐" };
-  return { title: "Paper Trading", sub: "가상매매 · 실제 주문 없음", color: "#3b82f6", icon: "◆" };
+  if (mode === "shadow") return { title: "그림자 매매", sub: "실시간 호가로 가상 체결", color: "#8b5cf6", icon: "◐" };
+  return { title: "모의투자", sub: "가상 돈 · 실제 주문 없음", color: "#3b82f6", icon: "◆" };
 }
 
 function renderChrome(d) {
@@ -1282,7 +1290,8 @@ function renderChrome(d) {
   const mi = modeInfo(d);
   $("#mode-card").innerHTML = `<div class="t">운영 모드</div><div class="mode-box"><span class="ic" style="background:${mi.color}">${mi.icon}</span><div><b>${esc(mi.title)}</b><span class="xs muted">${esc(mi.sub)}${d.system.core_only ? " · 코어 전용" : ""}</span></div></div>`;
   const pf = d.portfolios[homeMode(d)] || {};
-  $("#balance-card").innerHTML = `<div class="t">계좌 평가금액 (${homeMode(d).toUpperCase()})</div><div class="bal num">${pf.equity ? krw(pf.equity) : "-"}</div><div class="small">${pf.equity ? pct(pf.return_pct) + ' <span class="muted">누적</span>' : '<span class="muted">기록 없음</span>'}</div>`;
+  const MODE_KO = { paper: "모의투자", live: "실계좌", shadow: "그림자 매매" };
+  $("#balance-card").innerHTML = `<div class="t">${MODE_KO[homeMode(d)] || homeMode(d)} 평가금액</div><div class="bal num">${pf.equity ? krw(pf.equity) : "-"}</div><div class="small">${pf.equity ? pct(pf.return_pct) + ' <span class="muted">누적</span>' : '<span class="muted">기록 없음</span>'}</div>`;
   const kb = $("#kill-btn");
   kb.classList.toggle("on", d.kill_switch);
   kb.innerHTML = d.halted ? `${ICONS.stop} HALTED · 자동 정지` : d.kill_switch ? `${ICONS.play} 매수 정지 중 · 해제` : `${ICONS.stop} 긴급 정지`;
@@ -1302,6 +1311,15 @@ function renderChrome(d) {
     }).catch(() => {});
     sp.style.cursor = "pointer";
     sp.onclick = () => { location.hash = "#server"; };
+    // v21: DB 만 살아 있으면 '정상' 이라고 하던 것 → 24시간 운영·데이터 날짜·뉴스 수집까지 보고 판단
+    if (h.ok && !bad) api("/api/ops-status").then((o) => {
+      const iss = o.issues || [];
+      if (!iss.length) return;
+      const worst = iss.some((x) => x.level === "bad");
+      sp.classList.toggle("warn", true);
+      sp.innerHTML = `<span class="dot ${worst ? "bad" : "warn"}"></span>점검 필요 ${iss.length}`;
+      sp.title = iss.map((x) => `• ${x.text}\n  → ${x.fix}`).join("\n");
+    }).catch(() => {});
   }).catch(() => { $("#sys-status").innerHTML = `<span class="dot bad"></span>연결 실패`; });
 }
 

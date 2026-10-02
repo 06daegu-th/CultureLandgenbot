@@ -214,6 +214,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.start_guide())
                     if url.path == "/api/goal":
                         return self._json(api.goal({k: arg(k) for k in ("principal", "monthly", "goal", "target_years", "strategy", "raise_pct")}))
+                    if url.path == "/api/ops-status":
+                        return self._json(api.ops_status())
                     if url.path == "/api/baseline":
                         return self._json(api.baseline(arg("mode", "paper")))
                     if url.path == "/api/ai-plain":
@@ -311,7 +313,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     if url.path == "/api/ai-lab":
                         return self._json(api.ai_lab())
                     if url.path == "/api/portfolio-os":
-                        return self._json(api.portfolio_os(arg("mode")))
+                        return self._json(api.portfolio_os(arg("mode"), arg("source", "auto")))
                     if url.path == "/api/briefing":
                         return self._json(api.briefing(arg("mode")))
                     if url.path == "/api/simulate":

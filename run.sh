@@ -23,6 +23,7 @@
 #   ./run.sh logos [--retry]  종목 로고 미리 받기 (관심·보유·주요 종목 · 실제 회사 로고, 못 받으면 이니셜)
 #   ./run.sh install-service  PC 를 켜면 자동으로 24시간 운영 시작 (macOS launchd · Linux systemd) — 꺼져 있으면 데이터가 밀린다
 #   ./run.sh uninstall-service  자동 시작 해제
+#   ./run.sh report           점검 보고서 (키·계좌번호·금액 없음) — 문제가 있을 때 이 글을 그대로 보내 주세요
 #   ./run.sh status           지금 돌고 있나 (대시보드 · 24시간 운영 · 데이터 날짜 · 자동 시작)
 #   ./run.sh update           새 버전 받기 (git) → 설치 · DB 갱신 → 자동 시작이면 다시 시작
 #   ./run.sh db-clean [--yes] DB 정리 (기본 미리보기 · 주문·판단 기록은 보존)
@@ -650,6 +651,7 @@ main() {
     install-service)   cmd_install_service ;;
     uninstall-service) cmd_uninstall_service ;;
     status)     cmd_status ;;
+    report)     ensure_db; qa report "$@" ;;
     update)     cmd_update ;;
     orders)     qa orders "$@" ;;
     checkup)    qa checkup "$@" ;;

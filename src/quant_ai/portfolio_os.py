@@ -18,11 +18,11 @@ from .asof import label
 LEVEL = {"ok": "LOW", "warn": "MEDIUM", "bad": "HIGH"}
 
 
-def _book(app, mode: str) -> tuple[dict[str, float], float, float, dict[str, str]]:
-    """(종목→평가금액, 현금, 총액, 이름) — 사용자가 입력한 계좌가 있으면 그것을, 없으면 시스템 장부."""
+def _book(app, mode: str, source: str = "auto") -> tuple[dict[str, float], float, float, dict[str, str]]:
+    """(종목→평가금액, 현금, 총액, 이름) — source: auto(입력한 계좌가 있으면 그것, 없으면 시스템 장부) · accounts · system."""
     from . import accounts
     s = accounts.summary(app)
-    mine = [a for a in s["accounts"] if a["type"] != "system"]
+    mine = [a for a in s["accounts"] if a["type"] != "system"] if source != "system" else []
     vals, cash, names = {}, 0.0, {}
     if mine:
         for a in mine:
@@ -39,7 +39,7 @@ def _book(app, mode: str) -> tuple[dict[str, float], float, float, dict[str, str
                 px = float(bars[sym]["close"].iloc[-1]) if sym in bars and len(bars[sym]) else p.avg_price
                 vals[sym] = p.qty * px
         cash = pf.cash
-        src = f"{mode.upper()} 장부 (시스템)"
+        src = {"paper": "모의투자 장부", "live": "실계좌 장부", "shadow": "그림자 매매 장부"}.get(mode, f"{mode} 장부")
     return vals, cash, sum(vals.values()) + cash, names | {"_src": src}
 
 
@@ -117,14 +117,16 @@ def holding_extras(app, symbols: list[str], now: datetime | None = None) -> dict
     return out
 
 
-def overview(app, mode: str = "paper") -> dict:
+def overview(app, mode: str = "paper", source: str = "auto") -> dict:
     from sqlalchemy import select
 
+    from . import accounts
     from .center import risk_simple
     from .data.db import session_scope
     from .data.models import Instrument
     from .engines.sector import sector_map
-    vals, cash, total, names = _book(app, mode)
+    n_mine = sum(1 for a in accounts.summary(app)["accounts"] if a["type"] != "system")
+    vals, cash, total, names = _book(app, mode, source)
     src = names.pop("_src")
     if total <= 0:
         return {"empty": True, "headline": "보유 자산 기록이 없습니다 — '계좌 · 세금 · 배당'에서 내 계좌를 입력하면 여기서 한눈에 봅니다"}
@@ -169,7 +171,7 @@ def overview(app, mode: str = "paper") -> dict:
     level = LEVEL.get(lvl, "MEDIUM")
     if hot and hot[0]["level"] == "HIGH" and level == "LOW":
         level = "MEDIUM"
-    return {"source": src, "total": round(total), "stock": round(stock), "cash": round(cash), "stock_pct": round(stock / total, 4),
+    return {"source": src, "source_key": "accounts" if src.startswith("내 계좌") else "system", "n_accounts": n_mine, "total": round(total), "stock": round(stock), "cash": round(cash), "stock_pct": round(stock / total, 4),
             "cash_pct": round(cash / total, 4), "n": len(vals),
             "holdings": [{"symbol": s_, "name": names.get(s_, s_), "value": round(vals[s_]), "weight": round(vals[s_] / total, 4),
                           "sector": sectors.get(s_) or "미분류", **ex.get(s_, {})} for s_ in top12],

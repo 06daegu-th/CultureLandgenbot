@@ -539,7 +539,7 @@ function evDate(iso) {
   const dt = new Date(Date.UTC(y, m - 1, d));
   return `${m}월 ${d}일 (${WD[dt.getUTCDay()]})`;
 }
-const EV_ICON = { earnings: "📊", earnings_prelim: "📊", ex_div: "✂️", div_pay: "💰", dividend: "💰", ir: "🎤", agm: "🏛️", report: "📑", offering: "⚠️", buyback: "🔁" };
+const EV_ICON = new Proxy({ earnings: "earnings", earnings_prelim: "earnings", ex_div: "ex_div", div_pay: "div_pay", dividend: "div_pay" }, { get: (t, k) => calDot(t[k] || "disclosure") });  // v21: 색 점
 const safeUrl = (u) => /^https?:\/\//i.test(u || "") ? esc(u) : null;
 
 function pfEvents(p) {

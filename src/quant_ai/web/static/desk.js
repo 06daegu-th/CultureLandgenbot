@@ -16,7 +16,7 @@ function asOf(labelOrTs, status = "fresh", prefix = "기준") {
   const lbl = /KST$|^\d{4}-\d{2}-\d{2}$/.test(labelOrTs) ? labelOrTs : kst(labelOrTs);
   return `<span class="asof s-${esc(status)}" title="이 데이터의 기준 시각">${prefix} ${esc(lbl)}</span>`;
 }
-const GATE_ICON = { green: "🟢", yellow: "🟡", red: "🔴", na: "⚪" };
+const GATE_ICON = { green: lvDot("good"), yellow: lvDot("warn"), red: lvDot("bad"), na: lvDot("idle") };
 const RD_LABEL = { READY: "READY · 매수 가능", CAUTION: "CAUTION · 주의", NOT_READY: "NOT READY · 신규 매수 차단" };
 const RD_CLS = { READY: "rd-ready", CAUTION: "rd-caution", NOT_READY: "rd-not" };
 
@@ -137,7 +137,7 @@ function fxCard(fx) {
 }
 
 // ------------------------------------------------------------ 뷰: 이벤트 캘린더 2.0
-const CAL_ICON = { bok: "🇰🇷", fomc: "🏦", cpi: "📈", nfp: "👷", gdp: "📊", pce: "🧾", retail: "🛒", earnings: "💼", ex_div: "💰", div_pay: "💵", options_expiry: "🎯", quad_witching: "🎯", index_rebalance: "⚖️", holiday: "🛑", half_day: "⏰", export: "🚢", disclosure: "📄", peer_earnings: "👥", lockup: "🔓", unknown: "❔", custom: "📌" };
+const CAL_ICON = new Proxy({}, { get: (_, k) => calDot(String(k)) });  // v21: 종류별 색 점 (words.js)
 async function viewCalendar(el) {
   const c = await api("/api/calendar");
   const f = S.calFilter || "all";
@@ -159,19 +159,20 @@ async function viewCalendar(el) {
   const mkRows = (im.market_kr || []).map((x) => `<tr><td>${CAL_ICON[x.kind] || ""} ${esc(({ bok_change: "기준금리 변경", fomc: "FOMC", options_expiry: "옵션 만기", quad_witching: "동시만기", nfp: "미국 고용" })[x.kind] || x.kind)}</td><td class="r num">${x.n}</td><td class="r num ${x.vs_normal > 1.2 ? "warn-t" : ""}">×${x.vs_normal ?? "-"}</td><td class="r">${P(x.mean, 2)}</td><td class="r">${P(x.worst, 2)}</td></tr>`).join("");
   const stRows = (im.stock || []).map((x) => `<tr><td>${esc(x.kind)}</td><td class="r num">${x.n}</td><td class="r ${(x.mean || 0) >= 0 ? "up" : "down"}">${P(x.mean, 2)}</td><td class="r num">${R(x.abs_mean, 2)}</td><td class="r num">${x.t ?? "-"}</td><td>${x.significant ? '<span class="chip ok">우연 아님</span>' : '<span class="chip">불확실</span>'}</td></tr>`).join("");
   const pa = im.prediction || {};
-  el.innerHTML = marketVolCard(c) + `
-  ${card(`이벤트 캘린더 <span class="small dim">종목 · 시장 · 경제 · 실적 · 배당 · 공시 · 옵션 만기 · 휴장 — 출처와 '추정' 여부를 함께 표시</span>`,
+  el.innerHTML = `
+  ${card(`다가오는 일정 <span class="small dim">보유·관심 종목 · 경제지표 · 휴장</span>`,
     `<div class="cal-bar">${tabs("cal-f", f, { all: "전체", stock: "종목", macro: "경제", deriv: "만기·지수", mkt: "휴장" })}${tabs("cal-m", mk, { all: "전체 시장", KR: "한국", US: "미국" })}<label class="xs"><input type="checkbox" id="cal-past" ${S.calPast ? "checked" : ""}> 지난 2주 포함</label></div>
     <div class="cal-list">${list || empty("해당 이벤트 없음")}</div>
-    <div class="xs dim" style="margin-top:8px">휴장일: ${esc(c.calendar_source || "")} · FOMC: 연준 공표 일정 · CPI/고용: FRED_API_KEY 가 있으면 공식 발표일(없으면 첫째 금요일 추정) · 사용자 일정: artifacts/events.json</div>`,
+    <div class="xs dim pro-only" style="margin-top:8px">휴장일: ${esc(c.calendar_source || "")} · FOMC: 연준 공표 일정 · CPI/고용: FRED_API_KEY 가 있으면 공식 발표일(없으면 첫째 금요일 추정) · 사용자 일정: artifacts/events.json</div>`,
     `${asOf(c.as_of || c.at)} <button class="btn-sm" data-run="event_calendar">갱신</button>`)}
   ${card(`보유·관심 종목 이벤트 위험 <span class="small dim">가까운 큰 이벤트일수록 점수↑ · 실적 D-1 이내 매수 ×0.5 · D-3 이내 ×0.75 (게이트: ${esc(c.gate || "reduce")})</span>`, risk ? `<div class="scroll"><table class="tight"><thead><tr><th>종목</th><th>위험</th><th>다음 이벤트</th><th class="r">예상 변동</th><th>매수 제한</th></tr></thead><tbody>${risk}</tbody></table></div>` : empty("보유·관심 종목이 없습니다"))}
-  <div class="grid g-2">
+  <div class="grid g-2 pro-only">
     ${card("시장 이벤트의 실제 영향 <span class='small dim'>그날 KOSPI 변동폭 ÷ 평소</span>", mkRows ? `<table class="tight"><thead><tr><th>이벤트</th><th class="r">n</th><th class="r">변동폭</th><th class="r">평균</th><th class="r">최악</th></tr></thead><tbody>${mkRows}</tbody></table>` : empty("지수 이력이 부족합니다"), im.at ? asOf(im.at) : `<button class="btn-sm" data-run="event_impact">계산</button>`)}
     ${card("종목 이벤트 반응 <span class='small dim'>베타 조정 비정상 수익률 [-1,+1]</span>", stRows ? `<div class="scroll"><table class="tight"><thead><tr><th>유형</th><th class="r">n</th><th class="r">평균</th><th class="r">|평균|</th><th class="r">t</th><th></th></tr></thead><tbody>${stRows}</tbody></table></div>` : empty("공시·실적 이력이 부족합니다"))}
   </div>
-  ${card("예측 오차의 이벤트 귀속 <span class='small dim'>보유 기간 안에 큰 이벤트가 끼어 있던 예측 vs 아닌 예측</span>", pa.n ? `<div class="kv-grid">${kv("이벤트 있던 예측 적중", `${R(pa.with_event?.hit_rate)} <span class="xs dim">n=${pa.with_event?.n}</span>`)}${kv("이벤트 없던 예측 적중", `${R(pa.without_event?.hit_rate)} <span class="xs dim">n=${pa.without_event?.n}</span>`)}${kv("빗나간 예측 중 이벤트 낀 비율", R(pa.miss_share_with_event))}</div>
-    ${(pa.by_kind || []).length ? `<div class="small" style="margin-top:8px">${pa.by_kind.map((k) => `${esc(k.kind)} ${R(k.hit_rate)} (n=${k.n})`).join(" · ")}</div>` : ""}` : empty("채점된 예측이 아직 없습니다"))}`;
+  <div class="pro-only">${marketVolCard(c)}</div>
+  <div class="pro-only">${card("예측 오차의 이벤트 귀속 <span class='small dim'>보유 기간 안에 큰 이벤트가 끼어 있던 예측 vs 아닌 예측</span>", pa.n ? `<div class="kv-grid">${kv("이벤트 있던 예측 적중", `${R(pa.with_event?.hit_rate)} <span class="xs dim">n=${pa.with_event?.n}</span>`)}${kv("이벤트 없던 예측 적중", `${R(pa.without_event?.hit_rate)} <span class="xs dim">n=${pa.without_event?.n}</span>`)}${kv("빗나간 예측 중 이벤트 낀 비율", R(pa.miss_share_with_event))}</div>
+    ${(pa.by_kind || []).length ? `<div class="small" style="margin-top:8px">${pa.by_kind.map((k) => `${esc(k.kind)} ${R(k.hit_rate)} (n=${k.n})`).join(" · ")}</div>` : ""}` : empty("채점된 예측이 아직 없습니다"))}</div>`;
   el.querySelectorAll("#cal-f button").forEach((b) => b.onclick = () => { S.calFilter = b.dataset.k; render(); });
   el.querySelectorAll("#cal-m button").forEach((b) => b.onclick = () => { S.calMarket = b.dataset.k; render(); });
   const pc = $("#cal-past");

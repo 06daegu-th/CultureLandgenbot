@@ -36,6 +36,69 @@ PRESETS = {
 }
 MAX_YEARS = 30
 
+# v21: 계좌별 세금 (2026 기준 단순 추정 — 실제 적용은 금융사·세법 개정 확인)
+#  · 일반: 국내 주식·국내주식형 ETF 매매차익 비과세, 배당·분배금 15.4% (연 배당 1.8% 가정 → 해마다 약 0.28% 손해)
+#          해외지수 ETF(국내 상장)는 매매차익까지 배당소득 15.4% (팔 때) · 예금 이자 15.4%
+#  · ISA(중개형): 3년 의무 · 연 2,000만원 납입 한도 · 순이익 200만원 비과세(서민형 400만) · 넘는 부분 9.9% 분리과세 · 개별 종목 가능
+#          (국내 주식 매매차익은 원래 과세 대상이 아니므로 ISA 효과는 배당·이자·해외지수 ETF 에서 난다 — 200만원 비과세는 보수적으로 무시)
+#  · 연금저축(+IRP): 연 900만원까지 세액공제 13.2%(총급여 5,500만 초과) ~ 16.5% · 연금으로 받을 때 3.3~5.5% · 개별 종목 불가(ETF만)
+#          55세 전에 해지하면 공제받은 돈 + 이익에 16.5% (계획이 10년이면 나이를 먼저 확인)
+DIV_YIELD = 0.018
+ACCOUNTS = {
+    "general": {"name": "일반 계좌", "note": "제한 없음 · 국내 주식 매매차익 비과세 · 배당 15.4%"},
+    "isa": {"name": "ISA (중개형)", "note": "3년 이상 유지 · 연 2,000만원 한도 · 이익 200만원까지 비과세, 넘는 부분 9.9%"},
+    "pension": {"name": "연금저축 + IRP", "note": "연 900만원까지 13.2% 세액공제(돌려받은 돈도 다시 투자 가정) · 55세 이후 연금으로 받을 때 3.3~5.5% · 개별 종목 불가"},
+}
+
+
+def _tax_terms(account: str, strategy: str) -> dict:
+    """연 수익률에서 빠지는 세금(drag) · 끝에 내는 세율(end) · 비과세 한도 · 세액공제율 · 가능 여부."""
+    overseas = strategy == "sp500"
+    if account == "general":
+        if strategy == "deposit":
+            return {"drag": PRESETS["deposit"]["mu"] * 0.154, "end": 0.0, "free": 0.0, "credit": 0.0, "ok": True}
+        return {"drag": 0.0 if overseas else DIV_YIELD * 0.154, "end": 0.154 if overseas else 0.0, "free": 0.0, "credit": 0.0, "ok": True}
+    if account == "isa":
+        # ISA 안에서도 국내 주식·국내주식형 ETF 매매차익은 과세 소득이 아니다 → 배당·이자·해외지수 ETF 이익만 9.9% (200만원 넘는 부분)
+        if overseas:
+            return {"drag": 0.0, "end": 0.099, "free": 2_000_000, "credit": 0.0, "ok": True}
+        y = PRESETS["deposit"]["mu"] if strategy == "deposit" else DIV_YIELD
+        return {"drag": y * 0.099, "end": 0.0, "free": 0.0, "credit": 0.0, "ok": True}
+    # pension
+    return {"drag": 0.0, "end": 0.055, "free": 0.0, "credit": 0.132, "ok": strategy != "core",
+            "why_not": "연금계좌는 개별 종목을 살 수 없어 코어 전략은 불가 — 지수 ETF 로" if strategy == "core" else None}
+
+
+def tax_compare(principal: float, monthly: float, goal: float, target_years: int, strategy: str, raise_pct: float = 0.0,
+                n: int = 1500) -> list[dict]:
+    """같은 돈 · 같은 투자 방식을 일반 / ISA / 연금 계좌에 넣으면 목표 확률이 얼마나 달라지나 (세후 기준)."""
+    p = PRESETS[strategy]
+    out = []
+    paid = principal + sum(monthly * (1 + raise_pct) ** (k // 12) for k in range(target_years * 12))
+    for key, a in ACCOUNTS.items():
+        t = _tax_terms(key, strategy)
+        if not t["ok"]:
+            out.append({"key": key, "name": a["name"], "ok": False, "why_not": t.get("why_not"), "note": a["note"]})
+            continue
+        bonus = min(monthly * 12, 9_000_000) * t["credit"] / 12  # 돌려받은 공제액을 다시 넣는다 (월로 나눠)
+        # 목표는 '세금 낸 뒤' 금액: 끝에 내는 세금만큼 세전 목표를 올린다 (낸 돈·비과세 한도는 세금이 없다)
+        if t["end"] and strategy != "deposit":
+            if key == "pension":
+                pre_goal = goal / (1 - t["end"])
+            else:
+                base = paid + t["free"]
+                pre_goal = goal if goal <= base else (goal - t["end"] * base) / (1 - t["end"])
+        else:
+            pre_goal = goal
+        sim = simulate(principal, monthly + bonus, pre_goal, p["mu"] - t["drag"], p["vol"], MAX_YEARS, n=n, raise_pct=raise_pct)
+        out.append({"key": key, "name": a["name"], "ok": True, "p_target": sim["by_year"][target_years - 1], "median_years": sim["median_years"],
+                    "refund_year": round(bonus * 12), "drag": round(t["drag"], 4), "end_tax": t["end"], "note": a["note"]})
+    ok = [x for x in out if x["ok"]]
+    if ok:
+        best = max(ok, key=lambda x: (x["p_target"], -(x["median_years"] or 99)))
+        best["best"] = True
+    return out
+
 
 def simulate(principal: float, monthly: float, goal: float, mu: float, vol: float, years: int = MAX_YEARS,
              n: int = 3000, raise_pct: float = 0.0, seed: int = 7) -> dict:
@@ -123,6 +186,7 @@ def plan(principal: float, monthly: float, goal: float, target_years: int = 10, 
             "assumption": p | {"key": strategy}, "headline": headline, "p_target": in_target, "sim": sim,
             "need_monthly": {"p50": need50, "p80": need80}, "no_add_cagr": None if no_add is None else round(no_add, 4),
             "compare": compare, "what_if": what_if, "honest": honest,
+            "tax": tax_compare(principal, monthly, goal, target_years, strategy, raise_pct),
             "note": "미래 수익률은 가정입니다 — 과거 평균과 변동성으로 3,000가지 미래를 만들어 센 확률이지 보장이 아닙니다. 세금·수수료는 연 수익률 가정에 대략 포함."}
 
 
@@ -149,18 +213,33 @@ def save(app, body: dict) -> dict:
         mode = str(d.get("mode", (cur.get("dca") or {}).get("mode", "paper")))
         if mode not in ("paper", "live"):
             raise ValueError("적립 장부는 paper/live")
-        g["dca"] = {"on": bool(d.get("on", (cur.get("dca") or {}).get("on", False))), "day": day, "mode": mode,
-                    "amount": float(d.get("amount", g["monthly"]) or g["monthly"]), "last": (cur.get("dca") or {}).get("last")}
+        prev = cur.get("dca") or {}
+        target = str(d.get("target", prev.get("target", "core")))
+        if target not in ("core", "etf"):
+            raise ValueError("적립 대상은 core/etf")
+        etf = str(d.get("etf", prev.get("etf", "069500")))
+        if etf not in ETFS:
+            raise ValueError(f"ETF 는 {', '.join(ETFS)} 중 하나")
+        g["dca"] = {"on": bool(d.get("on", prev.get("on", False))), "day": day, "mode": mode, "target": target, "etf": etf,
+                    "amount": float(d.get("amount", g["monthly"]) or g["monthly"]), "last": prev.get("last")}
     plan(g["principal"], g["monthly"], g["goal"], g["target_years"], g["strategy"], g["raise_pct"])  # 검증
     g["at"] = datetime.now(UTC).isoformat()
     ops.set_state(app.engine, KEY, g)
+    dd = g.get("dca") or {}
+    if dd.get("on") and dd.get("mode") == "paper" and dd.get("target") == "etf" and g["principal"] > 0 and not app.cashflows(ETF_BOOK):
+        deposit(app, ETF_BOOK, g["principal"], memo="시작 원금")  # ETF 적립 장부는 원금부터 같이 굴린다
+        g["seeded"] = etf_buy(app, dd.get("etf") or "069500")
     return g
 
 
 def current_assets(app) -> tuple[float, str]:
     from .portfolio_os import _book
+    d = get(app).get("dca") or {}
+    if d.get("mode") == "paper" and d.get("target") == "etf":
+        pf = _load_book(app, ETF_BOOK)
+        return float(pf.equity(_book_prices(app, pf))), f"ETF 적립 모의 장부 ({ETFS.get(d.get('etf') or '069500')})"
     try:
-        vals, cash, total, names = _book(app, (get(app).get("dca") or {}).get("mode", "paper"))
+        vals, cash, total, names = _book(app, d.get("mode", "paper"))
     except Exception:  # noqa: BLE001
         return 0.0, "계산 실패"
     return float(total), names.get("_src", "")
@@ -187,21 +266,106 @@ def progress(app, now: datetime | None = None) -> dict:
 
 
 # ------------------------------------------------------------------ 월 적립식
-def deposit(app, mode: str, amount: float, memo: str = "월 적립") -> dict:
-    """모의 장부에 현금 입금 (스냅샷 한 줄 추가) + 입출금 기록 (수익률에서 입금 효과 제외)."""
+ETF_BOOK = "etf-dca"  # 월 적립 ETF 전용 모의 장부 (코어가 리밸런싱하는 paper 장부와 섞지 않는다 — 섞으면 코어가 ETF 를 팔아 버림)
+ETFS = {"069500": "KODEX 200 (국내 대표 200종목)", "360750": "TIGER 미국S&P500"}
+
+
+def last_close(app, symbol: str) -> tuple[float, str] | None:
+    """(마지막 종가, 날짜). DB 에 없으면 Yahoo(069500.KS)에서 최근 2주를 받아 본다 (인터넷이 막히면 None)."""
+    from sqlalchemy import select
+
+    from .data.db import session_scope
+    from .data.models import PriceBar
+
+    def read():
+        with session_scope(app.engine) as s:
+            for sym in (symbol, f"{symbol}.KS"):
+                b = s.scalar(select(PriceBar).where(PriceBar.symbol == sym, PriceBar.interval == "1d").order_by(PriceBar.ts.desc()).limit(1))
+                if b is not None and b.close:
+                    return float(b.close), str(b.ts.date())
+        return None
+    got = read()
+    if got is None and symbol.isdigit():
+        try:
+            from datetime import timedelta
+
+            from .data.collectors.prices import YahooPriceSource
+            from .data.models import Instrument
+            with session_scope(app.engine) as s:
+                if s.scalar(select(Instrument).where(Instrument.symbol == f"{symbol}.KS")) is None:
+                    s.add(Instrument(symbol=f"{symbol}.KS", market="KRX", name=ETFS.get(symbol, symbol)))
+            now = datetime.now(UTC)
+            app.ingest_prices(YahooPriceSource(), [f"{symbol}.KS"], now - timedelta(days=14), now)
+            got = read()
+        except Exception:  # noqa: BLE001 - 인터넷이 막혀도 적립은 현금으로 계속
+            got = None
+    return got
+
+
+def _load_book(app, mode: str):
+    """ETF 적립 장부는 0원에서 시작 (paper 는 설정의 초기 자금)."""
+    from sqlalchemy import select
+
     from .data.db import session_scope
     from .data.models import PortfolioSnapshot
-    if mode == "live":
-        raise ValueError("실계좌에는 프로그램이 돈을 넣을 수 없습니다 — 증권사 앱에서 이체하세요")
-    pf = app.load_portfolio(mode)
+    from .trading.portfolio import Portfolio
+    if mode == ETF_BOOK:
+        with session_scope(app.engine) as s:
+            has = s.scalar(select(PortfolioSnapshot.id).where(PortfolioSnapshot.mode == mode).limit(1))
+        if has is None:
+            return Portfolio(cash=0.0)
+    return app.load_portfolio(mode)
+
+
+def _book_prices(app, pf) -> dict[str, float]:
     bars, _ = app._all_bars()
-    px = {s_: float(bars[s_]["close"].iloc[-1]) for s_ in pf.positions if s_ in bars and len(bars[s_])}
-    pf.cash += float(amount)
-    snap = pf.snapshot(px)
+    px = {}
+    for s_ in pf.positions:
+        if s_ in bars and len(bars[s_]):
+            px[s_] = float(bars[s_]["close"].iloc[-1])
+        else:
+            lc = last_close(app, s_) if s_ in ETFS else None
+            px[s_] = lc[0] if lc else pf.positions[s_].avg_price
+    return px
+
+
+def _save_snapshot(app, mode: str, pf) -> dict:
+    from .data.db import session_scope
+    from .data.models import PortfolioSnapshot
+    snap = pf.snapshot(_book_prices(app, pf))
     with session_scope(app.engine) as s:
         s.add(PortfolioSnapshot(mode=mode, ts=datetime.now(UTC), **snap))
+    return snap
+
+
+def deposit(app, mode: str, amount: float, memo: str = "월 적립") -> dict:
+    """모의 장부에 현금 입금 (스냅샷 한 줄 추가) + 입출금 기록 (수익률에서 입금 효과 제외)."""
+    if mode == "live":
+        raise ValueError("실계좌에는 프로그램이 돈을 넣을 수 없습니다 — 증권사 앱에서 이체하세요")
+    pf = _load_book(app, mode)
+    pf.cash += float(amount)
+    _save_snapshot(app, mode, pf)
     app.add_cashflow(mode, float(amount), memo=memo)
     return {"mode": mode, "amount": float(amount), "cash": round(pf.cash)}
+
+
+def etf_buy(app, symbol: str = "069500") -> dict:
+    """ETF 적립 장부의 현금으로 ETF 를 산다 (1주 단위 · 수수료·미끄러짐 반영). 가격을 못 받으면 현금으로 둔다."""
+    from .trading.portfolio import CostModel, Fill, Order, Side
+    pf = _load_book(app, ETF_BOOK)
+    lc = last_close(app, symbol)
+    if lc is None:
+        return {"bought": 0, "reason": f"{ETFS.get(symbol, symbol)} 가격을 받지 못함 — 현금으로 두고 다음 날 다시 시도", "cash": round(pf.cash)}
+    price, day = lc
+    cm = CostModel(app.settings.costs)
+    fill_px = cm.fill_price(Side.BUY, price)
+    qty = int(pf.cash // (fill_px * (1 + app.settings.costs.commission_bps / 1e4)))
+    if qty <= 0:
+        return {"bought": 0, "reason": "1주 살 돈이 안 됨 — 다음 적립 때 함께", "cash": round(pf.cash), "price": price}
+    order = Order(symbol=symbol, side=Side.BUY, qty=qty, reason="월 적립 ETF", ref_price=price)
+    pf.apply(Fill(order=order, ts=datetime.now(UTC), qty=qty, price=fill_px, fee=cm.fee(Side.BUY, fill_px, qty)))
+    _save_snapshot(app, ETF_BOOK, pf)
+    return {"bought": qty, "price": round(fill_px, 2), "price_date": day, "cost": round(fill_px * qty), "cash": round(pf.cash)}
 
 
 def dca_due(g: dict, today: date, trading_day: bool) -> bool:
@@ -219,22 +383,38 @@ def dca_run(app, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     g = get(app)
     today = now.astimezone(KST).date()
+    d0 = g.get("dca") or {}
+    pending = None
+    if d0.get("on") and d0.get("mode") == "paper" and d0.get("target") == "etf" and MARKETS["KRX"].is_trading_day(today):
+        pf = _load_book(app, ETF_BOOK)
+        if pf.cash > 0 and (d0.get("last") or "") != today.isoformat():
+            pending = etf_buy(app, d0.get("etf") or "069500")  # 지난번에 가격을 못 받아 남은 현금 → 오늘 산다
     if not dca_due(g, today, MARKETS["KRX"].is_trading_day(today)):
-        return {"done": False}
+        return {"done": False, **({"pending_buy": pending} if pending else {})}
     d = g["dca"]
     amt = float(d.get("amount") or g.get("monthly") or 0)
     if amt <= 0:
         return {"done": False, "reason": "적립액 0"}
-    if d["mode"] == "paper":
+    etf = d.get("etf") or "069500"
+    if d["mode"] == "paper" and d.get("target") == "etf":
+        r = deposit(app, ETF_BOOK, amt)
+        b = etf_buy(app, etf)
+        r |= {"buy": b}
+        msg = (f"ETF 적립 장부에 {amt / 1e4:,.0f}만원 입금 → {ETFS.get(etf, etf)} {b['bought']}주 매수 (주당 약 {b['price']:,.0f}원)"
+               if b.get("bought") else f"ETF 적립 장부에 {amt / 1e4:,.0f}만원 입금 — {b['reason']}")
+    elif d["mode"] == "paper":
         r = deposit(app, "paper", amt)
         msg = f"모의 장부에 {amt / 1e4:,.0f}만원 적립 — 다음 리밸런싱 때 코어 전략대로 투자됩니다"
     else:
-        r = {"mode": "live", "amount": amt}
-        msg = f"오늘은 적립일 — 증권 계좌로 {amt / 1e4:,.0f}만원을 옮기고 주문표대로 사세요 (프로그램은 돈을 옮기지 않습니다)"
+        lc = last_close(app, etf) if d.get("target") == "etf" else None
+        sheet = f" · 주문표: {ETFS.get(etf, etf)} ({etf}) {int(amt // (lc[0] * 1.001))}주 시장가 (어제 종가 {lc[0]:,.0f}원 기준)" if lc else ""
+        r = {"mode": "live", "amount": amt, "sheet": sheet.strip(" ·")}
+        msg = f"오늘은 적립일 — 증권 계좌로 {amt / 1e4:,.0f}만원을 옮기고 사세요{sheet} (프로그램은 돈을 옮기지 않습니다)"
     d["last"] = today.isoformat()
     ops.set_state(app.engine, KEY, g | {"dca": d})
     push(app.engine, "brief", "월 적립일", msg, level="info", link="#goal", dedupe=f"dca:{today.strftime('%Y-%m')}", now=now)
     return {"done": True, **r, "message": msg}
 
 
-__all__ = ["PRESETS", "simulate", "required_monthly", "plan", "get", "save", "progress", "deposit", "dca_due", "dca_run"]
+__all__ = ["PRESETS", "ACCOUNTS", "ETFS", "ETF_BOOK", "simulate", "required_monthly", "plan", "tax_compare", "get", "save", "progress",
+           "deposit", "etf_buy", "last_close", "dca_due", "dca_run"]

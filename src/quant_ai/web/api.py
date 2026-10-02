@@ -979,6 +979,11 @@ class DashboardAPI:
         sym = symbol.strip().upper()[:12]
         return self._cached(f"ai_plain:{sym}", 120, lambda: plain(self.app, 100, sym or None))
 
+    def ops_status(self) -> dict:
+        """상단 상태 표시용 — 24시간 운영 · 데이터 날짜 · 뉴스 · 업종 · 작업 실패 (center.ops_status)."""
+        from ..center import ops_status
+        return self._cached("ops_status", 60, lambda: ops_status(self.app))
+
     def baseline(self, mode: str = "paper") -> dict:
         """코어(이 시스템) vs '그냥 지수 ETF 를 샀다면' — 16년 연구 + 실제 장부 그림자 비교."""
         from .. import baseline
@@ -1001,7 +1006,7 @@ class DashboardAPI:
             inp["strategy"] = str(q["strategy"])
         key = "goal:" + ":".join(str(inp[k]) for k in sorted(inp))
         p = self._cached(key, 600, lambda: goal.plan(**inp))
-        return p | {"saved": g or None, "progress": goal.progress(self.app), "presets": goal.PRESETS}
+        return p | {"saved": g or None, "progress": goal.progress(self.app), "presets": goal.PRESETS, "etfs": goal.ETFS}
 
     def goal_save(self, body: dict) -> dict:
         from .. import goal
@@ -1553,10 +1558,11 @@ class DashboardAPI:
         from ..lab import lab_status
         return self._cached("ai_lab", 60, lambda: lab_status(self.app))
 
-    def portfolio_os(self, mode: str | None) -> dict:
+    def portfolio_os(self, mode: str | None, source: str = "auto") -> dict:
         from ..portfolio_os import overview
         m = self._mode(mode)
-        return self._cached(f"pos:{m}", 30, lambda: overview(self.app, m))
+        src = source if source in ("auto", "accounts", "system") else "auto"
+        return self._cached(f"pos:{m}:{src}", 30, lambda: overview(self.app, m, src))
 
     def briefing(self, mode: str | None) -> dict:
         from ..portfolio_os import briefing

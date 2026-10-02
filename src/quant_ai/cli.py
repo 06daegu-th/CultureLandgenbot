@@ -632,6 +632,16 @@ def cmd_ops_status(args):
         print(f"  → {it['text']}: {it['fix']}")
 
 
+def cmd_report(args):
+    """사용자 PC 점검 보고서 — 키·계좌번호·금액 없이, 그대로 보내도 되는 글 (report.py)."""
+    from pathlib import Path
+
+    from .report import write
+    out, text = write(_app(args), Path(args.out) if args.out else None, net=not args.no_net)
+    print(text)
+    print(f"\n저장: {out.resolve()}")
+
+
 def cmd_db_ping(args):
     """run.sh 용: 0 = 연결 + 주가 데이터 있음, 3 = 연결되지만 비어 있음, 1 = 연결 실패. 스키마를 만들지 않는다."""
     import os
@@ -775,6 +785,10 @@ def main(argv: list[str] | None = None) -> None:
     au.add_argument("--viewer", action="store_true", help="읽기 전용 토큰도 만들기")
     au.set_defaults(fn=cmd_auth_setup)
     sub.add_parser("netcheck", help="외부 데이터 소스 연결 점검").set_defaults(fn=cmd_netcheck)
+    rp = sub.add_parser("report", help="점검 보고서 (키·계좌번호·금액 없음 — 그대로 보내도 됨)")
+    rp.add_argument("--out", default="")
+    rp.add_argument("--no-net", action="store_true", help="외부 연결 시험 생략")
+    rp.set_defaults(fn=cmd_report)
     bg = sub.add_parser("budget", help="원금·최대 손실 → 모든 한도 계산 (--save 로 저장)")
     bg.add_argument("--principal", type=float, required=True)
     bg.add_argument("--max-loss", type=float, required=True)

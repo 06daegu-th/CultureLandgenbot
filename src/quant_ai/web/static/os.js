@@ -3,7 +3,7 @@
 // 종목 페이지 섹션 숨기기/순서(서버 저장)
 /* global $, S, api, post, esc, card, empty, badge, num, P, R, render, toast, ICONS, loadPrefs, pill, kv, hbar */
 
-const OS_ST = { ok: "🟢", warn: "🟡", bad: "🔴", none: "⚪", na: "⚪" };
+const OS_ST = { ok: lvDot("good"), warn: lvDot("warn"), bad: lvDot("bad"), none: lvDot("idle"), na: lvDot("idle") };  // v21: 이모지 대신 색 점
 const TONE_CLS = { 긍정: "pos", 부정: "neg", 중립: "" };
 
 // ------------------------------------------------------------ 종목 페이지 섹션 (숨기기 · 순서)
@@ -26,11 +26,13 @@ async function osApplyWidgets() {
 }
 
 // v20: 종목 페이지 탭 — 긴 한 페이지 대신 '전체 / 차트 / 뉴스·공시 / 실적·재무 / AI / 위험·주문 / 내 보유'
-const OS_TABS = [["all", "전체", null], ["chart", "차트", ["pf-chart"]], ["news", "뉴스·공시", ["pf-news", "pf-disc", "pf-flow"]],
-  ["earn", "실적·재무", ["pf-earn", "pf-fin"]], ["ai", "AI 판단", ["pf-ai"]], ["risk", "위험·주문", ["pf-risk"]], ["mine", "내 보유", ["pf-mine"]]];
+// v21: 처음 열면 '요약'(차트 · 최근 뉴스 · 내 보유)만 — 7,000px 한 페이지를 다 보여 주지 않는다
+const OS_TABS = [["sum", "요약", ["pf-chart", "pf-news", "pf-mine"]], ["news", "뉴스·공시", ["pf-news", "pf-disc", "pf-flow"]],
+  ["earn", "실적·재무", ["pf-earn", "pf-fin"]], ["ai", "AI 근거", ["pf-ai"]], ["risk", "위험·주문", ["pf-risk"]], ["mine", "내 보유", ["pf-mine"]], ["all", "전체", null]];
 function osTab(key, hidden) {
   const body = $("#pf-body");
   if (!body) return;
+  if (!$("#pf-nav")?.querySelector(`[data-tab="${key}"]`)) key = "sum";
   S.stockTab = key;
   const grp = (OS_TABS.find(([k]) => k === key) || OS_TABS[0])[2];
   hidden = hidden || S.stockHidden || new Set();
@@ -41,7 +43,8 @@ function osTab(key, hidden) {
 }
 function osShow(w) {  // 다른 곳(타일·'지금 가장 중요한 것')에서 섹션으로 이동 — 그 섹션이 있는 탭으로 바꾼 뒤 스크롤
   const t = OS_TABS.find(([, , g]) => g && g.includes(w));
-  if (t && S.stockTab !== "all" && S.stockTab !== t[0]) osTab(t[0]);
+  const cur = OS_TABS.find(([k]) => k === S.stockTab);
+  if (t && cur && cur[2] && !cur[2].includes(w)) osTab(t[0]);
   document.querySelector(`#pf-body > [data-w="${w}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 function osNav(hidden, order) {
@@ -53,7 +56,7 @@ function osNav(hidden, order) {
     + '<button class="chip" id="pf-wedit" title="섹션 숨기기·순서 (서버 저장)">⚙</button>';
   nav.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { osTab(b.dataset.tab, hidden); nav.scrollIntoView({ block: "nearest" }); });
   $("#pf-wedit").onclick = osWidgetEditor;
-  osTab(tabs.some(([k]) => k === S.stockTab) ? S.stockTab : "all", hidden);
+  osTab(tabs.some(([k]) => k === S.stockTab) ? S.stockTab : "sum", hidden);
 }
 
 async function osWidgetEditor() {
@@ -119,7 +122,7 @@ function osHeader(sym, h, pos) {
     tile("뉴스 7일", n.n ? `<span class="up">+${n["긍정"]}</span> · ${n["중립"]} · <span class="down">−${n["부정"]}</span>` : '<span class="dim">없음</span>', "긍정 · 중립 · 부정", "", "pf-news"),
     tile("수급", h.flow?.signal ? esc(h.flow.signal) : '<span class="dim">-</span>', h.flow?.divergence ? esc(h.flow.divergence) : "외국인·기관", "", "pf-flow"),
     tile("밸류에이션", h.valuation ? esc(h.valuation.level) : '<span class="dim">-</span>', h.valuation ? esc(h.valuation.text) : "PER 없음", "", "pf-fin"),
-    tile("위험", h.risk ? `<span class="${h.risk.level === "HIGH" ? "bad-t" : h.risk.level === "MEDIUM" ? "warn-t" : "good"}">${esc(h.risk.level)}</span>` : "-", h.risk ? esc(h.risk.text) : "", "", "pf-risk"),
+    tile("위험", h.risk ? `<span class="${h.risk.level === "HIGH" ? "bad-t" : h.risk.level === "MEDIUM" ? "warn-t" : "good"}">${esc(koRisk(h.risk.level))}</span>` : "-", h.risk ? esc(h.risk.text) : "", "", "pf-risk"),
   ];
   if (pos && pos.total_qty) {
     tiles.push(tile("내 보유", `${num(pos.total_qty)}주 <span class="${pos.pnl_pct >= 0 ? "up" : "down"}">${P(pos.pnl_pct)}</span>`,
@@ -127,7 +130,7 @@ function osHeader(sym, h, pos) {
   } else tiles.push(tile("내 보유", '<span class="dim">없음</span>', "계좌 입력 시 표시", "", "pf-mine"));
   const discs = (h.disclosures || []).map((x) => `<span class="chip xs ${x.important ? "warn" : ""}" title="${esc(x.title)}">${x.important ? "⚠ " : ""}${esc(x.date.slice(5))} ${esc(x.title.slice(0, 22))}</span>`).join(" ");
   const LVL = { bad: "neg", warn: "warn", info: "" };
-  const banner = h.earnings_banner ? `<div class="os-banner">📊 ${esc(h.earnings_banner)}</div>` : "";
+  const banner = h.earnings_banner ? `<div class="os-banner">${calDot("earnings")}${esc(h.earnings_banner)}</div>` : "";
   const today = (h.today || []).length ? `<div class="os-today"><span class="xs muted b">오늘 중요한 것</span> ${h.today.map((x) => `<span class="chip ${LVL[x.level] || ""}">${x.icon} ${esc(x.text)}</span>`).join(" ")}</div>`
     : '<div class="os-today xs dim">오늘 중요한 것: 특이 사항 없음</div>';
   const hz = (h.horizons || []).some((x) => x.p != null) ? `<div class="os-hz xs"><span class="muted">AI 기간별 상승확률 <span class="dim">(과거 같은 확률대에서 실제로 오른 비율)</span></span> ${h.horizons.map((x) => `<b>${x.label}</b> ${x.p == null ? '<span class="dim">표본 부족</span>' : R(x.p, 0)} <span class="dim">(${x.n})</span>`).join(" · ")}</div>` : "";
@@ -190,8 +193,8 @@ function osThesis(sym, t, h) {
       <div class="kv-grid" style="margin-top:8px">${kv("목표", t.target ? num(t.target, t.target < 1000 ? 2 : 0) + (cur ? ` <span class="xs dim">${P(t.target / cur - 1)}</span>` : "") : "-", "up")}
         ${kv("무효화", t.stop ? num(t.stop, t.stop < 1000 ? 2 : 0) + (cur ? ` <span class="xs dim">${P(t.stop / cur - 1)}</span>` : "") : "-", "down")}
         ${kv("점검일", esc(t.review_date || "-"))}${kv("작성", esc((t.updated_at || "").slice(0, 10)))}</div>
-      ${cur && t.target && cur >= t.target ? '<div class="lesson" style="margin-top:8px">🎯 목표 도달 — 이익 실현 또는 논리 갱신</div>' : ""}
-      ${cur && t.stop && cur <= t.stop ? '<div class="veto" style="margin-top:8px">⛔ 무효화 가격 이탈 — 논리가 틀렸다고 정한 가격</div>' : ""}` : '<div class="small muted">아직 적지 않았습니다. 사기 전에 "왜 사는지 · 무엇이 틀리면 팔지"를 적어 두면, 목표·무효화 가격에 닿을 때 알림이 옵니다.</div>';
+      ${cur && t.target && cur >= t.target ? '<div class="lesson" style="margin-top:8px">목표 도달 — 이익 실현 또는 논리 갱신</div>' : ""}
+      ${cur && t.stop && cur <= t.stop ? '<div class="veto" style="margin-top:8px">무효화 가격 이탈 — 논리가 틀렸다고 정한 가격</div>' : ""}` : '<div class="small muted">아직 적지 않았습니다. 사기 전에 "왜 사는지 · 무엇이 틀리면 팔지"를 적어 두면, 목표·무효화 가격에 닿을 때 알림이 옵니다.</div>';
   box.innerHTML = card("투자 논리 <span class='small dim'>Thesis · 30분마다 감시</span>", `${view}
     <details class="th-form" ${t ? "" : "open"} style="margin-top:10px"><summary class="small">${t ? "수정" : "작성"}</summary>
       <div class="form-grid" style="margin-top:8px">
@@ -222,13 +225,13 @@ async function osNews(sym) {
   if (S.symbol && S.symbol !== sym) return;
   const c = d.counts || {};
   const ai = d.ai_summary;
-  const aiBox = ai ? `<div class="ai-sum"><div class="small"><b>🤖 AI 요약</b> <span class="chip xs ${TONE_CLS[ai.tone] || ""}">${esc(ai.tone || "-")}</span> <span class="xs dim">예상 영향 ${ai.impact > 0 ? "+" : ""}${ai.impact} (−2~+2) · ${esc((ai.at || "").slice(0, 16).replace("T", " "))} UTC</span></div>
+  const aiBox = ai ? `<div class="ai-sum"><div class="small"><b>AI 요약</b> <span class="chip xs ${TONE_CLS[ai.tone] || ""}">${esc(ai.tone || "-")}</span> <span class="xs dim">예상 영향 ${ai.impact > 0 ? "+" : ""}${ai.impact} (−2~+2) · ${esc((ai.at || "").slice(0, 16).replace("T", " "))} UTC</span></div>
       <ul class="plain small">${(ai.summary || []).map((x) => `<li>· ${esc(x)}</li>`).join("")}</ul>${(ai.watch || []).length ? `<div class="xs muted">지켜볼 점: ${ai.watch.map(esc).join(" · ")}</div>` : ""}</div>`
     : `<div class="ai-sum dim small">${d.has_llm ? `${d.ai_stale ? "새 뉴스가 있어 요약이 오래됐습니다. " : ""}<button class="btn-sm primary" id="nw-ai">AI 요약 만들기</button> <span class="xs">뉴스·공시 제목만 근거 · 목록에 없는 사실은 만들지 않음</span>` : "LLM 키가 없어 규칙 요약만 표시합니다"}</div>`;
   const items = (d.items || []).map((x) => `<div class="nw-it" data-nid="${x.id}"><div class="nw-h"><span class="chip xs ${TONE_CLS[x.tone] || ""}">${esc(x.tone)}</span>
       <a href="${esc(x.url || "#")}" target="_blank" rel="noopener noreferrer" class="small b">${esc(x.title)}</a></div>
       <div class="xs dim">${esc(x.source || "")} · ${esc(x.at)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>
-      <div class="xs muted">📈 ${esc(x.impact)} <button class="btn-xs" data-imp="${x.id}">영향 분석</button></div></div>`).join("");
+      <div class="xs muted">${esc(x.impact)} <button class="btn-xs" data-imp="${x.id}">영향 분석</button></div></div>`).join("");
   nb.innerHTML = card(`뉴스 <span class="small dim">최근 30일 중요도 순 ${(d.items || []).length}건 · 7일 톤 ${esc(d.overall)}</span>`, `
     <div class="small" style="margin-bottom:8px">${(d.rule_summary || []).map((x) => `<div>· ${esc(x)}</div>`).join("")}</div>${aiBox}
     <div class="tone-bar" title="최근 7일 긍정/중립/부정"><i class="pos" style="flex:${c["긍정"] || 0}"></i><i style="flex:${c["중립"] || 0}"></i><i class="neg" style="flex:${c["부정"] || 0}"></i></div>

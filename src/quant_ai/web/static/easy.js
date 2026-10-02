@@ -14,25 +14,28 @@ function setUiMode(m) {
 }
 
 // ------------------------------------------------------------ 처음 쓰는 사람 안내 (① 데이터 ② 투자 한도 ③ 관심종목 3개 ④ 오늘 할 일)
+function guideAct(x) {
+  if (x.key === "data") return `<div class="sg-cmd"><code>./run.sh</code><button class="btn-sm" data-copy="./run.sh">복사</button><span class="xs muted">터미널에 붙여 넣고 Enter · 다 받으면 이 화면이 저절로 바뀝니다</span></div>`;
+  if (x.key === "budget") return `<a class="btn-sm primary" href="#budget">투자 한도 정하기 →</a>`;
+  if (x.key === "watch") return `<button class="btn-sm primary" data-focus-search>종목 검색하기 ( / )</button>`;
+  return `<a class="btn-sm primary" href="#action">오늘 할 일 보기 →</a>`;
+}
 function guideCard(g) {
   const step = (x) => {
     const cur = x.key === g.next;
-    let act = "";
-    if (!x.done && cur) {
-      if (x.key === "data") act = `<div class="sg-cmd"><code>./run.sh</code><button class="btn-sm" data-copy="./run.sh">복사</button><span class="xs muted">터미널에 붙여 넣고 Enter · 다 받으면 이 화면이 저절로 바뀝니다</span></div>`;
-      else if (x.key === "budget") act = `<a class="btn-sm primary" href="#budget">투자 한도 정하기 →</a>`;
-      else if (x.key === "watch") act = `<button class="btn-sm primary" data-focus-search>종목 검색하기 ( / )</button>`;
-      else act = `<a class="btn-sm primary" href="#action">오늘 할 일 보기 →</a>`;
-    }
+    const act = !x.done && cur ? guideAct(x) : "";
     return `<div class="sg-step ${x.done ? "done" : cur ? "cur" : ""}"><span class="sg-n">${x.done ? "✓" : x.n}</span>
       <div class="sg-body"><b>${esc(x.title)}</b>${x.detail ? ` <span class="xs muted">${esc(x.detail)}</span>` : ""}
       ${cur || !x.done ? `<div class="small muted">${esc(x.how)}</div>` : ""}${act}</div></div>`;
   };
-  const opt = (g.optional || []).filter((o) => !o.done).map((o) => `<div class="xs muted">○ <a href="${esc(o.link)}">${esc(o.title)}</a> — ${esc(o.how)}</div>`).join("");
-  return `<div class="card start-guide"><div class="card-h"><h3>처음이라면 이 순서로 <span class="small dim">${g.progress}/3 완료</span></h3>
-      <div class="right"><button class="btn-sm" id="sg-hide" title="다시 보려면 설정 → 화면">숨기기</button></div></div>
-    <div class="sg-bar"><i style="width:${Math.round(g.progress / 3 * 100)}%"></i></div>
-    <div class="sg-steps">${g.steps.map(step).join("")}</div>${opt}</div>`;
+  const opt = (g.optional || []).filter((o) => !o.done).map((o) => `<div class="xs muted">선택: <a href="${esc(o.link)}">${esc(o.title)}</a> — ${esc(o.how)}</div>`).join("");
+  // v21: 화면 한가득 차지하던 4단계 안내 → '다음 할 것' 한 줄 + 진행 막대 (단계 전체는 펼쳐서)
+  const cur = g.steps.find((x) => x.key === g.next) || g.steps.find((x) => !x.done) || g.steps[0];
+  return `<div class="card start-guide sg-compact"><div class="sg-line">
+      <span class="sg-n cur">${cur.n}</span><div class="sg-body"><span class="xs muted">시작하기 ${g.progress}/3 · 다음 할 것</span><b>${esc(cur.title)}</b><span class="small muted">${esc(cur.how)}</span>${cur.done ? "" : guideAct(cur)}</div>
+      <div class="sg-side"><div class="sg-bar"><i style="width:${Math.round(g.progress / 3 * 100)}%"></i></div>
+        <details class="sg-more"><summary class="xs">단계 전체 보기</summary><div class="sg-steps">${g.steps.map(step).join("")}</div>${opt}</details>
+        <button class="btn-sm" id="sg-hide" title="다시 보려면 설정 → 화면">숨기기</button></div></div></div>`;
 }
 
 function bindGuide(root) {
@@ -59,50 +62,55 @@ async function homeTop(root) {
   const [h, g, p] = await Promise.all([api(`/api/home5?${q}`).catch((e) => ({ error: e.message })), api("/api/start-guide").catch(() => null),
     loadPrefs().catch(() => ({}))]);
   if (h.error) { box.innerHTML = card("홈", `<div class="veto">${esc(h.error)}</div>`); return; }
-  const IC = { ok: "🟢", good: "🟢", warn: "🟡", bad: "🔴" };
+  const LV = { ok: "good", good: "good", warn: "warn", bad: "bad" };
   const err = (x) => x?.error ? `<div class="xs dim">불러오지 못함 — ${esc(x.error)}</div>` : "";
   const m = h.market || {}, a = h.assets || {}, ai = h.ai || {}, nw = h.news || {}, td = h.todo || {};
+  // v21: 할 일 아이콘은 이모지 대신 같은 선 아이콘 세트로
+  const TD_IC = { halt: "stop", kill: "stop", ops_scheduler: "ops", ops_data: "data", ops_news: "news", ops_sector: "data", thesis: "risk",
+    event: "calendar", ai: "ai", signal: "ai", disclosure: "news", macro: "market", market: "market", move: "pulse", start: "check" };
   const todo = td.error ? err(td) : (td.items || []).length
-    ? td.items.map((t) => `<a class="td-it" href="${esc(t.link)}">${t.symbol ? stockLogo(t.symbol, "", 28) : `<span class="td-ic">${esc(t.icon)}</span>`}
-        <span class="td-tx"><b>${esc(t.text)}</b>${t.why ? `<span class="xs muted">${esc(t.why)}</span>` : ""}</span><span class="td-go">›</span></a>`).join("")
-      + (td.more ? `<a class="xs" href="#action">+ ${td.more}개 더 · 오늘 할 일 전체 →</a>` : "")
-    : g && !g.done ? `<div class="td-empty"><div class="small">위 <b>'처음이라면'</b> 순서를 끝내면 여기에 매일 할 일 3개가 나옵니다 (보유·관심 종목 실적·AI 신호 변경·중요 공시·CPI·FOMC 등)</div></div>`
-    : td.empty_hint ? `<div class="td-empty"><div class="small">${esc(td.empty_hint)}</div><button class="btn-sm primary" data-focus-search>종목 검색하기 ( / )</button></div>`
-      : `<div class="td-empty"><div class="td-calm">☕</div><div class="small">${esc(td.calm || "오늘 꼭 할 일은 없습니다")}</div></div>`;
+    ? td.items.map((t) => `<a class="td-it" href="${esc(t.link)}">${t.symbol ? stockLogo(t.symbol, "", 28) : `<span class="td-ic">${ICONS[TD_IC[t.kind] || "bell"] || ""}</span>`}
+        <span class="td-tx"><b>${esc(koText(t.text))}</b>${t.why ? `<span class="xs muted">${esc(t.why)}</span>` : ""}</span><span class="td-go">›</span></a>`).join("")
+      + (td.more ? `<a class="xs" href="#action">${td.more}개 더 보기 →</a>` : "")
+    : g && !g.done ? `<div class="td-empty"><div class="small">시작하기를 마치면 여기에 매일 할 일이 나옵니다</div></div>`
+    : td.empty_hint ? `<div class="td-empty"><div class="small">${esc(td.empty_hint)}</div><button class="btn-sm primary" data-focus-search>종목 검색 ( / )</button></div>`
+      : `<div class="td-empty"><div class="small">${esc(td.calm || "오늘 꼭 할 일은 없습니다")}</div></div>`;
   const ez = ai.easy || {};
+  const AI_LV = { verified: "good", checking: "warn", banned: "bad" };
   const aiB = ai.error ? err(ai) : `
-    <div class="h5-big">${esc(ai.icon || "")} ${esc(ai.label || "")}</div>
-    <div class="small">${esc(ai.why || "")}</div>
-    ${ez.n ? `<div class="small" style="margin-top:4px">${esc(ez.headline)}</div>` : '<div class="xs dim">채점된 기록이 아직 부족합니다</div>'}
-    ${ez.money ? `<div class="small ${ez.earned ? "up" : ez.earned === false ? "down" : ""}">${esc(ez.money)}</div>` : ""}
-    ${ez.alpha ? `<div class="small ${ez.alpha.proven ? "up" : ez.alpha.worse ? "down" : "muted"}">📏 ${esc(ez.alpha.text)}</div>` : ""}
-    ${ez.strong ? `<div class="xs muted">👍 ${esc(ez.strong)}</div>` : ""}${ez.weak ? `<div class="xs muted">👎 ${esc(ez.weak)}</div>` : ""}
-    <a class="xs" href="#scorecard">AI 성적표 (틀린 사례 포함) →</a>`;
+    <div class="h5-big">${lvDot(AI_LV[ai.key])}${esc(ai.label || "")}</div>
+    <div class="xs muted">${esc(ai.why || "")}</div>
+    <div class="h5-kv">
+      ${ez.n ? `<div><span>방향 적중</span><b class="num">${ez.hits}/${ez.n}</b><em>그냥 '오른다'면 ${ez.base_hits}</em></div>` : '<div><span>채점된 기록</span><b>아직 부족</b></div>'}
+      ${ez.excess != null ? `<div><span>그대로 샀다면</span><b class="num ${ez.excess >= 0 ? "up" : "down"}">지수 ${ez.excess >= 0 ? "+" : ""}${(ez.excess * 100).toFixed(1)}%p</b><em>비용 뺀 뒤</em></div>` : ""}
+      ${ez.alpha ? `<div><span>시장 대비 적중</span><b class="num ${ez.alpha.proven ? "up" : ez.alpha.worse ? "down" : ""}">${Math.round(ez.alpha.hit * 100)}%</b><em>기준 ${Math.round(Math.max(0.5, ez.alpha.base) * 100)}%</em></div>` : ""}
+    </div>
+    <a class="xs" href="#scorecard">성적 자세히 →</a>`;
   const mk = m.error ? err(m) : `
-    ${(m.markets || []).map((x) => `<div class="small">${esc(x.flag || "")} ${esc(x.name)} <b>${esc(x.light || "")} ${esc(x.state || "")}</b></div>${x.notice ? `<div class="xs warn-t">${esc(x.notice)}</div>` : ""}`).join("")}
+    ${(m.markets || []).map((x) => `<div class="small">${esc(x.name)} ${dotText(`${x.light || ""} ${x.state || ""}`)}</div>`).join("")}
     ${m.index ? `<div class="small">${esc(m.index.name)} <b class="num ${m.index.chg >= 0 ? "up" : "down"}">${P(m.index.chg, 2)}</b> <span class="xs dim">${esc(m.index.date)}</span></div>` : ""}
-    ${m.mood ? `<div class="small">${IC[m.mood.level] || "•"} ${esc(m.mood.text)}</div>` : ""}
-    ${m.event ? `<a class="small" href="${esc(m.event.link || "#calendar")}">${IC[m.event.level] || "📅"} ${esc(m.event.text)}</a>` : ""}`;
-  const as = a.error ? err(a) : `
-    <div class="h5-big num">${moneyShort(a.equity, "KRW")}</div>
-    <div class="small">${a.pnl_pct == null ? "" : `<b class="num ${a.pnl_pct >= 0 ? "up" : "down"}">${P(a.pnl_pct, 1)}</b> ${a.paid_in ? "낸 돈 대비" : "시작 대비"} · `}${a.n}종목 · 현금 ${moneyShort(a.cash, "KRW")}</div>
-    ${sparkSvg(a.spark)}
-    ${a.risk?.headline ? `<div class="small">${IC[a.risk.level] || "•"} ${esc(a.risk.headline)}</div>` : ""}
-    <a class="xs" href="#pos">${a.mode === "live" ? "실계좌" : "모의투자"} 자세히 →</a>`;
+    ${m.mood ? `<div class="small">${lvDot(LV[m.mood.level])}${esc(koText(m.mood.text))}</div>` : ""}
+    ${m.event ? `<a class="small" href="${esc(m.event.link || "#calendar")}">${lvDot(LV[m.event.level] || "idle")}${esc(koText(m.event.text))}</a>` : ""}`;
+  const MODE_KO = { paper: "모의투자", live: "실계좌", shadow: "그림자 매매" };
+  const hero = a.error ? `<div class="card home-hero">${err(a)}</div>` : `<div class="card home-hero">
+    <div class="hh-main"><div class="xs muted">내 자산 · ${esc(MODE_KO[a.mode] || a.mode || "")}</div>
+      <div class="hh-big num">${moneyShort(a.equity, "KRW")}</div>
+      <div class="small">${a.pnl_pct == null ? "" : `<b class="num ${a.pnl_pct >= 0 ? "up" : "down"}">${P(a.pnl_pct, 1)}</b> <span class="muted">${a.paid_in ? "낸 돈 대비" : "시작 대비"}</span> · `}${a.n}종목 · 현금 ${moneyShort(a.cash, "KRW")}</div>
+      ${sparkSvg(a.spark)}
+      ${a.risk?.headline ? `<div class="xs">${lvDot(LV[a.risk.level])}${esc(a.risk.headline)}</div>` : ""}
+      <a class="xs" href="#pos">자산 자세히 →</a></div>
+    <a class="hh-goal" href="#goal">${(h.goal || {}).set ? `<div class="xs muted">내 목표</div>${goalBar(h.goal)}`
+      : `<div class="xs muted">내 목표</div><div class="b">아직 없음</div><div class="small muted">목표 금액과 매달 넣을 돈을 정하면 '몇 년 안에 몇 % 확률'로 보여 드립니다</div><span class="btn-sm primary" style="align-self:flex-start;margin-top:6px">목표 정하기</span>`}</a></div>`;
   const nwB = nw.error ? err(nw) : (nw.items || []).length ? nw.items.map((n) => `<div class="h5-news" data-news="${esc(n.id)}" role="button" tabindex="0">
-      <span style="color:${LV_COLOR[n.level?.icon] || "var(--dim)"}">${esc(n.level?.icon || "⚪")}</span> <span class="small">${esc(n.title)}</span>
+      ${dotText(n.level?.icon || "⚪")} <span class="small">${esc(n.title)}</span>
       <div class="xs dim">${(n.symbols || []).map((x) => `${stockLogo(x.symbol, x.name, 14)} ${esc(x.name)}`).join(" · ")}${n.first ? ` · ${esc(n.first)}` : ""}</div></div>`).join("")
-      + `<a class="xs" href="#news">뉴스 ${nw.n}건 모두 보기 →</a>` : empty("최근 2일 저장된 뉴스 없음");
+      + `<a class="xs" href="#news">뉴스 ${nw.n}건 모두 →</a>` : `<div class="small muted">최근 2일 저장된 뉴스가 없습니다</div><div class="xs dim">뉴스는 24시간 운영이 켜져 있을 때 모입니다</div>`;
   const showGuide = g && !g.done && !(p?.ui?.guide_hidden);
-  const gp = h.goal || {};
-  const goalCard = gp.set ? `<a class="card goal-strip" href="#goal"><div class="h5-h">🎯 내 목표</div>${goalBar(gp)}</a>`
-    : `<a class="card goal-strip empty" href="#goal"><span class="h5-h">🎯 내 목표</span> <span class="small">아직 없음 — 목표를 정하면 '몇 년 안에 몇 % 확률'로 보여 드립니다 (예: 500만원 → 1억) →</span></a>`;
-  box.innerHTML = `${showGuide ? guideCard(g) : ""}${goalCard}<div class="h5-grid">
-    <div class="h5 card h5-todo"><div class="h5-h">오늘 내가 할 일 <span class="xs dim">${esc(td.as_of || "")}</span></div>${todo}</div>
-    <div class="h5 card h5-ai ai-${esc(ai.key || "")}"><div class="h5-h">AI 지금 믿을 만한가?</div>${aiB}</div>
+  box.innerHTML = `${showGuide ? guideCard(g) : ""}${hero}<div class="h5-grid">
+    <div class="h5 card h5-todo"><div class="h5-h">오늘 할 일 <span class="xs dim">${esc(td.as_of || "")}</span></div>${todo}</div>
+    <div class="h5 card h5-ai ai-${esc(ai.key || "")}"><div class="h5-h">AI 믿어도 되나</div>${aiB}</div>
     <div class="h5 card"><div class="h5-h">오늘 시장</div>${mk}</div>
-    <div class="h5 card"><div class="h5-h">내 자산</div>${as}</div>
-    <div class="h5 card"><div class="h5-h">중요한 뉴스</div>${nwB}</div>
+    <div class="h5 card h5-wide"><div class="h5-h">중요한 뉴스</div>${nwB}</div>
   </div>`;
   bindGuide(box);
   box.querySelectorAll("[data-focus-search]").forEach((b) => b.onclick = () => $("#search").focus());
@@ -175,31 +183,35 @@ async function stockTop(sym) {
   if ($("#pf-top") !== box) return;  // 그 사이 다른 종목으로 이동
   const m = v.market || {};
   const r = v.range52;
-  const mk = `<div class="vt-mkt">${esc(m.flag || "")} <b>${esc(m.name || "")}</b> ${esc(m.light || "")} ${esc(m.state || "")}
+  const mk = `<div class="vt-mkt">${esc(m.flag || "")} <b>${esc(m.name || "")}</b> ${dotText(`${m.light || ""} ${m.state || ""}`)}
     ${m.local_time ? `<span class="xs dim">· 현지 ${esc(String(m.local_time).slice(11, 16) || m.local_time)}</span>` : ""}
     ${m.next_kst ? `<span class="xs dim">· 다음 ${esc(m.next === "폐장" ? "마감" : "개장")} ${esc(m.next_kst)}</span>` : ""}
-    ${m.notice ? `<div class="xs warn-t">${esc(m.notice)}</div>` : ""}</div>`;
+    ${m.notice && !($("#market-notice")?.textContent || "").includes(m.notice.slice(0, 12)) ? `<div class="xs warn-t">${esc(m.notice)}</div>` : ""}</div>`;
   const r52 = r && r.pos != null ? `<div class="vt-52"><span class="xs muted">52주</span>
     <span class="xs num">${esc(price(r.low, sym))}</span><span class="r52-bar"><i style="left:${Math.round(r.pos * 100)}%"></i></span><span class="xs num">${esc(price(r.high, sym))}</span>
     <span class="xs ${r.from_high > -0.05 ? "up" : r.from_high < -0.3 ? "down" : ""}">고점 대비 ${P(r.from_high, 1)}</span></div>` : "";
   let ai;
   if (!v.final) {
-    ai = `<div class="vt-card vt-none"><div class="xs muted">AI 최종 판단</div><div class="vt-big">⚪ AI 판단 없음</div><div class="small muted">${esc(v.why_none || "")}</div></div>`;
+    ai = `<div class="vt-card vt-none"><div class="xs muted">AI 의견</div><div class="vt-big">${lvDot("idle")}아직 AI 의견 없음</div><div class="small muted">${esc(v.why_none || "")}</div></div>`;
   } else {
-    const votes = (v.votes || []).map((x) => `<span class="vt-vote" title="${esc(x.label)} · ${esc(x.summary || "")}"><span class="xs muted">${esc(x.role)}</span> <b class="${VIEW_CLS[x.view] || ""}">${esc(x.view)}</b></span>`).join("");
-    const li = (xs, empty) => xs.length ? `<ol class="vt-ol">${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>` : `<div class="xs dim">${empty}</div>`;
+    const votes = (v.votes || []).map((x) => `<span class="vt-vote" title="${esc(x.label)} · ${esc(koText(x.summary || ""))}"><span class="xs muted">${esc(koRole(x.role))}</span> <b class="${VIEW_CLS[x.view] || ""}">${esc(koAct(x.view))}</b></span>`).join("");
+    const li = (xs, empty) => xs.length ? `<ol class="vt-ol">${xs.map((x) => `<li>${esc(koText(x))}</li>`).join("")}</ol>` : `<div class="xs dim">${empty}</div>`;
     const u = v.used || {};
-    ai = `<div class="vt-card fin-${esc(v.final)}">
-      <div class="vt-row"><span class="xs muted">AI 최종 판단 · ${v.horizon}거래일 · ${esc(v.as_of)} 판단${u.sealed ? " · 🔒봉인" : ""}</span>
-        ${v.trust ? `<a class="xs" href="#scorecard" title="AI 전체 성적">AI 상태 ${esc(v.trust.icon)} ${esc(v.trust.label)}</a>` : ""}</div>
-      <div class="vt-big">${esc(v.big)}${v.changed_by_gate ? ` <span class="xs dim">(AI 원래 판단 ${esc(v.raw === "NO_TRADE" ? "NO TRADE" : v.raw)} → 막음)</span>` : ""}
-        ${v.expected_return != null && v.final !== "NO_TRADE" ? `<span class="small ${v.expected_return >= 0 ? "up" : "down"}">예상 ${P(v.expected_return, 1)}</span>` : ""}</div>
-      <div class="vt-votes">${votes}<span class="vt-arrow">→</span><span class="vt-vote"><span class="xs muted">FINAL</span> <b class="${VIEW_CLS[v.label] || ""}">${esc(v.label)}</b></span></div>
-      ${v.warn ? `<div class="vt-warn small">⚠ ${esc(v.warn)}</div>` : ""}
-      <div class="vt-why"><div><div class="xs b up">왜 ${v.prob_up >= 0.5 ? "오를 수 있나" : "내릴 수 있나"}</div>${li(v.why_buy || [], "뚜렷한 근거 없음")}</div>
-        <div><div class="xs b down">왜 지금 사면 안 되나</div>${li(v.why_not || [], "막는 이유 없음")}</div></div>
-      <div class="xs dim vt-used">판단에 쓴 데이터: 가격 ${esc(u.price || "-")} 종가 · 뉴스 ${u.news?.n ?? 0}건${u.news?.last ? ` (마지막 ${esc(String(u.news.last).slice(0, 16))})` : ""} · 공시 ${u.disclosures?.n ?? 0}건 · 경제지표 ${u.macro?.n ? u.macro.n + "개" : "없음"}${u.regime ? ` · 국면 ${esc(REGIME_KO?.[u.regime] || u.regime)}` : ""}
-        ${v.plan?.stop ? ` · 틀렸다고 인정하는 가격 ${esc(price(v.plan.stop, sym))}` : ""}</div></div>`;
+    const banned = v.trust?.key === "banned";
+    const prob = v.final !== "NO_TRADE" && v.prob_up != null ? `<span class="vt-p">오를 확률 <b>${Math.round(v.prob_up * 100)}%</b></span>` : "";
+    ai = `<div class="vt-card fin-${esc(v.final)} ${banned ? "vt-muted" : ""}">
+      <div class="vt-row"><span class="xs muted">AI 의견 · ${v.horizon}거래일 뒤 기준 · ${esc(v.as_of)} 판단${u.sealed ? " · 기록 봉인됨" : ""}</span>
+        ${v.trust ? `<a class="xs" href="#scorecard" title="AI 전체 성적">AI 성적 ${dotText(v.trust.icon)} ${esc(v.trust.label)}</a>` : ""}</div>
+      ${banned ? '<div class="vt-note small">AI 성적이 아직 기준에 못 미칩니다. 아래 의견은 참고만 하세요 — 주문에는 쓰이지 않습니다.</div>' : ""}
+      <div class="vt-big">${lvDot(ACT_LV[v.final])}${esc(koAct(v.final))} ${prob}
+        ${v.expected_return != null && v.final !== "NO_TRADE" ? `<span class="small ${v.expected_return >= 0 ? "up" : "down"}">예상 ${P(v.expected_return, 1)}</span>` : ""}
+        ${v.changed_by_gate ? `<span class="xs dim">원래 의견 ${esc(koAct(v.raw))} → 조건이 안 맞아 쉬어가기</span>` : ""}</div>
+      <div class="vt-votes">${votes}<span class="vt-arrow">→</span><span class="vt-vote"><span class="xs muted">최종</span> <b class="${VIEW_CLS[v.label] || ""}">${esc(koAct(v.label))}</b></span></div>
+      ${v.warn ? `<div class="vt-warn small">${esc(koText(v.warn))}</div>` : ""}
+      <div class="vt-why"><div><div class="xs b up">${v.prob_up >= 0.5 ? "오를 수 있는 이유" : "내릴 수 있는 이유"}</div>${li(v.why_buy || [], "뚜렷한 근거 없음")}</div>
+        <div><div class="xs b down">지금 사지 않는 이유</div>${li(v.why_not || [], "막는 이유 없음")}</div></div>
+      <div class="xs dim vt-used">근거 데이터 · 가격 ${esc(u.price || "-")} 종가 · 뉴스 ${u.news?.n ?? 0}건 · 공시 ${u.disclosures?.n ?? 0}건${u.macro?.n ? ` · 경제지표 ${u.macro.n}개` : ""}${u.regime ? ` · 시장 ${esc(REGIME_KO?.[u.regime] || u.regime)}` : ""}
+        ${v.plan?.stop ? ` · 이 가격 아래로 가면 틀린 것: ${esc(price(v.plan.stop, sym))}` : ""}</div></div>`;
   }
   box.innerHTML = `<div class="vt">${mk}${r52}</div>${ai}`;
 }
@@ -216,13 +228,13 @@ async function plainScore(box, sym) {
   box.innerHTML = card(`AI 성적 — 쉽게 <span class="small dim">${esc(r.from)} ~ ${esc(r.to)}${sym ? ` · ${esc(sym)}` : ""}</span>`, `
     <div class="ps-big ${r.beat_base ? "up" : "down"}">${esc(r.headline)}</div>
     <div class="small muted">${r.beat_base ? "그냥 '오른다'고만 한 것보다 많이 맞혔습니다" : "그냥 '오른다'고만 한 것보다 적게 맞혔습니다 — 아직 AI 를 믿고 거래할 단계가 아닙니다"}</div>
-    ${m ? `<div class="ps-money ${m.earned ? "up" : m.earned === false ? "down" : ""}">💰 ${esc(m.text)}</div>
+    ${m ? `<div class="ps-money ${m.earned ? "up" : m.earned === false ? "down" : ""}">${esc(koText(m.text))}</div>
       <div class="xs dim">${m.earned ? "지수를 이겼습니다 (비용 뒤)" : m.earned === false ? "지수에 졌습니다 — 그냥 지수를 산 것보다 못했습니다 (주가가 올랐어도 AI 가 돈을 번 것은 아님)" : ""}</div>` : ""}
-    ${r.alpha ? `<div class="small ${r.alpha.beat_base ? "up" : "down"}" style="margin-top:6px">📏 ${esc(r.alpha.text)}</div>
+    ${r.alpha ? `<div class="small ${r.alpha.beat_base ? "up" : "down"}" style="margin-top:6px">${esc(r.alpha.text)}</div>
       <div class="xs dim">시장이 다 같이 오를 때 '오른다'고 하면 쉽게 맞습니다 — 그래서 '지수보다 더 오를지'로 다시 채점한 것이 진짜 실력입니다</div>` : ""}
     ${fails ? `<div class="small b" style="margin-top:10px">크게 틀린 사례</div><ul class="ps-fail">${fails}</ul>` : ""}
     ${reg ? `<div class="small b" style="margin-top:8px">시장 분위기별 적중</div><div>${reg}</div>` : ""}
-    ${r.strong ? `<div class="xs">👍 ${esc(r.strong)}</div>` : ""}${r.weak ? `<div class="xs">👎 ${esc(r.weak)}</div>` : ""}
+    ${r.strong ? `<div class="xs">잘하는 곳: ${esc(r.strong)}</div>` : ""}${r.weak ? `<div class="xs">약한 곳: ${esc(r.weak)}</div>` : ""}
     <div class="xs dim" style="margin-top:6px">${esc(r.note)}</div>`);
 }
 
