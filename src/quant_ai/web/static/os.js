@@ -209,11 +209,11 @@ async function osNews(sym) {
     if (r.error) { b.disabled = false; b.textContent = "다시 시도"; toast({ title: "AI 요약 실패", body: r.error, level: "warn" }); return; }
     osNews(sym);
   };
-  nb.querySelectorAll("[data-imp]").forEach((x) => x.onclick = () => osImpact(+x.dataset.imp));
+  nb.querySelectorAll("[data-imp]").forEach((x) => x.onclick = () => openDetail("news", +x.dataset.imp));  // v18: 원문·번역·쉬운 설명·영향
   if (db) {
     const rows = (d.disclosures || []).map((x) => `<div class="nw-it ${x.important ? "imp" : ""}"><div class="nw-h">${x.important ? '<span class="chip xs warn">⚠ 중요</span>' : ""}${x.polarity > 0 ? '<span class="chip xs pos">호재성</span>' : x.polarity < 0 ? '<span class="chip xs neg">악재성</span>' : ""}
-      <a href="${esc(x.url || "#")}" target="_blank" rel="noopener noreferrer" class="small b">${esc(x.title)}</a></div>
-      <div class="xs dim">DART · ${esc(x.date)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>${x.summary ? `<div class="xs muted">${esc(x.summary.slice(0, 220))}</div>` : ""}</div>`).join("");
+      <a href="#" data-disc="${x.id}" class="small b" title="원문·번역·요약·중요한 숫자·주가 영향">${esc(x.title)}</a> <a class="xs" href="${esc(x.url || "#")}" target="_blank" rel="noopener noreferrer">원문 ↗</a></div>
+      <div class="xs dim">${esc(x.source || "DART")} · ${esc(x.date)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>${x.summary ? `<div class="xs muted">${esc(x.summary.slice(0, 220))}</div>` : ""}</div>`).join("");
     db.innerHTML = card(`공시 <span class="small dim">최근 90일 · 중요 공시 강조</span>`, rows || empty(/^\d{6}$/.test(sym) ? "최근 90일 공시 없음 (DART 키 필요)" : "해외 종목 — DART 공시 없음"));
   }
 }

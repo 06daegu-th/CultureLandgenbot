@@ -363,7 +363,7 @@ def news(app, symbol: str, limit: int = 10, now: datetime | None = None) -> dict
                   "events": n.events or []} for n in rows]
         discs = s.scalars(select(Disclosure).where(Disclosure.symbol == symbol, Disclosure.filed_at >= (now - timedelta(days=90)).date())
                           .order_by(Disclosure.filed_at.desc()).limit(20)).all()
-        discs = [{"id": d.id, "date": str(d.filed_at), "title": d.title, "summary": d.summary, "url": d.url, "sent": d.sentiment or 0.0}
+        discs = [{"id": d.id, "source": d.source, "date": str(d.filed_at), "title": d.title, "summary": d.summary, "url": d.url, "sent": d.sentiment or 0.0}
                  for d in discs]
     items.sort(key=lambda x: (-(x["importance"] + abs(x["sent"]) * 0.5), x["at_iso"]), reverse=False)
     top = sorted(items[:limit * 3], key=lambda x: -(x["importance"] + abs(x["sent"]) * 0.5))[:limit]

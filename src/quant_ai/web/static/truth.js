@@ -235,7 +235,7 @@ function initRecentSearch() {
     if (input.value.trim()) return;
     const list = recentSearches();
     if (!list.length) return;
-    box.innerHTML = `<div class="xs muted" style="padding:6px 10px">최근 본 종목 <a id="recent-clear" class="xs" style="float:right">지우기</a></div>` + list.map((w) => `<a data-sym="${esc(w.symbol)}"><span>🕘 ${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span></a>`).join("");
+    box.innerHTML = `<div class="xs muted" style="padding:6px 10px">최근 본 종목 <a id="recent-clear" class="xs" style="float:right">지우기</a></div>` + list.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${stockLogo(w.symbol, w.name, 22)} 🕘 ${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span></a>`).join("");
     box.classList.add("open");
     box.querySelectorAll("a[data-sym]").forEach((a) => a.onclick = () => { box.classList.remove("open"); location.hash = `#analysis/${a.dataset.sym}`; });
     $("#recent-clear").onclick = (e) => { e.stopPropagation(); safeSet("qa_recent", "[]"); box.classList.remove("open"); };

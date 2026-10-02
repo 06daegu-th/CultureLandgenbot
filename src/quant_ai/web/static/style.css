@@ -1108,3 +1108,25 @@ a.dd { text-decoration: none; color: inherit; }
   background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--dim); }
 .oneline.lv-warn { border-left-color: #f59e0b; } .oneline.lv-bad { border-left-color: var(--down); } .oneline.lv-ok { border-left-color: #22c55e; }
 .oneline .ol-it { text-decoration: none; color: inherit; } .oneline .ol-at { margin-left: auto; }
+
+/* v18 종목 로고 */
+img.lg { border-radius: 50%; vertical-align: middle; object-fit: contain; background: #fff; box-shadow: 0 0 0 1px var(--line); flex: none; }
+.sh-name img.lg { margin-right: 6px; }
+
+/* v18 뉴스·공시 상세 */
+.dt-ov { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 200; display: flex; justify-content: center; align-items: flex-start; overflow-y: auto; padding: 4vh 12px; }
+.dt { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; width: min(860px, 100%); padding: 20px 22px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.dt-x { position: absolute; top: 10px; right: 10px; }
+.dt-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dt-lv { font-weight: 800; }
+.dt-title { margin: 8px 0 4px; font-size: 18px; line-height: 1.4; }
+.dt-ko { font-size: 15px; margin-bottom: 4px; color: var(--text); }
+.dt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 760px) { .dt-grid { grid-template-columns: 1fr; } .dt { padding: 16px; } }
+.dt-sec { background: var(--panel-2, var(--panel)); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 8px 0; }
+.dt-easy { border-color: var(--accent, #3b82f6); }
+.dt-h { font-size: 12px; font-weight: 700; color: var(--muted, #94a3b8); margin-bottom: 4px; }
+.dt-text { white-space: pre-wrap; max-height: 260px; overflow-y: auto; }
+.dt-chain { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 4px; }
+.nb-lv { font-size: 14px; } .nb-q { flex: 1; min-width: 200px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2, var(--panel)); color: inherit; }
+.nb-title { cursor: pointer; }

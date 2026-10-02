@@ -43,6 +43,8 @@ function time(ts, withDate = false) {
   return withDate ? `${p(d.getMonth() + 1)}.${p(d.getDate())} ${t}` : t;
 }
 function date(ts) { if (!ts) return "-"; const d = new Date(ts); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; }
+// v18: 종목 로고 — 서버가 로고(없으면 이니셜 아이콘)를 돌려준다
+const stockLogo = (sym, name = "", size = 22) => sym ? `<img class="lg" src="/api/logo/${encodeURIComponent(sym)}?n=${encodeURIComponent(name || "")}" width="${size}" height="${size}" alt="" loading="lazy" decoding="async">` : "";
 const badge = (a) => a ? `<span class="badge b-${esc(a)}">${a === "NO_TRADE" ? "NO TRADE" : esc(a)}</span>` : '<span class="badge b-none">-</span>';
 const card = (title, body, right = "", cls = "") => `<div class="card ${cls}">${title || right ? `<div class="card-h"><h3>${title}</h3><div class="right">${right}</div></div>` : ""}${body}</div>`;
 const empty = (msg = "아직 기록 없음") => `<div class="empty">${esc(msg)}</div>`;
@@ -595,7 +597,7 @@ function portfolioSummary(pf) {
     <div class="legend">${segs.map((s) => `<div><span class="sw" style="background:${s.color}"></span>${esc(s.label)}<b class="num">${((s.value / eq) * 100).toFixed(1)}%</b></div>`).join("")}</div></div>
     <div class="small muted" style="margin:10px 0 4px">누적 수익률 ${pct(pf.return_pct)} · 주식 ${((stock / eq) * 100).toFixed(0)}%</div>
     ${pf.positions.length ? `<div class="scroll"><table><thead><tr><th>종목</th><th class="r">수량</th><th class="r">수익률</th></tr></thead><tbody>
-    ${pf.positions.slice(0, 5).map((p) => `<tr><td>${esc(p.name)}<span class="sub num">평균 ${price(p.avg_price, p.symbol)}</span></td><td class="r num">${num(p.qty)}</td><td class="r">${pct(p.pnl_pct)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+    ${pf.positions.slice(0, 5).map((p) => `<tr><td>${stockLogo(p.symbol, p.name, 18)} ${esc(p.name)}<span class="sub num">평균 ${price(p.avg_price, p.symbol)}</span></td><td class="r num">${num(p.qty)}</td><td class="r">${pct(p.pnl_pct)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
 }
 
 function sentChip(s) {
@@ -664,7 +666,7 @@ async function viewAnalysis(el) {
   const chgCls = a.chg_pct == null ? "flat" : a.chg_pct >= 0 ? "up" : "down";
   const head = `<div id="pf-sit" class="pf-sit"></div><div class="card stock-head">
     <div class="sh-top"><div style="min-width:0">
-      <div class="sh-name">${esc(a.name || sym)} <span class="dim small">${esc(sym)}</span> <span class="chip xs">${isGlobal ? "해외" : "국내"}</span></div>
+      <div class="sh-name">${stockLogo(sym, a.name, 34)} ${esc(a.name || sym)} <span class="dim small">${esc(sym)}</span> <span class="chip xs">${isGlobal ? "해외" : "국내"}</span></div>
       <div class="sh-price"><span class="num" data-live-sym="${esc(sym)}">${a.last == null ? "-" : esc(priceCur(a.last, cur))}</span>
         <span class="${chgCls} num">${a.chg == null ? "" : `${a.chg >= 0 ? "▲" : "▼"} ${esc(priceCur(Math.abs(a.chg), cur))} (${pct(a.chg_pct)})`}</span>
         <span class="xs dim">${a.last_ts ? date(a.last_ts) + " 종가" : ""}</span></div></div>
@@ -740,7 +742,7 @@ function viewPortfolio(d) {
     <div class="stat"><div class="l">현금</div><div class="big num">₩${num(pf.cash)}</div></div>
     <div class="stat"><div class="l">누적 수익률</div><div class="big">${pct(pf.return_pct)}</div></div>
     <div class="stat"><div class="l">보유 종목</div><div class="big num">${pf.positions.length}</div></div></div>` : empty(`${S.pfMode} 기록 없음`);
-  const rows = (pf.positions || []).map((p) => `<tr><td><b>${esc(p.name)}</b> <span class="dim small">${esc(p.symbol)}</span></td><td class="r num">${num(p.qty)}</td><td class="r num">${price(p.avg_price, p.symbol)}</td><td class="r num">${price(p.last, p.symbol)}</td><td class="r num">₩${num(p.value)}</td><td class="r num">${(p.weight * 100).toFixed(1)}%</td><td class="r">${pct(p.pnl_pct)}</td></tr>`).join("");
+  const rows = (pf.positions || []).map((p) => `<tr><td>${stockLogo(p.symbol, p.name)} <b>${esc(p.name)}</b> <span class="dim small">${esc(p.symbol)}</span></td><td class="r num">${num(p.qty)}</td><td class="r num">${price(p.avg_price, p.symbol)}</td><td class="r num">${price(p.last, p.symbol)}</td><td class="r num">₩${num(p.value)}</td><td class="r num">${(p.weight * 100).toFixed(1)}%</td><td class="r">${pct(p.pnl_pct)}</td></tr>`).join("");
   return `
   <div class="card"><div class="card-h"><h3>포트폴리오</h3><div class="right">${pfTabs()}</div></div>${stats}
     <div class="small muted" style="margin-top:10px">PAPER = 가상매매 · SHADOW = 실제 주문이었다면(호가 기준 체결) · LIVE = 실계좌 (Shadow 검증 통과 champion 모델 + 안전장치 필요)</div></div>

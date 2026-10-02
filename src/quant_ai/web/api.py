@@ -937,6 +937,38 @@ class DashboardAPI:
         m = self._mode(mode)
         return self._cached(f"oneline:{m}", 60, lambda: oneline(self.app, m))
 
+    def news_detail(self, news_id: str) -> dict:
+        from ..newsdetail import news_detail
+        try:
+            return news_detail(self.app, int(news_id))
+        except ValueError:
+            raise ValueError("뉴스 번호가 이상합니다") from None
+
+    def news_explain(self, body: dict) -> dict:
+        from ..newsdetail import explain_news
+        self._audit("news_explain", f"뉴스 {body.get('id')}")
+        return explain_news(self.app, int(body.get("id") or 0))
+
+    def disclosure_detail(self, disc_id: str) -> dict:
+        from ..newsdetail import disclosure_detail
+        try:
+            return disclosure_detail(self.app, int(disc_id))
+        except ValueError:
+            raise ValueError("공시 번호가 이상합니다") from None
+
+    def disclosure_explain(self, body: dict) -> dict:
+        from ..newsdetail import explain_disclosure
+        self._audit("disclosure_explain", f"공시 {body.get('id')}")
+        return explain_disclosure(self.app, int(body.get("id") or 0))
+
+    def news_search(self, q: str, days: str = "30") -> dict:
+        from ..newsdetail import search
+        try:
+            d = int(days or 30)
+        except ValueError:
+            d = 30
+        return {"q": q, "days": d, "results": search(self.app, q[:100], d)}
+
     def conflicts(self) -> dict:
         from ..conflicts import detect
         return self._cached("conflicts", 120, lambda: detect(self.app))

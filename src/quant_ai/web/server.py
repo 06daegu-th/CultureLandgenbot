@@ -68,11 +68,11 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
             return host in allowed_hosts
 
-        def _send(self, code: int, body: bytes, ctype: str) -> None:
+        def _send(self, code: int, body: bytes, ctype: str, cache: str = "no-store") -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
@@ -106,6 +106,13 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 if (self.client_address[0] if self.client_address else "") in ("127.0.0.1", "::1"):
                     h |= api.instance()  # 같은 PC 에서만: 버전·폴더·PID (run.sh 가 옛 서버를 알아보게)
                 return self._json(h, 200 if h["ok"] else 503)
+            if url.path.startswith("/api/logo/"):  # 종목 로고 (공개 정보 · <img> 로 불러서 토큰 없이)
+                from ..logos import get as logo_get
+                try:
+                    data, ctype, src = logo_get(api.app, url.path.rsplit("/", 1)[-1], (qs.get("n") or [None])[0])
+                except ValueError:
+                    return self._json({"error": "bad symbol"}, 400)
+                return self._send(200, data, ctype, "public, max-age=86400" if src != "monogram" else "public, max-age=3600")
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):
                     return self._json({"error": "unauthorized"}, 401)
@@ -193,6 +200,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.replay(arg("date", "")[:10]))
                     if url.path == "/api/weekly":
                         return self._json(api.weekly())
+                    if url.path.startswith("/api/news/") and url.path.rsplit("/", 1)[-1].isdigit():
+                        return self._json(api.news_detail(url.path.rsplit("/", 1)[-1]))
+                    if url.path.startswith("/api/disclosure/") and url.path.rsplit("/", 1)[-1].isdigit():
+                        return self._json(api.disclosure_detail(url.path.rsplit("/", 1)[-1]))
+                    if url.path == "/api/news-search":
+                        return self._json(api.news_search(arg("q", ""), arg("days", "30")))
                     if url.path == "/api/conflicts":
                         return self._json(api.conflicts())
                     if url.path == "/api/oneline":
@@ -394,6 +407,10 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json(api.netcheck(run=True))
                 if url.path == "/api/news-extract":
                     return self._json(api.news_extract())
+                if url.path == "/api/news-explain":
+                    return self._json(api.news_explain(body))
+                if url.path == "/api/disclosure-explain":
+                    return self._json(api.disclosure_explain(body))
                 if url.path == "/api/us-sheet":
                     return self._json(api.us_sheet(body))
                 if url.path == "/api/budget":

@@ -21,14 +21,14 @@ async function osHomeBrief(root) {
   const circ = ["①", "②", "③", "④", "⑤"];
   box.innerHTML = card(`오늘의 AI 브리핑 <span class="small dim">${esc(b.as_of)}</span>`, `<div class="grid g-2">
     <div>${(b.items || []).map((x, i) => `<a class="brief-it" href="${esc(x.link)}"><b>${circ[i]}</b> ${esc(x.text)}</a>`).join("") || '<div class="xs dim">큰 변화 없음</div>'}</div>
-    <div><div class="small muted" style="margin-bottom:4px">오늘 확인할 것</div>${(b.check3 || []).map((c) => `<a class="brief-it" href="#analysis/${esc(c.symbol)}"><b>${esc(c.name)}</b>${c.held ? ' <span class="chip xs">보유</span>' : ""} <span class="xs muted">${(c.why || []).map(esc).join(" · ")}</span></a>`).join("") || '<div class="xs dim">없음</div>'}</div></div>`,
+    <div><div class="small muted" style="margin-bottom:4px">오늘 확인할 것</div>${(b.check3 || []).map((c) => `<a class="brief-it" href="#analysis/${esc(c.symbol)}">${stockLogo(c.symbol, c.name, 18)} <b>${esc(c.name)}</b>${c.held ? ' <span class="chip xs">보유</span>' : ""} <span class="xs muted">${(c.why || []).map(esc).join(" · ")}</span></a>`).join("") || '<div class="xs dim">없음</div>'}</div></div>`,
   `<a class="link" href="#action">Action Center ${ICONS.arrow}</a>`);
 }
 
 // ------------------------------------------------------------ 오늘 · Action Center
 async function viewActionCenter(el) {
   const [a, b] = await Promise.all([api(`/api/action-center?${pfModeQ()}`), api(`/api/briefing?${pfModeQ()}`).catch(() => ({}))]);
-  const check = (a.check || []).map((c) => `<a class="ac-it" href="#analysis/${esc(c.symbol)}"><b>${esc(c.name)}</b>${c.held ? ' <span class="chip xs">보유</span>' : ""}<div class="xs muted">${(c.why || []).map(esc).join(" · ")}</div></a>`).join("");
+  const check = (a.check || []).map((c) => `<a class="ac-it" href="#analysis/${esc(c.symbol)}">${stockLogo(c.symbol, c.name, 18)} <b>${esc(c.name)}</b>${c.held ? ' <span class="chip xs">보유</span>' : ""}<div class="xs muted">${(c.why || []).map(esc).join(" · ")}</div></a>`).join("");
   const evs = (a.events || []).map((e) => `<a class="ac-it" href="${e.symbol ? `#analysis/${esc(e.symbol)}` : "#calendar"}"><b class="${e.d_day <= 1 ? "warn-t" : ""}">${esc(e.d_label)}</b> ${esc(e.title)}${e.held ? ' <span class="chip xs">보유</span>' : ""}${e.estimated ? ' <span class="xs dim">추정</span>' : ""}</a>`).join("");
   const sig = (a.signal_changes || []).map((c) => `<a class="ac-it" href="#analysis/${esc(c.symbol)}"><b>${esc(c.name)}</b> ${badge(c.from)} → ${badge(c.to)} <span class="xs dim">${esc(c.at || "")}</span></a>`).join("");
   const disc = (a.disclosures || []).map((d) => `<a class="ac-it" href="#analysis/${esc(d.symbol)}"><b>${esc(d.name)}</b> <span class="small">${esc(d.title)}</span> <span class="xs dim">${esc(d.date || "")}</span></a>`).join("");
@@ -55,7 +55,7 @@ async function viewWatch(el) {
   const rows = (w.rows || []).filter((r) => (S.wlGroup === "전체" || r.group === S.wlGroup) && (S.wlType === "전체" || r.type === S.wlType));
   const tabs = (id, list, cur) => `<div class="tabs" id="${id}">${["전체", ...list].map((g) => `<button data-k="${esc(g)}" class="${cur === g ? "on" : ""}">${esc(g)}</button>`).join("")}</div>`;
   const tr = rows.map((r) => `<tr><td><button class="star-btn on" data-unstar="${esc(r.symbol)}" title="관심 해제">★</button></td>
-    <td><a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name)}</b></a> <span class="xs dim">${esc(r.symbol)}</span>${r.held ? ' <span class="chip xs">보유</span>' : ""}</td>
+    <td>${stockLogo(r.symbol, r.name)} <a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name)}</b></a> <span class="xs dim">${esc(r.symbol)}</span>${r.held ? ' <span class="chip xs">보유</span>' : ""}</td>
     <td class="small">${esc(r.type)}</td><td class="r num">${r.last != null ? num(r.last, r.last < 1000 ? 2 : 0) : "-"}</td>
     <td class="r ${r.chg_pct >= 0 ? "up" : "down"}">${P(r.chg_pct, 2)}</td><td>${badge(r.ai)} <span class="xs num">${R(r.prob_up, 0)}</span></td>
     <td class="small">${r.change ? `<span class="${r.change_dir > 0 ? "up" : r.change_dir < 0 ? "down" : ""}">${esc(r.change)}</span>` : '<span class="dim">-</span>'}</td>
@@ -311,7 +311,7 @@ async function viewGovernance(el) {
 // ------------------------------------------------------------ 수동 모의 장부
 async function viewManual(el) {
   const b = await api("/api/ticket/book");
-  const rows = (b.positions || []).map((p) => `<tr><td><a href="#analysis/${esc(p.symbol)}"><b>${esc(p.symbol)}</b></a></td><td class="r num">${num(p.qty)}</td><td class="r num">${num(p.avg_price, 0)}</td><td class="r num">${num(p.price, 0)}</td><td class="r ${p.pnl_pct >= 0 ? "up" : "down"}">${P(p.pnl_pct)}</td></tr>`).join("");
+  const rows = (b.positions || []).map((p) => `<tr><td>${stockLogo(p.symbol, p.name || p.symbol, 18)} <a href="#analysis/${esc(p.symbol)}"><b>${esc(p.symbol)}</b></a></td><td class="r num">${num(p.qty)}</td><td class="r num">${num(p.avg_price, 0)}</td><td class="r num">${num(p.price, 0)}</td><td class="r ${p.pnl_pct >= 0 ? "up" : "down"}">${P(p.pnl_pct)}</td></tr>`).join("");
   el.innerHTML = card("수동 모의 장부 <span class='small dim'>종목 화면의 [모의 주문]으로 기록 · 실제 돈 아님 · 전략 장부와 분리</span>", `
     <div class="kv-grid">${kv("평가", "₩" + num(b.equity))}${kv("현금", "₩" + num(b.cash))}${kv("수익률", P(b.return))}</div>
     ${rows ? `<div class="scroll" style="margin-top:8px"><table class="tight"><thead><tr><th>종목</th><th class="r">수량</th><th class="r">평단</th><th class="r">현재가</th><th class="r">손익</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty("아직 모의 주문이 없습니다 — 종목 검색(/) → 종목 → [모의 주문]")}`,

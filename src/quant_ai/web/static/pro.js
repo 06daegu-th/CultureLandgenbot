@@ -374,7 +374,7 @@ function md(text) {
 function chatMsgHtml(m) {
   if (m.role === "user") return `<div class="msg user"><div class="bubble">${esc(m.content)}</div></div>`;
   const tools = (m.tools || []).map((t) => `<span class="tchip ${t.ok === false ? "bad" : ""}">${TOOL_LABEL[t.tool] || esc(t.tool)}${t.args?.symbol ? " · " + esc(t.args.symbol) : ""}</span>`).join("");
-  const cards = (m.cards || []).map((c) => `<a class="stock-card" href="#analysis/${esc(c.symbol)}"><div><b>${esc(c.name)}</b> <span class="xs dim">${esc(c.symbol)}</span><div class="num">${c.currency === "USD" ? "$" + num(c.last, 2) : num(c.last) + "원"} <span class="${sgn(c.ret_1d)}">${pp(c.ret_1d)}</span></div><div class="xs dim">${esc(c.date || "")} 종가</div></div><div class="sc-spark">${spark(c.spark, 120, 36)}</div></a>`).join("");
+  const cards = (m.cards || []).map((c) => `<a class="stock-card" href="#analysis/${esc(c.symbol)}"><div>${stockLogo(c.symbol, c.name, 20)} <b>${esc(c.name)}</b> <span class="xs dim">${esc(c.symbol)}</span><div class="num">${c.currency === "USD" ? "$" + num(c.last, 2) : num(c.last) + "원"} <span class="${sgn(c.ret_1d)}">${pp(c.ret_1d)}</span></div><div class="xs dim">${esc(c.date || "")} 종가</div></div><div class="sc-spark">${spark(c.spark, 120, 36)}</div></a>`).join("");
   const acts = (m.actions || []).map((a) => `<button class="act-btn ${a.danger ? "danger" : ""}" data-act="${esc(a.action)}" data-sym="${esc(a.symbol || "")}" title="${esc(a.reason || "")}">▶ ${esc(a.label)}</button>`).join("");
   const links = (m.links || []).map((l) => `<a class="chip xs" href="${esc(l.href)}">↗ ${esc(l.label)}</a>`).join(" ");
   const fol = (m.followups || []).map((q) => `<button class="fol-q">${esc(q)}</button>`).join("");
@@ -487,7 +487,7 @@ function initSearch() {
       let res = [];
       try { res = (await api(`/api/search?q=${encodeURIComponent(q)}`)).results; } catch { res = []; }
       if (my !== seq) return;
-      box.innerHTML = res.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${w.market === "GLOBAL" ? "🌐 " : ""}${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span>${w.market === "GLOBAL" ? '<span class="chip">해외</span>' : badge(w.action)}</a>`).join("")
+      box.innerHTML = res.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${stockLogo(w.symbol, w.name, 24)} ${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span>${w.market === "GLOBAL" ? '<span class="chip">해외</span>' : badge(w.action)}</a>`).join("")
         + `<a data-ask="${esc(q)}" class="ask"><span>${ICONS.chat} AI 에게 “${esc(q)}” 물어보기</span></a>`;
       box.classList.add("open");
       box.querySelectorAll("a[data-sym]").forEach((a) => a.onclick = () => { box.classList.remove("open"); input.value = ""; location.hash = `#analysis/${a.dataset.sym}`; });
