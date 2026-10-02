@@ -169,6 +169,31 @@ def build(app, net: bool = True, now: datetime | None = None) -> str:
             add(f"  · {x['title']}: {x['status']} · {x.get('detail', '')} ({x.get('ms') or 0}ms)")
     guard("외부 연결", net_part)
 
+    sec("종목 로고")
+
+    def logo_part():
+        import json as _json
+        d = Path(app.settings.artifacts_dir) / "logos"
+        if not d.exists():
+            add("- 아직 받은 로고 없음 (`./run.sh logos` 로 미리 받기)")
+            return
+        got, failed, why = {}, 0, {}
+        for f in d.glob("*.json"):
+            try:
+                m = _json.loads(f.read_text())
+            except Exception:  # noqa: BLE001, S112 - 깨진 기록은 건너뜀
+                continue
+            if m.get("file"):
+                got[m.get("source", "?")] = got.get(m.get("source", "?"), 0) + 1
+            elif m.get("failed_at"):
+                failed += 1
+                for t in m.get("tried") or []:
+                    why[t] = why.get(t, 0) + 1
+        add(f"- 받은 로고: {sum(got.values())}개 ({', '.join(f'{k} {v}' for k, v in got.items()) or '-'}) · 실패 {failed}개")
+        for t, n_ in sorted(why.items(), key=lambda x: -x[1])[:6]:
+            add(f"  · 실패 이유: {t} ({n_}개)")
+    guard("로고", logo_part)
+
     sec("목표 · 월 적립 (금액은 넣지 않음)")
 
     def goal_part():

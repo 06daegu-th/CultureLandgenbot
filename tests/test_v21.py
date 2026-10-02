@@ -157,3 +157,54 @@ def test_ui_words_and_calm_layout_static():
         assert not any("🟢" in ln for ln in (STATIC / f).read_text().splitlines() if "_ICON = " in ln)
     css = (STATIC / "style.css").read_text()
     assert ".ui-easy .pro-only" in css and ".lv-dot" in css and ".home-hero" in css
+
+
+# ------------------------------------------------------------------ 로고 (v21 마지막 점검)
+def test_logo_never_blocks_screen_and_retries_blocked(app, monkeypatch, tmp_path):
+    import json as _json
+    import time as _time
+    import urllib.error
+
+    from quant_ai import logos
+    monkeypatch.delenv("QUANT_LOGOS", raising=False)
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 400
+    calls = []
+
+    def blocked(url):
+        calls.append(url)
+        raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+    data, ctype, src = logos.get(app, "AAA111", "테스트", fetch=blocked)
+    assert src == "monogram" and calls
+    meta = _json.loads((logos._dir(app) / "AAA111.json").read_text())
+    assert meta["net"] is True and meta["v"] == logos.META_V  # 403 은 '없음'이 아니라 차단 → 1시간 뒤 다시
+    # 옛 버전의 실패 기록(7일 막힘)은 무시하고 다시 받는다
+    (logos._dir(app) / "BBB222.json").write_text(_json.dumps({"failed_at": _time.time(), "net": False, "tried": ["toss: HTTPError"]}))
+    _, _, src2 = logos.get(app, "BBB222", fetch=lambda u: png)
+    assert src2 in ("toss", "alpha", "fmp", "favicon", "logodev")
+    # 화면용(block=False): 기다리지 않고 이니셜 → 뒤에서 받아 두면 다음엔 진짜 로고
+    _, _, src3 = logos.get(app, "CCC333", fetch=lambda u: png, block=False)
+    assert src3 == "pending"
+    for _ in range(50):
+        if "CCC333" not in logos._inflight:
+            break
+        _time.sleep(0.05)
+    assert logos.get(app, "CCC333", block=False)[2] != "pending"
+
+
+def test_logodev_source_only_with_token(app, monkeypatch):
+    from quant_ai import logos
+    monkeypatch.delenv("QUANT_LOGO_SOURCES", raising=False)
+    monkeypatch.delenv("QUANT_LOGO_DEV_TOKEN", raising=False)
+    assert all(s != "logodev" for s, _ in logos.candidates(app, "NVDA"))
+    monkeypatch.setenv("QUANT_LOGO_DEV_TOKEN", "tok123")
+    c = logos.candidates(app, "005930")
+    assert c[0][0] == "logodev" and "005930.KS" in c[0][1]
+    assert logos.candidates(app, "NVDA")[0][1].startswith("https://img.logo.dev/ticker/NVDA")
+
+
+def test_tls_context_adds_certifi():
+    import ssl
+
+    from quant_ai import tls
+    assert tls.install() and isinstance(tls.context(), ssl.SSLContext)
+    assert ssl._create_default_https_context is tls.context  # noqa: SLF001

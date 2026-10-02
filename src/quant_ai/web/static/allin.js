@@ -137,7 +137,8 @@ async function pretradeCard(sym, weight = "", mode = S.ptMode || "paper") {
   box.innerHTML = card("사전 리스크 게이트 <span class='small dim'>지금 이 종목을 사면?</span>", `
     <div class="pt-form"><select id="pt-mode">${["paper", "shadow", "live"].map((m) => `<option ${m === mode ? "selected" : ""}>${m}</option>`).join("")}</select>
       <input id="pt-w" type="number" min="0.5" max="100" step="0.5" placeholder="비중 %" value="${esc(weight)}"><button class="btn-sm primary" id="pt-go">시험</button></div>${body}`);
-  $("#pt-go").onclick = () => { S.ptMode = $("#pt-mode").value; pretradeCard(sym, $("#pt-w").value, S.ptMode); };
+  const q = (id) => box.querySelector(id);  // 늦게 온 응답이면 box 는 이미 화면 밖 — 문서 전체가 아니라 box 안에서 찾는다
+  q("#pt-go").onclick = () => { S.ptMode = q("#pt-mode").value; pretradeCard(sym, q("#pt-w").value, S.ptMode); };
 }
 
 function digestCard(g) {

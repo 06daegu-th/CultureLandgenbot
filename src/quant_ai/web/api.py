@@ -427,6 +427,15 @@ class DashboardAPI:
                 out["markers"].append({"time": ti, "action": r.action, "confidence": r.confidence})
         return out
 
+    @staticmethod
+    def _display_name(symbol: str, inst: dict) -> str:
+        """화면에 보일 종목 이름 — 해외 종목은 'NVDA' 대신 '엔비디아'처럼 한글 이름을 먼저."""
+        from ..data.global_stocks import global_name
+        n = inst[symbol].name if symbol in inst else None
+        if not n or n.upper() == symbol.upper() or not re.search(r"[가-힣]", n):
+            n = global_name(symbol) or n
+        return n or symbol
+
     # ------------------------------------------------------------------ 종목 분석
     def analysis(self, symbol: str) -> dict:
         fetched = self.ensure_symbol(symbol)
@@ -461,7 +470,7 @@ class DashboardAPI:
             b = self._bars(s, [symbol]).get(symbol)
         return {
             "checklist": self._checklist(c, b), "range": self._range(b, (c.payload or {}).get("horizon", 5) if c else 5),
-            "symbol": symbol, "name": inst[symbol].name if symbol in inst else symbol,
+            "symbol": symbol, "name": self._display_name(symbol, inst),
             "market": inst[symbol].market if symbol in inst else "",
             "last": _f(b["close"].iloc[-1], 2) if b is not None and len(b) else None,
             "chg": _f(b["close"].iloc[-1] - b["close"].iloc[-2], 2) if b is not None and len(b) > 1 else None,

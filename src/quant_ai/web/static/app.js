@@ -1253,8 +1253,10 @@ async function render() {
     else if (S.view === "goal") await viewGoal(el);  // v19: 내 목표 (goal.js)
     else el.innerHTML = card("페이지 없음", empty(`'${esc(S.view)}' 화면이 없습니다`));
   } catch (e) {
+    if (!el.isConnected) return;  // 이미 다른 화면으로 넘어갔다 — 늦게 끝난 이전 화면의 오류는 보여 주지 않는다
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
   }
+  if (!el.isConnected) return;
   bindCommon();
   animateView(el);
   markTab();
@@ -1350,6 +1352,7 @@ function route() {
   const [v, param] = h.split("/");
   S.view = v; S.param = param || null;
   document.body.classList.toggle("on-chat", v === "chat");
+  document.body.classList.toggle("on-stock", v === "analysis");  // 종목 화면은 머리에 'AI 에게 묻기' 가 있어 떠 있는 버튼이 단추를 가리지 않게 숨긴다
   if (v === "analysis" && param) S.symbol = decodeURIComponent(param);
   if (v !== "dashboard") S.homeDetail = false;
   $(".side").classList.remove("open");

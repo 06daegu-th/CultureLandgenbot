@@ -463,7 +463,7 @@ textarea.input { resize: vertical; min-height: 140px; }
 .chat-fab:hover { filter: brightness(1.1); }
 .chat-dock .chat { display: none; width: min(430px, calc(100vw - 32px)); height: min(640px, calc(100vh - 120px)); }
 .chat-dock.open .chat { display: flex; }
-body.on-chat .chat-dock { display: none; }
+body.on-chat .chat-dock, body.on-stock .chat-dock:not(.open) { display: none; }
 .chat { flex-direction: column; display: flex; background: var(--panel); border: 1px solid var(--line-2); border-radius: 18px; box-shadow: 0 24px 60px rgba(0,0,0,.45); overflow: hidden; }
 .chat.full { height: calc(100vh - 150px); min-height: 520px; max-width: 980px; margin: 0 auto; }
 .chat-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: linear-gradient(90deg, rgba(99,102,241,.18), rgba(34,211,238,.08)); }

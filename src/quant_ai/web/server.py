@@ -109,10 +109,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             if url.path.startswith("/api/logo/"):  # 종목 로고 (공개 정보 · <img> 로 불러서 토큰 없이)
                 from ..logos import get as logo_get
                 try:
-                    data, ctype, src = logo_get(api.app, url.path.rsplit("/", 1)[-1], (qs.get("n") or [None])[0])
+                    data, ctype, src = logo_get(api.app, url.path.rsplit("/", 1)[-1], (qs.get("n") or [None])[0], block=False)
                 except ValueError:
                     return self._json({"error": "bad symbol"}, 400)
-                return self._send(200, data, ctype, "public, max-age=86400" if src != "monogram" else "public, max-age=3600")
+                # 진짜 로고는 하루 · 이니셜은 금방 다시 물어본다 (뒤에서 받는 중이면 1분, 없다고 확인됐으면 1시간)
+                cc = {"monogram": "public, max-age=3600", "pending": "no-cache, max-age=60"}.get(src, "public, max-age=86400")
+                return self._send(200, data, ctype, cc)
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):
                     return self._json({"error": "unauthorized"}, 401)

@@ -6,8 +6,11 @@
      미국 종목        Financial Modeling Prep 공개 로고 이미지 (키 없음)
   3. 회사 홈페이지     종목 정보(프로필)의 website 또는 아래 국내 주요 기업 도메인 → 파비콘(구글 s2, 128px)
   4. 이니셜 아이콘     회사 이름 첫 글자 + 종목별 고정 색 (네트워크가 막혀도 항상 무언가 보인다)
-실패 기억: 네트워크 오류(연결 안 됨·시간 초과)는 1시간 뒤, '그 종목 로고가 없음'은 7일 뒤 다시 시도 (화면이 느려지지 않게).
-QUANT_LOGOS=off 면 네트워크를 쓰지 않고 이니셜만. QUANT_LOGO_SOURCES=toss,alpha,fmp,favicon 으로 쓸 출처·순서를 바꿀 수 있다.
+실패 기억: 네트워크 오류·차단(401/403/429)은 1시간 뒤, '그 종목 로고가 없음'(404)은 7일 뒤 다시 시도 (화면이 느려지지 않게).
+v21: 화면은 기다리지 않는다 — 처음 보는 종목은 이니셜을 바로 보내고 진짜 로고는 뒤에서 받아 둔다 (다음 화면부터 로고).
+     브라우저와 같은 User-Agent 로 받는다 (프로그램 이름이면 막는 CDN 이 있다) · 예전 버전의 실패 기록은 무시하고 다시 받는다.
+상용 서비스: QUANT_LOGO_DEV_TOKEN 이 있으면 logo.dev(라이선스 로고 API)를 가장 먼저 쓴다 (국내 .KS · 미국 티커).
+QUANT_LOGOS=off 면 네트워크를 쓰지 않고 이니셜만. QUANT_LOGO_SOURCES=logodev,toss,alpha,fmp,favicon 으로 쓸 출처·순서를 바꿀 수 있다.
 미리 받기: ./run.sh logos (관심·보유·주요 종목) · 관심종목 ★ 를 누르면 그 종목은 바로 받아 둔다.
 로고는 각 회사의 상표다 — 종목 식별용 표시로만 쓴다 (docs/DATA_LICENSES.md).
 """
@@ -30,9 +33,12 @@ FMP_URL = "https://financialmodelingprep.com/image-stock/{sym}.png"
 TOSS_URL = "https://static.toss.im/png-icons/securities/icn-sec-fill-{sym}.png"
 ALPHA_URL = "https://file.alphasquare.co.kr/media/images/stock_logo/kr/{sym}.png"
 FAVICON_URL = "https://www.google.com/s2/favicons?domain={domain}&sz=128"
+LOGODEV_URL = "https://img.logo.dev/ticker/{sym}?token={token}&size=128&format=png&fallback=404"
+UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+META_V = 2  # 실패 기록 형식 — 이보다 옛 기록(v19~v20: 403 도 '없음'으로 7일 막던 것)은 무시
 RETRY_AFTER = 7 * 86400  # 로고가 없다고 확인된 종목
 RETRY_NET = 3600  # 네트워크 오류 — 연결이 돌아오면 금방 다시
-SOURCES = ("toss", "alpha", "fmp", "favicon")
+SOURCES = ("logodev", "toss", "alpha", "fmp", "favicon")
 MAX_BYTES = 300_000
 TYPES = {b"\x89PNG": ("png", "image/png"), b"\xff\xd8\xff": ("jpg", "image/jpeg"), b"GIF8": ("gif", "image/gif"),
          b"RIFF": ("webp", "image/webp"), b"<svg": ("svg", "image/svg+xml"), b"<?xm": ("svg", "image/svg+xml")}
@@ -105,8 +111,12 @@ def _sources() -> tuple[str, ...]:
 def candidates(app, sym: str) -> list[tuple[str, str]]:
     kr = sym[:1].isdigit()
     out = []
+    token = os.environ.get("QUANT_LOGO_DEV_TOKEN", "").strip()
     for src in _sources():
-        if src == "toss" and kr:
+        if src == "logodev":
+            if token:
+                out.append(("logodev", LOGODEV_URL.format(sym=f"{sym}.KS" if kr else sym, token=token)))
+        elif src == "toss" and kr:
             out.append(("toss", TOSS_URL.format(sym=sym)))
         elif src == "alpha" and kr:
             out.append(("alpha", ALPHA_URL.format(sym=sym)))
@@ -122,7 +132,7 @@ def candidates(app, sym: str) -> list[tuple[str, str]]:
 def _fetch(url: str, timeout: float = 4.0) -> bytes:
     if not url.startswith("https://"):
         raise ValueError("https 만")
-    req = urllib.request.Request(url, headers={"User-Agent": "quant-ai/0.18 (+logo)"})  # noqa: S310 - https 확인됨
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5"})  # noqa: S310 - https 확인됨
     with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
         data = r.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
@@ -167,12 +177,14 @@ def _is_net_error(e: Exception) -> bool:
     import socket
     import urllib.error
     if isinstance(e, urllib.error.HTTPError):
-        return e.code >= 500 or e.code == 429  # 404 등은 '없음'
+        return e.code >= 500 or e.code in (401, 403, 429)  # 차단·한도는 잠시 뒤 다시 · 404 등은 '없음'
     return isinstance(e, (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError, OSError))
 
 
-def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = None, force: bool = False) -> tuple[bytes, str, str]:
-    """(이미지, content-type, 출처). 항상 무언가 돌려준다. force=True 면 실패 기억을 무시하고 다시 받는다."""
+def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = None, force: bool = False,
+        block: bool = True) -> tuple[bytes, str, str]:
+    """(이미지, content-type, 출처). 항상 무언가 돌려준다. force=True 면 실패 기억을 무시하고 다시 받는다.
+    block=False (화면용): 받아 둔 로고가 없으면 이니셜을 바로 돌려주고 뒤에서 받는다 → 출처 'pending'."""
     sym = _safe(sym)
     d = _dir(app)
     now = now or time.time()
@@ -186,9 +198,15 @@ def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = 
     meta = json.loads(meta_p.read_text()) if meta_p.exists() else {}
     if meta.get("file") and (d / meta["file"]).exists() and not force:
         return (d / meta["file"]).read_bytes(), meta["type"], meta.get("source", "cache")
+    if meta.get("failed_at") and meta.get("v") != META_V:
+        meta = {}  # 옛 버전의 실패 기록 → 다시 받아 본다
     off = (os.environ.get("QUANT_LOGOS") or "").lower() in ("off", "0", "false")
     wait = RETRY_NET if meta.get("net") else RETRY_AFTER
-    if not off and (force or now - float(meta.get("failed_at") or 0) > wait):
+    due = not off and (force or now - float(meta.get("failed_at") or 0) > wait)
+    if due and not block:
+        _background(app, sym, name, fetch)  # 화면은 기다리지 않는다 — 이니셜을 먼저, 진짜 로고는 다음 화면부터
+        return monogram(sym, name or _name(app, sym)), "image/svg+xml", "pending"
+    if due:
         net_only = True
         tried = []
         for src, url in candidates(app, sym):
@@ -211,8 +229,27 @@ def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = 
                 tried.append(f"{src}: {type(e).__name__}")
                 log.debug("로고 %s %s 실패: %s", sym, src, e)
         if tried:
-            meta_p.write_text(json.dumps({"failed_at": now, "net": net_only, "tried": tried}))
+            meta_p.write_text(json.dumps({"failed_at": now, "net": net_only, "tried": tried, "v": META_V}))
     return monogram(sym, name or _name(app, sym)), "image/svg+xml", "monogram"
+
+
+_inflight: set[str] = set()
+
+
+def _background(app, sym: str, name: str | None, fetch=None) -> None:
+    import threading
+    if sym in _inflight or len(_inflight) > 16:  # 같은 종목은 한 번만 · 한꺼번에 너무 많이 받지 않는다
+        return
+    _inflight.add(sym)
+
+    def run():
+        try:
+            get(app, sym, name, fetch=fetch, block=True)
+        except Exception as e:  # noqa: BLE001
+            log.debug("로고 뒤에서 받기 실패 %s: %s", sym, e)
+        finally:
+            _inflight.discard(sym)
+    threading.Thread(target=run, name=f"logo-{sym}", daemon=True).start()
 
 
 def prefetch(app, symbols: list[str], force: bool = False, fetch=None) -> dict:

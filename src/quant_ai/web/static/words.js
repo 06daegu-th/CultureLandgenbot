@@ -43,3 +43,47 @@ function foldPro(root, keepSel, label) {
   rest.forEach((c) => d.appendChild(c));
   root.appendChild(d);
 }
+
+// v22: 화면 어디에 남아 있든 그림 이모지를 정리한다 — 상태 색 이모지(🔴🟠🟡🟢⚪⛔⚠)는 색 점으로,
+// 장식용 그림(📰🤖🎯🧪🔒…)은 지운다. ★☆✓✕ 같은 기호는 그대로 둔다. 화면을 그리는 코드 수백 곳을 하나하나 고치지 않고
+// 그려진 뒤 한 번 거른다 (입력칸·코드 블록은 손대지 않음).
+const EMO_DOT = { "🔴": "bad", "⛔": "bad", "🛑": "bad", "❌": "bad", "🟠": "warn", "🟡": "warn", "⚠": "warn", "🟢": "good", "✅": "good", "⚪": "idle" };
+const EMO_RE = /(🔴|⛔|🛑|❌|🟠|🟡|⚠|🟢|✅|⚪|[\u{1F300}-\u{1FAFF}]|[\u{2600}-\u{26FF}](?<![★☆]))️?\s?/gu;
+const EMO_KEEP = new Set(["★", "☆", "☀", "☁"]);
+function deEmojiNode(t) {
+  const s = t.nodeValue;
+  if (!s || !EMO_RE.test(s)) return;
+  EMO_RE.lastIndex = 0;
+  const p = t.parentNode;
+  if (!p || p.closest?.("input,textarea,pre,code,script,style,[data-keep-emoji]")) return;
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const m of s.matchAll(EMO_RE)) {
+    const ch = m[1];
+    if (EMO_KEEP.has(ch)) continue;
+    if (m.index > last) frag.append(s.slice(last, m.index));
+    const lv = EMO_DOT[ch];
+    if (lv) { const i = document.createElement("i"); i.className = `lv-dot lv-${lv}`; i.setAttribute("aria-hidden", "true"); frag.append(i); }
+    last = m.index + m[0].length;
+  }
+  if (last === 0) return;
+  if (last < s.length) frag.append(s.slice(last));
+  p.replaceChild(frag, t);
+}
+function deEmoji(root) {
+  if (!root) return;
+  if (root.nodeType === 3) { deEmojiNode(root); return; }
+  if (root.nodeType !== 1) return;
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const list = [];
+  while (w.nextNode()) list.push(w.currentNode);
+  list.forEach(deEmojiNode);
+}
+if (typeof MutationObserver !== "undefined" && typeof document !== "undefined") {
+  const start = () => {
+    deEmoji(document.body);
+    new MutationObserver((ms) => ms.forEach((m) => { m.addedNodes.forEach(deEmoji); if (m.type === "characterData") deEmojiNode(m.target); }))
+      .observe(document.body, { childList: true, subtree: true, characterData: true });
+  };
+  if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+}

@@ -1,6 +1,6 @@
 /* 서비스 워커: 앱처럼 설치 · 화면 틀 오프라인 캐시 · 웹 푸시 알림 */
 "use strict";
-const SHELL = "qa-shell-v21-1";
+const SHELL = "qa-shell-v22-1";
 const FILES = ["/", "/index.html", "/style.css", "/icons.js", "/words.js", "/pro.js", "/live.js", "/verify.js", "/desk.js", "/truth.js", "/allin.js", "/os.js", "/hub.js", "/board.js", "/easy.js", "/goal.js", "/app.js", "/vendor/lightweight-charts.standalone.production.js", "/icon-192.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
