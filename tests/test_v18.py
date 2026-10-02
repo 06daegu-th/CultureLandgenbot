@@ -158,3 +158,89 @@ def test_disclosure_detail_and_routes(app, server):
     assert json.loads(c.getresponse().read())["results"]
     c.request("GET", "/api/news/999999")
     assert json.loads(c.getresponse().read())["error"] == "뉴스 없음"
+
+
+# ------------------------------------------------------------------ 종목 페이지: 오늘 중요한 것 · 실적 배너 · 기간별 확률 · 차트
+def test_stock_today_banner_horizons_and_chart_extras(app, monkeypatch):
+    import numpy as np
+
+    from quant_ai import stockplus
+    from quant_ai.data.db import session_scope
+    from quant_ai.data.models import ConsensusRecord, Disclosure
+    sym = _syms(app)[0]
+    b = app.market_data()[0][sym]
+    now = pd.Timestamp(b.index[-1]).to_pydatetime() + timedelta(hours=12)
+    ops.set_state(app.engine, "event_calendar", {"at": now.isoformat(), "events": [
+        {"date": (now + timedelta(days=3)).date().isoformat(), "kind": "earnings", "symbol": sym, "title": "3분기 실적", "market": "KR",
+         "time": "장 마감 후"}]})
+    with session_scope(app.engine) as s:
+        s.add(Disclosure(source="DART", receipt_no="T18a", symbol=sym, title="유상증자 결정", filed_at=now.date(), url="https://x/1"))
+        rng = np.random.default_rng(3)
+        for i in range(60):  # 확률 0.60 근처 과거 판단 60개 · 1일 뒤 오른 비율 2/3
+            up = i % 3 != 0
+            s.add(ConsensusRecord(symbol=sym, as_of=now - timedelta(days=200 - i), action="BUY", prob_up=0.6 + rng.uniform(-0.02, 0.02),
+                                  confidence=60, conflict="low", payload={"outcomes": {"1": 0.01 if up else -0.01, "5": 0.02, "20": -0.03}},
+                                  realized_return=0.01, correct=up))
+        s.add(ConsensusRecord(symbol=sym, as_of=now - timedelta(days=1), action="HOLD", prob_up=0.5, confidence=50, conflict="low", payload={}))
+        s.add(ConsensusRecord(symbol=sym, as_of=now, action="BUY", prob_up=0.6, confidence=60, conflict="low", payload={}))
+    h = stockplus.header(app, sym, now)
+    assert h["earnings_banner"] == f"{sym} 실적 발표 D-3 · {(now + timedelta(days=3)).month}월 {(now + timedelta(days=3)).day}일 · 장 마감 후 예정"
+    texts = [x["text"] for x in h["today"]]
+    assert "실적 D-3 · 장 마감 후" in texts and texts[0] == "중요 공시 1건 (3일)" and "AI 신호 변화 HOLD → BUY" in texts
+    hz = {x["h"]: x for x in h["horizons"]}
+    assert hz[1]["n"] >= 60 and abs(hz[1]["p"] - 0.667) < 0.02 and hz[5]["p"] == 1.0 and hz[20]["p"] == 0.0
+    assert stockplus.horizon_probs(app, 0.95)[0]["p"] is None  # 표본 부족 → 표시 안 함
+    ov = stockplus.overlay(app, sym)
+    kinds = {x["kind"] for x in ov["lines"]}
+    assert {"high52", "low52", "range_hi", "range_lo"} <= kinds
+    hi = next(x for x in ov["lines"] if x["kind"] == "high52")["price"]
+    assert hi == round(float(b["close"].iloc[-252:].max()), 2)
+    v = b.copy()
+    v.loc[v.index[-3], "volume"] = float(v["volume"].iloc[-30:-3].mean()) * 5
+    assert stockplus.volume_spikes(v)[-1]["date"] == str(pd.Timestamp(v.index[-3]).date())
+    marks = stockplus.macro_marks(app, "AAPL", pd.Timestamp("2026-01-01", tz="UTC"), pd.Timestamp("2026-03-31", tz="UTC"))
+    assert {"fomc", "nfp"} <= {m["event"] for m in marks}
+    assert "nfp" not in {m["event"] for m in stockplus.macro_marks(app, sym, pd.Timestamp("2026-01-01", tz="UTC"), pd.Timestamp("2026-03-31", tz="UTC"))}
+    ops.set_state(app.engine, "event_calendar", {})
+
+
+# ------------------------------------------------------------------ 홈 5칸 · AI 상태 · 거래소 상태
+def test_clock_light_holiday_notice_and_dst():
+    from datetime import UTC, datetime
+
+    from quant_ai.clock import clock_status, holiday_ko
+    m = clock_status(datetime(2026, 7, 3, 15, tzinfo=UTC))["markets"]  # 미국 독립기념일 대체 휴장 · 한국은 토요일
+    assert m["US"]["light"] == "🔴" and m["US"]["notice"].startswith("오늘 미국 증시는 휴장입니다 (독립기념일 대체 휴장)")
+    assert "다음 개장 07/06 22:30 한국시간" in m["US"]["notice"] and m["US"]["dst"] is True
+    assert m["KRX"]["notice"].startswith("오늘 한국 증시는 휴장입니다 (주말)") and m["KRX"]["dst"] is None
+    m = clock_status(datetime(2026, 1, 15, 15, tzinfo=UTC))["markets"]  # 미국 정규장 · 겨울(서머타임 아님)
+    assert m["US"]["light"] == "🟢" and m["US"]["notice"] is None and m["US"]["dst"] is False
+    assert holiday_ko("Christmas Day") == "성탄절" and holiday_ko("Hurricane Sandy") == "Hurricane Sandy"
+
+
+def test_ai_state_mapping(app, monkeypatch):
+    from quant_ai import aitrack, center
+
+    def fake(level, dem=False):
+        return lambda a: {"trust": {"level": level, "reasons": ["표본 부족"]}, "demotion": {"on": dem}, "last": {"accuracy": 0.55, "base": 0.5, "n": 80}}
+    for level, dem, key in [("CANDIDATE", False, "verified"), ("CANDIDATE", True, "banned"), ("UNTRUSTED", False, "banned"),
+                            ("NO_DATA", False, "checking"), ("WATCH", False, "checking")]:
+        monkeypatch.setattr(aitrack, "report", fake(level, dem))
+        s = center.ai_state(app)
+        assert s["key"] == key and s["icon"] == center.AI_STATE[key][0] and s["accuracy"] == 0.55
+
+
+def test_home5_sections_and_route(app, server, monkeypatch):
+    from quant_ai import center
+    h = center.home5(app, "paper")
+    assert {"market", "assets", "ai", "news", "todo", "as_of"} <= set(h)
+    assert {m["name"] for m in h["market"]["markets"]} and all(m["light"] in ("🟢", "🟡", "🔴") for m in h["market"]["markets"])
+    assert h["assets"]["mode"] == "paper" and h["assets"]["equity"] > 0
+    assert h["ai"]["key"] in center.AI_STATE and isinstance(h["news"]["items"], list) and isinstance(h["todo"]["items"], list)
+    # 한 칸이 실패해도 나머지는 보인다
+    monkeypatch.setattr(center, "action_center", lambda *a, **k: 1 / 0)
+    h = center.home5(app, "paper")
+    assert "ZeroDivisionError" in h["todo"]["error"] and "error" not in h["assets"]
+    monkeypatch.undo()
+    st, body, _ = _get(server, "/api/home5?mode=paper")
+    assert st == 200 and set(json.loads(body)) >= {"market", "assets", "ai", "news", "todo"}

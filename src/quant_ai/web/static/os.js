@@ -97,7 +97,7 @@ function osHeader(sym, h, pos) {
   const tiles = [
     tile("장 상태", `${esc(h.session?.flag || "")} ${esc(h.session?.label || "-")}`),
     tile("AI 상승확률", ai, h.ai ? esc(h.ai.as_of) + " 판단" : "", "", "pf-ai"),
-    tile("실적 발표", h.earnings ? `<span class="${/D-Day|D-1$/.test(h.earnings.d_label) ? "warn-t" : ""}">${esc(h.earnings.d_label)}</span>` : '<span class="dim">-</span>', h.earnings ? esc(h.earnings.date) + (h.earnings.estimated ? " 추정" : "") : "일정 없음", "", "pf-earn"),
+    tile("실적 발표", h.earnings ? `<span class="${/D-Day|D-1$/.test(h.earnings.d_label) ? "warn-t" : ""}">${esc(h.earnings.d_label)}</span>` : '<span class="dim">-</span>', h.earnings ? esc(h.earnings.date) + (h.earnings.time ? " · " + esc(h.earnings.time) : "") + (h.earnings.estimated ? " 추정" : "") : "일정 없음", "", "pf-earn"),
     tile("뉴스 7일", n.n ? `<span class="up">+${n["긍정"]}</span> · ${n["중립"]} · <span class="down">−${n["부정"]}</span>` : '<span class="dim">없음</span>', "긍정 · 중립 · 부정", "", "pf-news"),
     tile("수급", h.flow?.signal ? esc(h.flow.signal) : '<span class="dim">-</span>', h.flow?.divergence ? esc(h.flow.divergence) : "외국인·기관", "", "pf-flow"),
     tile("밸류에이션", h.valuation ? esc(h.valuation.level) : '<span class="dim">-</span>', h.valuation ? esc(h.valuation.text) : "PER 없음", "", "pf-fin"),
@@ -108,7 +108,17 @@ function osHeader(sym, h, pos) {
       `평단 ${pos.avg_price ? num(pos.avg_price, pos.avg_price < 1000 ? 2 : 0) : "-"}${(pos.rows || []).find((r) => r.weight) ? ` · 비중 ${R((pos.rows || []).find((r) => r.weight).weight, 1)}` : ""}`, "mine", "pf-mine"));
   } else tiles.push(tile("내 보유", '<span class="dim">없음</span>', "계좌 입력 시 표시", "", "pf-mine"));
   const discs = (h.disclosures || []).map((x) => `<span class="chip xs ${x.important ? "warn" : ""}" title="${esc(x.title)}">${x.important ? "⚠ " : ""}${esc(x.date.slice(5))} ${esc(x.title.slice(0, 22))}</span>`).join(" ");
-  box.innerHTML = `<div class="os-grid">${tiles.join("")}</div>${discs ? `<div class="os-disc xs"><span class="muted">최근 공시</span> ${discs}</div>` : ""}`;
+  const LVL = { bad: "neg", warn: "warn", info: "" };
+  const banner = h.earnings_banner ? `<div class="os-banner">📊 ${esc(h.earnings_banner)}</div>` : "";
+  const today = (h.today || []).length ? `<div class="os-today"><span class="xs muted b">오늘 중요한 것</span> ${h.today.map((x) => `<span class="chip ${LVL[x.level] || ""}">${x.icon} ${esc(x.text)}</span>`).join(" ")}</div>`
+    : '<div class="os-today xs dim">오늘 중요한 것: 특이 사항 없음</div>';
+  const hz = (h.horizons || []).some((x) => x.p != null) ? `<div class="os-hz xs"><span class="muted">AI 기간별 상승확률 <span class="dim">(과거 같은 확률대에서 실제로 오른 비율)</span></span> ${h.horizons.map((x) => `<b>${x.label}</b> ${x.p == null ? '<span class="dim">표본 부족</span>' : R(x.p, 0)} <span class="dim">(${x.n})</span>`).join(" · ")}</div>` : "";
+  const fx = h.fx && h.price ? `<div class="os-fx xs"><button class="btn-sm" id="ccy-tg">${S.ccy === "KRW" ? "$ 로 보기" : "₩ 로 보기"}</button>
+    <span id="ccy-val">${S.ccy === "KRW" ? `₩${num(h.price * h.fx.usdkrw)} <span class="dim">($${num(h.price, 2)})</span>` : `$${num(h.price, 2)} <span class="dim">≈ ₩${num(h.price * h.fx.usdkrw)}</span>`}</span>
+    <span class="dim">환율 ${num(h.fx.usdkrw, 1)} · ${esc(h.fx.source)}</span></div>` : "";
+  box.innerHTML = `${banner}${today}<div class="os-grid">${tiles.join("")}</div>${hz}${fx}${discs ? `<div class="os-disc xs"><span class="muted">최근 공시</span> ${discs}</div>` : ""}`;
+  const tg = $("#ccy-tg");
+  if (tg) tg.onclick = () => { S.ccy = S.ccy === "KRW" ? "USD" : "KRW"; safeSet("qa_ccy", S.ccy); osHeader(sym, h, pos); };
   box.querySelectorAll("[data-jump]").forEach((t) => t.onclick = () => document.querySelector(`#pf-body > [data-w="${t.dataset.jump}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
 }
 
@@ -285,8 +295,10 @@ async function osOverlay(sym) {
     const el = $("#an-chart");
     if (!el || el.dataset.sym !== sym || !el._series) { await new Promise((r) => setTimeout(r, 150)); continue; }
     const s = el._series;
-    (o.lines || []).filter((l) => l.kind === "support" || l.kind === "resistance").forEach((l) =>
-      s.createPriceLine({ price: l.price, color: l.kind === "support" ? "#14b8a6" : "#f472b6", lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: l.title }));
+    const LC = { support: ["#14b8a6", 1], resistance: ["#f472b6", 1], avg_cost: ["#facc15", 0], high52: ["#94a3b8", 3], low52: ["#94a3b8", 3],
+      range_hi: ["#60a5fa", 2], range_lo: ["#60a5fa", 2] };
+    (o.lines || []).filter((l) => LC[l.kind]).forEach((l) =>
+      s.createPriceLine({ price: l.price, color: LC[l.kind][0], lineWidth: l.kind === "avg_cost" ? 2 : 1, lineStyle: LC[l.kind][1], axisLabelVisible: true, title: l.title }));
     const times = el._times || [];
     const at = (d) => { const t = Date.parse(d + "T00:00:00Z") / 1000; return times.find((x) => x >= t); };
     const seen = new Set(), mk = [...(el._markers || [])];
@@ -298,6 +310,8 @@ async function osOverlay(sym) {
       seen.add(key);
       if (m.kind === "earnings") mk.push({ time: t, position: "aboveBar", shape: "square", color: "#a855f7", text: "실적" });
       else if (m.kind === "disclosure" && m.important) mk.push({ time: t, position: "aboveBar", shape: "square", color: "#f59e0b", text: "공시" });
+      else if (m.kind === "volume") mk.push({ time: t, position: "belowBar", shape: "circle", color: "#a78bfa", text: `거래량 ${m.ratio}배` });
+      else if (m.kind === "macro") mk.push({ time: t, position: "aboveBar", shape: "square", color: "#38bdf8", text: { fomc: "FOMC", cpi: "CPI", nfp: "고용", pce: "PCE" }[m.event] || "지표" });
       else if (m.kind === "move") mk.push({ time: t, position: m.chg > 0 ? "aboveBar" : "belowBar", shape: m.chg > 0 ? "arrowUp" : "arrowDown", color: m.chg > 0 ? "#f0474f" : "#3b8cff", text: `${m.chg > 0 ? "+" : ""}${(m.chg * 100).toFixed(0)}%` });
       else if (m.kind === "ai_change") mk.push({ time: t, position: "belowBar", shape: "arrowUp", color: m.to === "BUY" ? "#22c55e" : m.to === "SELL" ? "#ef4444" : "#94a3b8", text: `AI ${m.to}` });
       else if (m.kind === "news" && m.tone !== "중립") mk.push({ time: t, position: "belowBar", shape: "circle", color: m.tone === "긍정" ? "#22c55e" : "#ef4444", text: "" });
@@ -306,7 +320,7 @@ async function osOverlay(sym) {
     try { s.setMarkers(mk); } catch { /* 표시 실패는 무시 */ }
     const leg = document.createElement("div");
     leg.className = "chart-legend xs";
-    leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#22c55e">● 긍정</span>/<span style="color:#ef4444">●</span> 부정 뉴스 <span style="color:#f0474f">▲</span>/<span style="color:#3b8cff">▼</span> 급등락 <span style="color:#94a3b8">↑ AI 신호 변화</span> <span class="dim">· ${esc(o.note)}</span>`;
+    leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#22c55e">● 긍정</span>/<span style="color:#ef4444">●</span> 부정 뉴스 <span style="color:#f0474f">▲</span>/<span style="color:#3b8cff">▼</span> 급등락 <span style="color:#94a3b8">↑ AI 신호 변화</span> <span style="color:#a78bfa">● 거래량 급증</span> <span style="color:#38bdf8">■ FOMC·CPI·고용</span> <span style="color:#facc15">━ 내 평균 매수가</span> <span style="color:#60a5fa">┄ 5일 보통 범위</span> <span style="color:#94a3b8">┄ 52주 고/저</span> <span class="dim">· ${esc(o.note)}</span>`;
     el.parentElement?.appendChild(leg);
     return;
   }

@@ -275,8 +275,64 @@ def overlay(app, symbol: str, days: int = 260) -> dict:
     marks += [{"date": d, "kind": "earnings", "title": "실적 발표"} for d in sorted(earn) if d >= first]
     marks += big_moves(c)
     marks += ai_changes(app, symbol, start)
+    marks += volume_spikes(b.iloc[-days:])
+    marks += macro_marks(app, symbol, c.index[0], c.index[-1])
+    lines += extra_lines(app, symbol, c)
     return {"symbol": symbol, "last": last, "lines": [x for x in lines if x.get("price")], "marks": marks,
             "note": "지지/저항: 최근 120거래일 고점·저점이 몰린 가격대 (횟수가 많을수록 강함) — 예측이 아니라 참고선"}
+
+
+def volume_spikes(b: pd.DataFrame, k: float = 2.5) -> list[dict]:
+    """거래량 급증: 20일 평균의 2.5배 이상인 날."""
+    if "volume" not in b or len(b) < 25:
+        return []
+    v = b["volume"].astype(float)
+    base = v.rolling(20, min_periods=10).mean().shift(1)
+    out = [{"date": str(pd.Timestamp(t).date()), "kind": "volume", "ratio": round(float(v[t] / base[t]), 1),
+            "title": f"거래량 {v[t] / base[t]:.1f}배"} for t in v.index if pd.notna(base[t]) and base[t] > 0 and v[t] >= k * base[t]]
+    return out[-20:]
+
+
+def macro_marks(app, symbol: str, start, end) -> list[dict]:
+    """차트 기간 안의 실적·FOMC·CPI·고용·PCE 일정 (지난 일정은 보관분 + 규칙으로 다시 만든 것)."""
+    from .engines import events as E
+    s0, e0 = _aware(start).date(), _aware(end).date()
+    try:
+        gen = E.market_events(s0, e0) + E.econ_events(s0, e0, ops.get_state(app.engine, "fred_releases").get("dates"))
+    except Exception:  # noqa: BLE001
+        gen = []
+    arch = [x for lst in (ops.get_state(app.engine, "event_archive").get("by_date") or {}).values() for x in lst]
+    out, seen = [], set()
+    for e in gen + arch:
+        k = e.get("kind")
+        if k not in ("fomc", "cpi", "nfp", "pce") or (symbol[:1].isdigit() and k == "nfp"):
+            continue
+        d = str(e.get("date"))[:10]
+        if (d, k) not in seen and s0.isoformat() <= d <= e0.isoformat():
+            seen.add((d, k))
+            out.append({"date": d, "kind": "macro", "event": k, "title": e.get("title")})
+    return out
+
+
+def extra_lines(app, symbol: str, c: pd.Series) -> list[dict]:
+    """차트 가로선: 내 평균 매수가 · 52주 최고/최저 · 5일 예상 범위(±1σ) — 예측이 아니라 변동성으로 본 보통 범위."""
+    out = []
+    try:
+        avg = (position(app, symbol) or {}).get("avg_price")
+    except Exception:  # noqa: BLE001 - 보유가 없거나 장부 오류여도 차트는 뜬다
+        avg = None
+    if avg:
+        out.append({"kind": "avg_cost", "price": round(float(avg), 2), "title": "내 평균 매수가"})
+    w = c.iloc[-252:]
+    out += [{"kind": "high52", "price": round(float(w.max()), 2), "title": "52주 최고"},
+            {"kind": "low52", "price": round(float(w.min()), 2), "title": "52주 최저"}]
+    r = c.pct_change().dropna().iloc[-60:]
+    if len(r) > 20:
+        sd5 = float(r.std() * np.sqrt(5))
+        last = float(c.iloc[-1])
+        out += [{"kind": "range_hi", "price": round(last * (1 + sd5), 2), "title": f"5일 보통 범위 상단 (+{sd5:.1%})"},
+                {"kind": "range_lo", "price": round(last * (1 - sd5), 2), "title": f"5일 보통 범위 하단 (−{sd5:.1%})"}]
+    return out
 
 
 def big_moves(c: pd.Series, k: float = 2.5, floor: float = 0.05) -> list[dict]:
@@ -477,10 +533,101 @@ def header(app, symbol: str, now: datetime | None = None) -> dict:
     return {"symbol": symbol, "price": last, "chg_pct": None if chg is None else round(float(chg), 4),
             "price_source": q.get("source") or ("일봉 종가" if b is not None else None),
             "session": {"code": sc, "label": sl, "flag": "🇰🇷" if kr else "🇺🇸"}, "ai": ai,
-            "earnings": {"d_label": earn["d_label"], "date": earn["date"], "estimated": earn.get("estimated")} if earn else None,
+            "earnings": {"d_label": earn["d_label"], "date": earn["date"], "estimated": earn.get("estimated"), "time": earn.get("time")} if earn else None,
             "news": cnt | {"n": len(sents)}, "disclosures": discs,
             "flow": {"signal": fl.get("signal"), "divergence": fl.get("divergence")} if fl else None,
-            "valuation": val, "risk": rk, "as_of": label(now)}
+            "valuation": val, "risk": rk, "as_of": label(now),
+            "earnings_banner": earnings_banner(app, symbol, earn), "fx": _fx(app) if not kr else None,
+            "horizons": horizon_probs(app, rec.prob_up) if rec else None,
+            "today": today_important(app, symbol, now, evs=evs, bars=b, news7=sents)}
 
 
-__all__ = ["situation", "freshness", "position", "risk", "overlay", "news", "ai_digest", "tone", "header"]
+def _fx(app) -> dict | None:
+    try:
+        from .usorder import fx_rate
+        r, src = fx_rate(app)
+        return {"usdkrw": round(r, 2), "source": src}
+    except Exception:  # noqa: BLE001 - 환율이 없어도 화면은 뜬다
+        return None
+
+
+def earnings_banner(app, symbol: str, earn: dict | None) -> str | None:
+    """'NVDA 실적 발표 D-12 · 11월 18일 · 장 마감 후 예정' — 종목 페이지 맨 위."""
+    if not earn:
+        return None
+    d = datetime.fromisoformat(earn["date"]).date() if isinstance(earn.get("date"), str) else earn.get("date")
+    when = earn.get("time") or ("시각 미정" if not symbol[:1].isdigit() else "보통 장 마감 후 공시")
+    return (f"{symbol} 실적 발표 {earn['d_label']} · {d.month}월 {d.day}일 · {when}" + (" 예정" if earn.get("time") else "")
+            + (" (추정 일정)" if earn.get("estimated") else ""))
+
+
+def horizon_probs(app, prob: float, width: float = 0.05, min_n: int = 30) -> list[dict]:
+    """AI 판단을 기간별로: '이 정도 확률을 냈을 때 실제로 1일·5일·20일 뒤 오른 비율' (과거 채점된 판단 전체에서).
+    모델이 기간별 확률을 따로 내지 않으므로, 과거 실측으로 정직하게 환산한다 (표본이 적으면 표시하지 않음)."""
+    from .data.db import session_scope
+    from .data.models import ConsensusRecord
+    with session_scope(app.engine) as s:
+        rows = s.execute(select(ConsensusRecord.prob_up, ConsensusRecord.payload).where(
+            ConsensusRecord.prob_up >= prob - width, ConsensusRecord.prob_up <= prob + width,
+            ConsensusRecord.realized_return.is_not(None)).order_by(ConsensusRecord.as_of.desc()).limit(3000)).all()
+    out = []
+    for h in (1, 5, 20):
+        v = [float(o[str(h)]) for _, p in rows if (o := (p or {}).get("outcomes") or {}).get(str(h)) is not None]
+        out.append({"h": h, "label": f"{h}일", "n": len(v), "p": round(sum(1 for x in v if x > 0) / len(v), 3) if len(v) >= min_n else None})
+    return out
+
+
+def today_important(app, symbol: str, now: datetime | None = None, evs=None, bars=None, news7=None) -> list[dict]:
+    """종목 페이지 '오늘 중요한 것' — 실적 D-n · 중요 공시 · 뉴스 위험 · 거래량 · 52주 위치 · 큰 경제 일정 · AI 신호 변화."""
+    from .data.db import session_scope
+    from .data.models import ConsensusRecord, Disclosure, NewsArticle
+    from .stock import events
+    now = now or datetime.now(UTC)
+    evs = evs if evs is not None else events(app, symbol, now)
+    b = bars if bars is not None else app._all_bars()[0].get(symbol)
+    out = []
+    for e in evs:
+        if e["kind"] == "earnings" and e["scope"] == "종목" and 0 <= e["d_day"] <= 7:
+            out.append({"icon": "📊", "level": "bad" if e["d_day"] <= 1 else "warn", "text": f"실적 {e['d_label']}" + (f" · {e['time']}" if e.get("time") else "")})
+        elif e["scope"] == "시장" and e["kind"] in ("fomc", "cpi", "nfp", "pce") and 0 <= e["d_day"] <= 2:
+            out.append({"icon": "🏦", "level": "warn", "text": f"{e['title']} {e['d_label']}"})
+    with session_scope(app.engine) as s:
+        discs = [d.title for d in s.scalars(select(Disclosure).where(Disclosure.symbol == symbol,
+                                                                     Disclosure.filed_at >= (now - timedelta(days=3)).date()))]
+        if news7 is None:
+            news7 = [n.sentiment or 0.0 for n in s.scalars(select(NewsArticle).where(NewsArticle.published_at >= now - timedelta(days=7))
+                                                              .limit(3000)) if symbol in (n.symbols or [])]
+        month = [n.sentiment or 0.0 for n in s.scalars(select(NewsArticle).where(NewsArticle.published_at >= now - timedelta(days=37),
+                                                                                  NewsArticle.published_at < now - timedelta(days=7)).limit(5000))
+                 if symbol in (n.symbols or [])]
+        recs = s.execute(select(ConsensusRecord.action, ConsensusRecord.as_of).where(ConsensusRecord.symbol == symbol)
+                         .order_by(ConsensusRecord.as_of.desc()).limit(2)).all()
+    imp = [t for t in discs if any(k in t for k in IMPORTANT_DISC)]
+    if discs:
+        out.append({"icon": "📄", "level": "bad" if imp else "info", "text": f"{'중요 ' if imp else ''}공시 {len(imp) or len(discs)}건 (3일)"})
+    neg_now = sum(1 for x in news7 if x < NEG) / len(news7) if len(news7) >= 3 else None
+    neg_before = sum(1 for x in month if x < NEG) / len(month) if len(month) >= 5 else None
+    if neg_now is not None and neg_now >= 0.4 and (neg_before is None or neg_now > neg_before + 0.15):
+        out.append({"icon": "📰", "level": "warn", "text": f"뉴스 Risk 상승 (부정 {neg_now:.0%}" + (f", 평소 {neg_before:.0%})" if neg_before is not None else ")")})
+    if b is not None and len(b) > 25 and "volume" in b:
+        v = b["volume"].astype(float)
+        base = float(v.iloc[-21:-1].mean())
+        if base > 0:
+            r = float(v.iloc[-1]) / base - 1
+            if abs(r) >= 0.3:
+                out.append({"icon": "📶", "level": "info" if r < 1 else "warn", "text": f"거래량 {r:+.0%} (20일 평균 대비)"})
+        c = b["close"].astype(float).iloc[-252:]
+        hi, lo, last = float(c.max()), float(c.min()), float(c.iloc[-1])
+        if hi > lo:
+            if last >= hi * 0.98:
+                out.append({"icon": "🏔", "level": "info", "text": "52주 최고가 근처"})
+            elif last <= lo * 1.02:
+                out.append({"icon": "🕳", "level": "warn", "text": "52주 최저가 근처"})
+    if len(recs) == 2 and recs[0][0] != recs[1][0]:
+        out.append({"icon": "🤖", "level": "info", "text": f"AI 신호 변화 {recs[1][0]} → {recs[0][0]}"})
+    order = {"bad": 0, "warn": 1, "info": 2}
+    return sorted(out, key=lambda x: order.get(x["level"], 3))[:6]
+
+
+__all__ = ["situation", "freshness", "position", "risk", "overlay", "news", "ai_digest", "tone", "header", "horizon_probs",
+           "today_important", "earnings_banner"]

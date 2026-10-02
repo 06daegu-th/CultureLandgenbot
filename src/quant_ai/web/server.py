@@ -208,6 +208,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.news_search(arg("q", ""), arg("days", "30")))
                     if url.path == "/api/conflicts":
                         return self._json(api.conflicts())
+                    if url.path == "/api/home5":
+                        return self._json(api.home5(arg("mode", "") or None))
                     if url.path == "/api/oneline":
                         return self._json(api.oneline(arg("mode", "") or None))
                     if url.path == "/api/budget":

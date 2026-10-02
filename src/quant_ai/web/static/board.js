@@ -238,6 +238,46 @@ async function homeOneLine(root) {
   root.prepend(box);
 }
 
+// ------------------------------------------------------------ v18: 홈 첫 화면 5칸 (오늘 시장 · 내 자산 · AI 상태 · 중요한 뉴스 · 오늘 할 일)
+async function homeFive(root) {
+  if (!root) return;
+  let h;
+  try { h = await api(`/api/home5?${typeof pfModeQ === "function" ? pfModeQ() : ""}`); } catch { return homeOneLine(root); }
+  const IC = { ok: "🟢", good: "🟢", warn: "🟡", bad: "🔴" };
+  const err = (x) => x?.error ? `<div class="xs dim">불러오지 못함 — ${esc(x.error)}</div>` : "";
+  const m = h.market || {}, a = h.assets || {}, ai = h.ai || {}, nw = h.news || {}, td = h.todo || {};
+  const mk = m.error ? err(m) : `
+    ${(m.markets || []).map((x) => `<div class="small">${esc(x.flag || "")} ${esc(x.name)} <b>${esc(x.light || "")} ${esc(x.state || "")}</b></div>${x.notice ? `<div class="xs warn-t">${esc(x.notice)}</div>` : ""}`).join("")}
+    ${m.index ? `<div class="small">${esc(m.index.name)} <b class="num ${m.index.chg >= 0 ? "up" : "down"}">${P(m.index.chg, 2)}</b> <span class="xs dim">${esc(m.index.date)}</span></div>` : ""}
+    ${m.mood ? `<div class="small">${IC[m.mood.level] || "•"} ${esc(m.mood.text)}</div>` : ""}
+    ${m.event ? `<a class="small" href="${esc(m.event.link || "#calendar")}">${IC[m.event.level] || "📅"} ${esc(m.event.text)}</a>` : ""}`;
+  const as = a.error ? err(a) : `
+    <div class="h5-big num">${moneyShort(a.equity, "KRW")}</div>
+    <div class="small">${a.pnl_pct == null ? "" : `<b class="num ${a.pnl_pct >= 0 ? "up" : "down"}">${P(a.pnl_pct, 1)}</b> 시작 대비 · `}${a.n}종목 · 현금 ${moneyShort(a.cash, "KRW")}</div>
+    ${a.risk?.headline ? `<div class="small">${IC[a.risk.level] || "•"} ${esc(a.risk.headline)}</div>` : ""}
+    <div class="xs dim">${a.mode === "live" ? "실계좌" : "모의투자"}</div>`;
+  const aiB = ai.error ? err(ai) : `
+    <div class="h5-big">${esc(ai.icon || "")} ${esc(ai.label || "")}</div>
+    <div class="small">${esc(ai.why || "")}</div>
+    ${ai.accuracy != null ? `<div class="small">최근 적중 <b>${R(ai.accuracy, 0)}</b>${ai.base != null ? ` <span class="dim">(그냥 찍기 ${R(ai.base, 0)})</span>` : ""}${ai.n ? ` · ${ai.n}건` : ""}</div>` : '<div class="xs dim">채점된 기록이 아직 부족합니다</div>'}
+    ${(ai.reasons || []).slice(0, 2).map((r) => `<div class="xs muted">· ${esc(r)}</div>`).join("")}`;
+  const nwB = nw.error ? err(nw) : (nw.items || []).length ? nw.items.map((n) => `<div class="h5-news" data-news="${esc(n.id)}" role="button" tabindex="0">
+      <span style="color:${LV_COLOR[n.level?.icon] || "var(--dim)"}">${esc(n.level?.icon || "⚪")}</span> <span class="small">${esc(n.title)}</span>
+      <div class="xs dim">${(n.symbols || []).map((x) => `${stockLogo(x.symbol, x.name, 14)} ${esc(x.name)}`).join(" · ")}${n.first ? ` · ${esc(n.first)}` : ""}</div></div>`).join("")
+      + `<a class="xs" href="#news">뉴스 ${nw.n}건 모두 보기 →</a>` : empty("최근 2일 저장된 뉴스 없음");
+  const tdB = td.error ? err(td) : (td.items || []).length ? `<ul class="plain small">${td.items.map((t) => `<li><a href="${esc(t.link)}">${t.symbol ? stockLogo(t.symbol, "", 14) + " " : "☐ "}${esc(t.text)}</a></li>`).join("")}</ul>` : empty(td.empty_hint || "오늘 할 일 없음 — 기다리는 것도 판단입니다");
+  const box = document.createElement("div");
+  box.className = "home5";
+  box.innerHTML = `<div class="h5-grid">
+    <div class="h5 card"><div class="h5-h">오늘 시장</div>${mk}</div>
+    <div class="h5 card"><div class="h5-h">내 자산</div>${as}</div>
+    <div class="h5 card h5-ai ai-${esc(ai.key || "")}"><div class="h5-h">AI 상태</div>${aiB}<a class="xs" href="#scorecard">AI 성적표 →</a></div>
+    <div class="h5 card h5-wide"><div class="h5-h">중요한 뉴스</div>${nwB}</div>
+    <div class="h5 card"><div class="h5-h">오늘 할 일</div>${tdB}</div>
+  </div><div class="xs dim h5-at">${esc(h.as_of || "")} · 아래는 자세한 홈 화면</div>`;
+  root.prepend(box);
+}
+
 // ------------------------------------------------------------ v18: 뉴스·공시 상세 (원문 → 번역 → 쉬운 설명 → 영향 → 관련 종목)
 const LV_COLOR = { "🔴": "var(--down)", "🟠": "#f97316", "🟡": "#eab308", "⚪": "var(--dim)" };
 async function openDetail(kind, id) {

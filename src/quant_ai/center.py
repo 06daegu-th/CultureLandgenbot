@@ -297,3 +297,85 @@ def oneline(app, mode: str = "paper", now: datetime | None = None) -> dict:
                 "level": "bad" if dem or lv == "UNTRUSTED" else "ok" if lv == "CANDIDATE" else "warn", "link": "#scorecard"})
     worst = max((["ok", "good", "warn", "bad"].index(x["level"]) for x in out), default=0)
     return {"items": out, "level": ["ok", "ok", "warn", "bad"][worst], "as_of": label(now)}
+
+
+AI_STATE = {"verified": ("🟢", "검증됨", "기준을 넘은 상태가 이어짐 — 그래도 소액 위성에서만"),
+            "checking": ("🟡", "검증 중", "아직 기록이 부족하거나 기준 근처 — 참고만"),
+            "banned": ("🔴", "사용 금지", "성적이 기준 미달 — 주문에 쓰지 않음")}
+
+
+def ai_state(app) -> dict:
+    """홈·종목 공통 AI 상태 한 줄: 🟢 검증됨 / 🟡 검증 중 / 🔴 사용 금지."""
+    from . import aitrack
+    t = aitrack.report(app)
+    lv = t["trust"].get("level", "NO_DATA")
+    dem = bool((t.get("demotion") or {}).get("on"))
+    key = "banned" if dem or lv == "UNTRUSTED" else "verified" if lv == "CANDIDATE" else "checking"
+    icon, name, why = AI_STATE[key]
+    last = t.get("last") or {}
+    return {"key": key, "icon": icon, "label": name, "why": why, "level": lv, "demoted": dem,
+            "accuracy": last.get("accuracy"), "base": last.get("base"), "n": last.get("n"), "reasons": t["trust"].get("reasons") or []}
+
+
+def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
+    """홈 첫 화면 5칸: 오늘 시장 · 내 자산 · AI 상태 · 중요한 뉴스 · 오늘 할 일 (각 칸 실패해도 나머지는 보인다)."""
+    from .clock import clock_status
+    now = now or datetime.now(UTC)
+    out: dict = {"as_of": label(now)}
+
+    def safe(key, fn):
+        try:
+            out[key] = fn()
+        except Exception as e:  # noqa: BLE001
+            out[key] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+
+    def market():
+        ol = oneline(app, mode, now)
+        clk = clock_status(now)["markets"]
+        bars, bench, _ = app.market_data()
+        idx = None
+        if bench is not None and len(bench) > 1:
+            c = bench["close"].astype(float)
+            idx = {"name": "코스피(대용)", "last": round(float(c.iloc[-1]), 2), "chg": round(float(c.iloc[-1] / c.iloc[-2] - 1), 4),
+                   "date": str(c.index[-1].date())}
+        return {"mood": next((x for x in ol["items"] if x["key"] == "market"), None),
+                "event": next((x for x in ol["items"] if x["key"] == "event"), None), "index": idx,
+                "markets": [{"flag": m["flag"], "name": m["short"], "light": m.get("light"),
+                             "state": "장중" if m["phase"] == "open" else (m["session_label"] if m["trading_day"] else "휴장"),
+                             "notice": m.get("notice")} for m in clk.values()]}
+
+    def assets():
+        pf = app.load_portfolio(mode)
+        bars, _ = app._all_bars()
+        px = {s_: float(bars[s_]["close"].iloc[-1]) for s_ in pf.positions if s_ in bars and len(bars[s_])}
+        eq = pf.equity(px) if px or pf.cash else pf.cash
+        rk = risk_simple(app, mode)
+        base = app.settings.initial_cash
+        return {"mode": mode, "equity": round(eq), "cash": round(pf.cash), "n": len(pf.positions), "pnl_pct": round(eq / base - 1, 4) if base else None,
+                "risk": {"level": rk.get("level"), "headline": rk.get("headline")}}
+
+    def news():
+        from .board import news_board
+        b = news_board(app, days=2, limit=12, now=now)
+        top = sorted(b["cards"], key=lambda c: -(c.get("level") or {}).get("score", 0))[:3]
+        return {"items": [{"id": c["id"], "title": c["title"], "level": c["level"], "tone": c["tone"],
+                           "symbols": [{"symbol": x["symbol"], "name": x["name"]} for x in c["symbols"][:2]], "first": c["first"]} for c in top],
+                "n": len(b["cards"])}
+
+    def todo():
+        a = action_center(app, mode, now)
+        items = [{"text": f"{c['name']} 확인 — {' · '.join((c.get('why') or [])[:2])}", "link": f"#analysis/{c['symbol']}", "symbol": c["symbol"]}
+                 for c in (a.get("check") or [])[:3]]
+        items += [{"text": f"{e['d_label']} {e['title']}", "link": f"#analysis/{e['symbol']}" if e.get("symbol") else "#calendar"}
+                  for e in (a.get("events") or [])[:2]]
+        items += [{"text": f"AI 신호 변경: {c['name']} {c['from']} → {c['to']}", "link": f"#analysis/{c['symbol']}"}
+                  for c in (a.get("signal_changes") or [])[:2]]
+        return {"items": items[:6], "empty_hint": a.get("empty_hint")}
+
+    safe("market", market)
+    safe("assets", assets)
+    safe("ai", lambda: ai_state(app))
+    safe("news", news)
+    safe("todo", todo)
+    return out
+

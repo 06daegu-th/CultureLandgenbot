@@ -2,6 +2,7 @@
 "use strict";
 
 const S = {
+  ccy: (() => { try { return localStorage.getItem("qa_ccy") || "USD"; } catch { return "USD"; } })(),  // v18: 미국 종목 가격 $/₩
   data: null,
   view: "dashboard",
   symbol: null,
@@ -190,6 +191,28 @@ async function candleChart(el, symbol, n = 260) {
   }));
   candles.setMarkers(el._markers);  // v16: 뉴스·공시·실적 표시는 os.js 가 여기에 합친다
   chart.timeScale().fitContent();
+  chartRangeBar(el, chart, d.bars);
+}
+
+// v18: 차트 기간 버튼 — 1D(분봉)는 실시간 시세 연결 때만
+function chartRangeBar(el, chart, bars) {
+  el.parentElement?.querySelector(".rng-bar")?.remove();
+  const bar = document.createElement("div");
+  bar.className = "tabs rng-bar";
+  const R_ = [["1D", 0], ["1W", 7], ["1M", 31], ["3M", 92], ["6M", 183], ["1Y", 366], ["전체", -1]];
+  const cur = S.chartRange || "1Y";
+  bar.innerHTML = R_.map(([k, dd]) => `<button data-k="${k}" class="${k === cur ? "on" : ""}" ${dd === 0 ? 'disabled title="분봉 데이터 없음 — KIS 실시간 시세 연결 시"' : ""}>${k}</button>`).join("");
+  el.parentElement?.insertBefore(bar, el);
+  const apply = (k) => {
+    const dd = R_.find((x) => x[0] === k)[1];
+    if (dd < 0 || !bars.length) { chart.timeScale().fitContent(); return; }
+    const to = bars[bars.length - 1].time, from = Math.max(bars[0].time, to - dd * 86400);
+    chart.timeScale().setVisibleRange({ from, to });
+  };
+  bar.querySelectorAll("button:not([disabled])").forEach((b) => b.onclick = () => {
+    S.chartRange = b.dataset.k; bar.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); apply(b.dataset.k);
+  });
+  apply(cur);
 }
 
 function lineChart(el, series) {
@@ -707,7 +730,7 @@ async function viewAnalysis(el) {
   </div>`;
   $("#sym-select").onchange = (e) => { location.hash = `#analysis/${e.target.value}`; };
   if (anCard) bindAnalyze(sym, autoAn, () => render());
-  candleChart($("#an-chart"), sym);
+  candleChart($("#an-chart"), sym, 800);
   whyCard(sym); holdCard(sym); stockPage(sym, a);  // 왜 BUY/SELL/NO TRADE · 내 보유 · 과거 적중률 (truth.js)
   if (typeof stockDesk === "function") stockDesk(sym);  // 매매 계획 · 이벤트 · 옵션 · 실적 모델 · 관계 — 종목 정보와 따로 (desk.js)
   loadProfile(sym, a.name || sym, a);
@@ -1094,7 +1117,7 @@ async function render() {
   const d = S.data;
   if (!d) { el.innerHTML = skeleton(); return; }
   try {
-    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); homeOneLine(el); todayCard(el).then(() => osHomeBrief(el)).then(() => weeklyCard(el, "#home-brief")); applyHomeLayout(el); }
+    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); homeFive(el); todayCard(el).then(() => osHomeBrief(el)).then(() => weeklyCard(el, "#home-brief")); applyHomeLayout(el); }
     else if (S.view === "analysis") await viewAnalysis(el);
     else if (S.view === "market") {
       el.innerHTML = viewMarket(d);

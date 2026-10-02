@@ -932,6 +932,11 @@ class DashboardAPI:
             raise ValueError("날짜는 YYYY-MM-DD") from None
         return self._cached(f"replay:{dd}", 120, lambda: day(self.app, dd))
 
+    def home5(self, mode: str | None = None) -> dict:
+        from ..center import home5
+        m = self._mode(mode)
+        return self._cached(f"home5:{m}", 60, lambda: home5(self.app, m))
+
     def oneline(self, mode: str | None = None) -> dict:
         from ..center import oneline
         m = self._mode(mode)
