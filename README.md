@@ -189,6 +189,11 @@ python -m quant_ai.checklist         # 완성 기준 체크리스트 (docs/FINAL
 - `#datahealth` **DATA HEALTH**(가격 지연 15분 → 매수 차단) · Sentinel · Fail-Closed · `#pos` Portfolio OS·위기 시뮬레이션 · `#profile` 투자 성향·실수 패턴 · `#validation` 실전 검증 진행표·비용 실측 · `#governance` 규제 단계·보안·라이선스·감사 로그
 - 문서: [COMPLIANCE](docs/COMPLIANCE.md) · [SECURITY](docs/SECURITY.md) · [DATA_LICENSES](docs/DATA_LICENSES.md) · [SAAS_ARCHITECTURE](docs/SAAS_ARCHITECTURE.md)
 
+## 테스트
+
+- `pytest` — 테스트 365개 · 건너뜀 0개 (PostgreSQL 이 설치돼 있으면 임시 DB 를 직접 띄워 통합 테스트까지)
+- 문서의 테스트 수가 실제와 다르면 테스트가 실패한다 (`tests/test_docs_counts.py`) · CI 는 건너뜀이 하나라도 있으면 실패 (`QUANT_NO_SKIP=1`)
+
 ## 안전 원칙
 - AI → 신호 → 앙상블 → **리스크 게이트** → 실행 엔진 → 증권사. AI 는 `broker.buy()` 를 호출할 수 없다.
 - Risk AI 의 규칙 veto (이벤트 임박, 변동성 급증, 데이터 이상, 위기 국면, 상장폐지 공시)는 다른 AI 가 뒤집을 수 없다.

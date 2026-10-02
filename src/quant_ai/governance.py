@@ -69,7 +69,7 @@ def licenses(app) -> dict:
     usage = getattr(app.settings, "service_level", "personal")
     high = [x["source"] for x in LICENSES if x["risk"] == "high"]
     return {"usage": usage, "rows": LICENSES, "blocked_sources": blocked_sources(app.settings),
-            "blocked_jobs": ops.get_state(app.engine, "license_blocked"),
+            "blocked_jobs": ops.get_state(app.engine, "license_blocked") if getattr(app, "engine", None) is not None else {},
             "warning": None if usage == "personal" else f"상용 모드 — 상용 불가 소스 {len(high)}개는 자동으로 수집을 멈춤 (가드): {', '.join(high)}",
             "path": ["개발용(무료) 데이터", "상용 데이터 계약 (KRX·벤더)", "라이선스 범위 확인 (사용자 수·재배포)", "사용자 수 증가", "비용 관리"],
             "note": "여기 적힌 약관 해석은 참고용 — 각 제공자의 최신 약관과 계약서가 우선 (법률 검토 필요)"}
