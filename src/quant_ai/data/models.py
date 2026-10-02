@@ -178,6 +178,8 @@ class Scenario(Base):
 # ------------------------------------------------------------- 주문 / 체결
 class OrderRecord(Base):
     __tablename__ = "orders"
+    # 멱등 키 — 마이그레이션 0002 가 만든 이름 있는 unique 인덱스와 같은 모양으로 선언 (alembic check 가 차이를 보지 않게)
+    __table_args__ = (Index("uq_orders_client_order_id", "client_order_id", unique=True),)
     id: Mapped[int] = mapped_column(BigId, primary_key=True)
     mode: Mapped[str] = mapped_column(String(16))  # paper/shadow/live/backtest
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -192,7 +194,7 @@ class OrderRecord(Base):
     broker_order_id: Mapped[str | None] = mapped_column(String(64))
     prediction_id: Mapped[int | None] = mapped_column(ForeignKey("predictions.id"))
     # 멱등성 · 복구 · Evidence Chain · 슬리피지 (0002)
-    client_order_id: Mapped[str | None] = mapped_column(String(128), unique=True)
+    client_order_id: Mapped[str | None] = mapped_column(String(128))
     broker_orgno: Mapped[str | None] = mapped_column(String(16))
     consensus_id: Mapped[int | None] = mapped_column(BigInteger)
     ref_price: Mapped[float | None] = mapped_column(Float)
