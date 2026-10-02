@@ -59,11 +59,11 @@ def sync(app, fetchers=None) -> dict:
     return {"ok": ok, "failed": fail}
 
 
-def market_data(app, as_of: datetime | None = None):
-    """(bars, bench, sentiment=None) — 국내 market_data 와 같은 모양."""
+def market_data(app, as_of: datetime | None = None, extra: list[str] | None = None):
+    """(bars, bench, sentiment=None) — 국내 market_data 와 같은 모양. extra: 유니버스 밖 종목도 함께 (종목 페이지 'AI 분석')."""
     with session_scope(app.engine) as s:
         have = {i.symbol for i in s.scalars(select(Instrument))}
-        syms = [x for x in universe() if x in have]
+        syms = [x for x in dict.fromkeys(list(universe()) + list(extra or [])) if x in have]
         bars = load_bars(s, syms)
         bench = load_bars(s, [BENCH]).get(BENCH)
     if as_of is not None:

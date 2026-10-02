@@ -1,11 +1,14 @@
-"""종목 로고 — 검색·관심종목·포트폴리오·종목 상세·뉴스 칩에 회사 아이콘.
+"""종목 로고 — 검색·관심종목·포트폴리오·종목 상세·뉴스·홈 어디서나 같은 회사 아이콘.
 
 순서 (처음 성공한 것을 artifacts/logos 에 저장해 다음부터 바로):
-  1. 직접 넣은 파일   artifacts/logos/custom/<종목>.png|.svg|.jpg  (원하는 로고로 바꾸고 싶을 때)
-  2. 미국 종목        Financial Modeling Prep 공개 로고 이미지 (키 없음)
+  1. 직접 넣은 파일   artifacts/logos/custom/<종목>.png|.svg|.jpg  (대소문자 무관 — 원하는 로고로 바꾸고 싶을 때)
+  2. 국내 종목        토스증권 공개 아이콘 → 알파스퀘어 공개 아이콘 (실제 회사 로고 · 키 없음)
+     미국 종목        Financial Modeling Prep 공개 로고 이미지 (키 없음)
   3. 회사 홈페이지     종목 정보(프로필)의 website 또는 아래 국내 주요 기업 도메인 → 파비콘(구글 s2, 128px)
   4. 이니셜 아이콘     회사 이름 첫 글자 + 종목별 고정 색 (네트워크가 막혀도 항상 무언가 보인다)
-가져오기 실패는 7일 동안 다시 시도하지 않는다 (화면이 느려지지 않게). QUANT_LOGOS=off 면 네트워크를 쓰지 않고 이니셜만.
+실패 기억: 네트워크 오류(연결 안 됨·시간 초과)는 1시간 뒤, '그 종목 로고가 없음'은 7일 뒤 다시 시도 (화면이 느려지지 않게).
+QUANT_LOGOS=off 면 네트워크를 쓰지 않고 이니셜만. QUANT_LOGO_SOURCES=toss,alpha,fmp,favicon 으로 쓸 출처·순서를 바꿀 수 있다.
+미리 받기: ./run.sh logos (관심·보유·주요 종목) · 관심종목 ★ 를 누르면 그 종목은 바로 받아 둔다.
 로고는 각 회사의 상표다 — 종목 식별용 표시로만 쓴다 (docs/DATA_LICENSES.md).
 """
 
@@ -24,8 +27,12 @@ from urllib.parse import urlparse
 log = logging.getLogger(__name__)
 
 FMP_URL = "https://financialmodelingprep.com/image-stock/{sym}.png"
+TOSS_URL = "https://static.toss.im/png-icons/securities/icn-sec-fill-{sym}.png"
+ALPHA_URL = "https://file.alphasquare.co.kr/media/images/stock_logo/kr/{sym}.png"
 FAVICON_URL = "https://www.google.com/s2/favicons?domain={domain}&sz=128"
-RETRY_AFTER = 7 * 86400
+RETRY_AFTER = 7 * 86400  # 로고가 없다고 확인된 종목
+RETRY_NET = 3600  # 네트워크 오류 — 연결이 돌아오면 금방 다시
+SOURCES = ("toss", "alpha", "fmp", "favicon")
 MAX_BYTES = 300_000
 TYPES = {b"\x89PNG": ("png", "image/png"), b"\xff\xd8\xff": ("jpg", "image/jpeg"), b"GIF8": ("gif", "image/gif"),
          b"RIFF": ("webp", "image/webp"), b"<svg": ("svg", "image/svg+xml"), b"<?xm": ("svg", "image/svg+xml")}
@@ -88,13 +95,27 @@ def domain_for(app, sym: str) -> str | None:
     return KR_DOMAINS.get(sym)
 
 
+def _sources() -> tuple[str, ...]:
+    v = (os.environ.get("QUANT_LOGO_SOURCES") or "").strip()
+    if not v:
+        return SOURCES
+    return tuple(x for x in (y.strip().lower() for y in v.split(",")) if x in SOURCES)
+
+
 def candidates(app, sym: str) -> list[tuple[str, str]]:
+    kr = sym[:1].isdigit()
     out = []
-    if not sym[:1].isdigit():
-        out.append(("fmp", FMP_URL.format(sym=sym.replace(".", "-"))))
-    dom = domain_for(app, sym)
-    if dom:
-        out.append(("favicon", FAVICON_URL.format(domain=dom)))
+    for src in _sources():
+        if src == "toss" and kr:
+            out.append(("toss", TOSS_URL.format(sym=sym)))
+        elif src == "alpha" and kr:
+            out.append(("alpha", ALPHA_URL.format(sym=sym)))
+        elif src == "fmp" and not kr:
+            out.append(("fmp", FMP_URL.format(sym=sym.replace(".", "-"))))
+        elif src == "favicon":
+            dom = domain_for(app, sym)
+            if dom:
+                out.append(("favicon", FAVICON_URL.format(domain=dom)))
     return out
 
 
@@ -110,50 +131,103 @@ def _fetch(url: str, timeout: float = 4.0) -> bytes:
 
 
 def monogram(sym: str, name: str | None = None) -> bytes:
-    """이니셜 아이콘 (SVG) — 이름 첫 글자 (한글이면 한 글자, 영문이면 두 글자), 종목별 고정 색."""
+    """이니셜 아이콘 (SVG) — 이름 첫 글자 (한글이면 한 글자, 영문이면 두 글자), 종목별 고정 색 + 은은한 그라데이션."""
     label = (name or sym).strip()
     label = re.sub(r"^(주식회사|\(주\)|㈜)\s*", "", label)
     first = label[:1]
     text = first if re.match(r"[가-힣]", first) else re.sub(r"[^A-Za-z0-9]", "", label)[:2].upper() or sym[:2].upper()
-    color = PALETTE[int(hashlib.sha256(sym.encode()).hexdigest(), 16) % len(PALETTE)]
+    h = int(hashlib.sha256(sym.encode()).hexdigest(), 16)
+    color = PALETTE[h % len(PALETTE)]
     esc = text.replace("&", "&amp;").replace("<", "&lt;")
     size = 30 if len(text) == 1 else 24
+    gid = f"g{h % 100000}"
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
-            f'<circle cx="32" cy="32" r="32" fill="{color}"/>'
+            f'<defs><linearGradient id="{gid}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{color}"/>'
+            f'<stop offset="1" stop-color="{color}" stop-opacity=".72"/></linearGradient></defs>'
+            f'<circle cx="32" cy="32" r="32" fill="url(#{gid})"/>'
             f'<text x="32" y="33" dy=".35em" text-anchor="middle" font-family="Pretendard,Apple SD Gothic Neo,Malgun Gothic,sans-serif" '
             f'font-size="{size}" font-weight="700" fill="#fff">{esc}</text></svg>').encode()
 
 
-def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = None) -> tuple[bytes, str, str]:
-    """(이미지, content-type, 출처). 항상 무언가 돌려준다."""
+def _name(app, sym: str) -> str | None:
+    """이름 없이 불렀을 때 (홈·알림 등) 종목 이름을 찾아 이니셜에 쓴다."""
+    from sqlalchemy import select
+
+    from .data.db import session_scope
+    from .data.models import Instrument
+    try:
+        with session_scope(app.engine) as s:
+            n = s.scalar(select(Instrument.name).where(Instrument.symbol == sym).limit(1))
+    except Exception:  # noqa: BLE001 - 이름이 없어도 코드로 그린다
+        return None
+    return n if n and n != sym else None
+
+
+def _is_net_error(e: Exception) -> bool:
+    import socket
+    import urllib.error
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code >= 500 or e.code == 429  # 404 등은 '없음'
+    return isinstance(e, (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError, OSError))
+
+
+def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = None, force: bool = False) -> tuple[bytes, str, str]:
+    """(이미지, content-type, 출처). 항상 무언가 돌려준다. force=True 면 실패 기억을 무시하고 다시 받는다."""
     sym = _safe(sym)
     d = _dir(app)
     now = now or time.time()
-    for f in sorted((d / "custom").glob(f"{sym}.*")):
-        data = f.read_bytes()
-        t = kind_of(data)
-        if t:
-            return data, t[1], "custom"
+    for f in sorted((d / "custom").iterdir()):
+        if f.is_file() and f.stem.upper() == sym:
+            data = f.read_bytes()
+            t = kind_of(data)
+            if t:
+                return data, t[1], "custom"
     meta_p = d / f"{sym}.json"
     meta = json.loads(meta_p.read_text()) if meta_p.exists() else {}
-    if meta.get("file") and (d / meta["file"]).exists():
+    if meta.get("file") and (d / meta["file"]).exists() and not force:
         return (d / meta["file"]).read_bytes(), meta["type"], meta.get("source", "cache")
     off = (os.environ.get("QUANT_LOGOS") or "").lower() in ("off", "0", "false")
-    if not off and now - float(meta.get("failed_at") or 0) > RETRY_AFTER:
+    wait = RETRY_NET if meta.get("net") else RETRY_AFTER
+    if not off and (force or now - float(meta.get("failed_at") or 0) > wait):
+        net_only = True
+        tried = []
         for src, url in candidates(app, sym):
             try:
                 data = (fetch or _fetch)(url)
                 t = kind_of(data)
                 if not t or t[0] == "svg" or len(data) < 200:  # 외부 SVG 는 받지 않음(스크립트 위험) · 빈 기본 파비콘은 거른다
+                    net_only = False
+                    tried.append(f"{src}: 이미지 아님")
                     continue
                 fn = f"{sym}.{t[0]}"
+                for old in d.glob(f"{sym}.*"):
+                    if old.suffix != ".json" and old.name != fn:
+                        old.unlink()
                 (d / fn).write_bytes(data)
                 meta_p.write_text(json.dumps({"file": fn, "type": t[1], "source": src, "url": url, "at": now}))
                 return data, t[1], src
             except Exception as e:  # noqa: BLE001 - 다음 후보로
+                net_only = net_only and _is_net_error(e)
+                tried.append(f"{src}: {type(e).__name__}")
                 log.debug("로고 %s %s 실패: %s", sym, src, e)
-        meta_p.write_text(json.dumps({"failed_at": now}))
-    return monogram(sym, name), "image/svg+xml", "monogram"
+        if tried:
+            meta_p.write_text(json.dumps({"failed_at": now, "net": net_only, "tried": tried}))
+    return monogram(sym, name or _name(app, sym)), "image/svg+xml", "monogram"
 
 
-__all__ = ["get", "monogram", "candidates", "domain_for", "kind_of", "KR_DOMAINS"]
+def prefetch(app, symbols: list[str], force: bool = False, fetch=None) -> dict:
+    """여러 종목 로고를 미리 받아 둔다 → {출처: 개수} · 실패 종목."""
+    out: dict[str, int] = {}
+    missing = []
+    for sym in dict.fromkeys(symbols):
+        try:
+            _, _, src = get(app, sym, fetch=fetch, force=force)
+        except ValueError:
+            continue
+        out[src] = out.get(src, 0) + 1
+        if src == "monogram":
+            missing.append(sym)
+    return {"by_source": out, "missing": missing[:50], "n": sum(out.values())}
+
+
+__all__ = ["get", "prefetch", "monogram", "candidates", "domain_for", "kind_of", "KR_DOMAINS"]

@@ -22,7 +22,7 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 log = logging.getLogger("quant_ai.web")
 
 
-CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+CSP = ("default-src 'self'; script-src 'self'; "
        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
        "font-src https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data:; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
@@ -210,6 +210,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.conflicts())
                     if url.path == "/api/home5":
                         return self._json(api.home5(arg("mode", "") or None))
+                    if url.path == "/api/start-guide":
+                        return self._json(api.start_guide())
+                    if url.path == "/api/ai-plain":
+                        return self._json(api.ai_plain(arg("symbol", "")))
+                    if url.path == "/api/verdict":
+                        return self._json(api.verdict(qs["symbol"][0]))
                     if url.path == "/api/oneline":
                         return self._json(api.oneline(arg("mode", "") or None))
                     if url.path == "/api/budget":

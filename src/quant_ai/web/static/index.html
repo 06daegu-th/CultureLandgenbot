@@ -14,7 +14,8 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
-<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<!-- 차트 라이브러리는 서버가 직접 제공 (CDN 이 막혀도 차트가 그려지게) · Apache-2.0 · vendor/LICENSE-lightweight-charts.txt -->
+<script src="/vendor/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 <div class="app">
@@ -70,6 +71,7 @@
 <script src="/os.js"></script>
 <script src="/hub.js"></script>
 <script src="/board.js"></script>
+<script src="/easy.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

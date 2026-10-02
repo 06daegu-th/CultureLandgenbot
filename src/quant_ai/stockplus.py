@@ -533,7 +533,8 @@ def header(app, symbol: str, now: datetime | None = None) -> dict:
     return {"symbol": symbol, "price": last, "chg_pct": None if chg is None else round(float(chg), 4),
             "price_source": q.get("source") or ("일봉 종가" if b is not None else None),
             "session": {"code": sc, "label": sl, "flag": "🇰🇷" if kr else "🇺🇸"}, "ai": ai,
-            "earnings": {"d_label": earn["d_label"], "date": earn["date"], "estimated": earn.get("estimated"), "time": earn.get("time")} if earn else None,
+            "earnings": {"d_label": earn["d_label"], "date": earn["date"], "estimated": earn.get("estimated"), "time": earn.get("time"),
+                         "eps_estimate": earn.get("eps_estimate"), "revenue_estimate": earn.get("revenue_estimate")} if earn else None,
             "news": cnt | {"n": len(sents)}, "disclosures": discs,
             "flow": {"signal": fl.get("signal"), "divergence": fl.get("divergence")} if fl else None,
             "valuation": val, "risk": rk, "as_of": label(now),
@@ -557,8 +558,16 @@ def earnings_banner(app, symbol: str, earn: dict | None) -> str | None:
         return None
     d = datetime.fromisoformat(earn["date"]).date() if isinstance(earn.get("date"), str) else earn.get("date")
     when = earn.get("time") or ("시각 미정" if not symbol[:1].isdigit() else "보통 장 마감 후 공시")
+    kr = symbol[:1].isdigit()
+    est = []
+    if earn.get("eps_estimate") is not None:
+        est.append(f"예상 EPS {'' if kr else '$'}{earn['eps_estimate']:,.2f}{'원' if kr else ''}")
+    if earn.get("revenue_estimate"):
+        rv = float(earn["revenue_estimate"])
+        est.append(f"예상 매출 {rv / 1e12:,.1f}조원" if kr and rv >= 1e12 else f"예상 매출 {rv / 1e8:,.0f}억원" if kr
+                   else f"예상 매출 ${rv / 1e9:,.1f}B")
     return (f"{symbol} 실적 발표 {earn['d_label']} · {d.month}월 {d.day}일 · {when}" + (" 예정" if earn.get("time") else "")
-            + (" (추정 일정)" if earn.get("estimated") else ""))
+            + (" (추정 일정)" if earn.get("estimated") else "") + (" · " + " · ".join(est) if est else ""))
 
 
 def horizon_probs(app, prob: float, width: float = 0.05, min_n: int = 30) -> list[dict]:

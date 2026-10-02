@@ -31,7 +31,7 @@ quant-ai = "quant_ai.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-quant_ai = ["web/static/*"]
+quant_ai = ["web/static/*", "web/static/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

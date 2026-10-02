@@ -32,7 +32,7 @@ function tickMarketClock() {
     const cls = m.phase === "open" ? "open" : m.trading_day ? (["pre_market", "after_hours", "pre_auction"].includes(m.session_code) ? "ext" : "") : "holiday";
     const tip = `${m.name} · 현지 ${m.local_time} · 다음 개장 ${m.next_open_kst} · 다음 폐장 ${m.next_close_kst}${m.session?.note ? " · " + m.session.note : ""}${m.dst == null ? "" : m.dst ? " · 서머타임 (정규장 22:30~05:00 한국시간)" : " · 표준시 (정규장 23:30~06:00 한국시간)"}`;
     const word = m.phase === "open" ? "장중" : m.trading_day ? (m.session_label || "장마감") : "휴장";
-    return `<a class="pill mktc ${cls}" href="#truth" title="${esc(tip)}">${m.flag || ""} <b>${esc(m.short || k)}</b> ${m.light || ""} ${esc(word === state ? word : state)} <span class="mono xs">${m.next_event === "폐장" ? "장 마감까지" : "장 시작까지"} ${dur(left)}</span></a>`;
+    return `<a class="pill mktc ${cls}" href="#truth" title="${esc(tip)}">${m.flag || ""} <b>${esc(m.short || k)}</b> ${m.light || ""} ${esc(word === state ? word : state)} <span class="mono xs">· ${m.next_event === "폐장" ? "마감까지" : "개장까지"} ${dur(left)}</span></a>`;
   }).join(" ");
   const notes = Object.values(d.markets).map((m) => m.notice).filter(Boolean);
   const nb = $("#market-notice");

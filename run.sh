@@ -20,6 +20,7 @@
 #   ./run.sh guardian         자동 킬스위치 10개 조건 점검
 #   ./run.sh us               미국 장부 (일봉 받기 + 코어·AI 가상매매 한 사이클)
 #   ./run.sh warmup           빈 화면 채우기 (뉴스·공시·거시 · AI 판단 1회)
+#   ./run.sh logos [--retry]  종목 로고 미리 받기 (관심·보유·주요 종목 · 실제 회사 로고, 못 받으면 이니셜)
 #   ./run.sh db-clean [--yes] DB 정리 (기본 미리보기 · 주문·판단 기록은 보존)
 #   ./run.sh up | down | logs Docker 로 상시 운영 (PostgreSQL + 스케줄러 + 대시보드)
 #   ./run.sh clean-old        옛 버전 폴더의 설치 파일·데이터 정리 (디스크 확보 · .env·DB 는 보존)
@@ -442,7 +443,15 @@ cmd_auto() {
     stop_other_server || die "포트 $PORT 를 다른 프로그램이 쓰고 있습니다 — 그 프로그램을 끄거나 QUANT_WEB_PORT=8060 ./run.sh"
     qa serve --port "$PORT" >"$LOG_DIR/web.log" 2>&1 &
     WEB_PID=$!
-    wait_http || warn "대시보드 시작 확인 실패 — logs/web.log 확인"
+    if ! wait_http; then
+      # 서버가 설정 오류로 바로 끝났으면 (예: 2단계 인증만 있고 비밀번호 없음) 그 이유를 화면에 보여 준다
+      if ! kill -0 "$WEB_PID" 2>/dev/null; then
+        warn "대시보드가 시작하자마자 멈췄습니다 — 이유:"
+        tail -n 5 "$LOG_DIR/web.log" | sed 's/^/    /' >&2
+        die "위 문제를 .env 에서 고친 뒤 다시 ./run.sh"
+      fi
+      warn "대시보드 시작 확인 실패 — logs/web.log 확인"
+    fi
   fi
   ok "대시보드: http://127.0.0.1:$PORT"
   open_browser "http://127.0.0.1:$PORT"

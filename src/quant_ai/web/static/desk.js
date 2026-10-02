@@ -150,9 +150,9 @@ async function viewCalendar(el) {
   const tabs = (id, cur, opts) => `<div class="tabs" id="${id}">${Object.entries(opts).map(([k, v]) => `<button data-k="${k}" class="${cur === k ? "on" : ""}">${v}</button>`).join("")}</div>`;
   const list = Object.entries(byDay).map(([d, xs]) => `<div class="cal-day ${xs[0].d_day === 0 ? "today" : ""}"><div class="cal-date"><b>${esc(d.slice(5))}</b><span class="xs muted">${esc(xs[0].d_label)}</span></div><div class="cal-items">${xs.map((e) => `
       <div class="cal-it imp-${e.importance >= 0.8 ? "h" : e.importance >= 0.5 ? "m" : "l"}"><span class="cal-ic">${CAL_ICON[e.kind] || "•"}</span><span class="chip xs">${esc(e.label)}</span>
-      ${e.symbol ? `<a href="#analysis/${esc(e.symbol)}"><b>${esc(e.title)}</b></a>` : `<b>${esc(e.title)}</b>`}
+      ${e.symbol ? `${stockLogo(e.symbol, "", 18)} <a href="#analysis/${esc(e.symbol)}"><b>${esc(e.title)}</b></a>` : `<b>${esc(e.title)}</b>`}
       <span class="xs dim">${esc(e.market)}${e.time ? " · " + esc(e.time) : ""} · ${esc(e.source)}${e.estimated ? " · <span class='warn-t'>추정</span>" : ""}</span></div>`).join("")}</div></div>`).join("");
-  const risk = (c.risk || []).slice(0, 20).map((r) => `<tr><td><a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name || r.symbol)}</b></a></td><td>${hbar(r.score, 1, r.level === "high" ? "bad" : r.level === "medium" ? "warn" : "")} <span class="num xs">${r.score.toFixed(2)}</span></td>
+  const risk = (c.risk || []).slice(0, 20).map((r) => `<tr><td>${stockLogo(r.symbol, r.name, 18)} <a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name || r.symbol)}</b></a></td><td>${hbar(r.score, 1, r.level === "high" ? "bad" : r.level === "medium" ? "warn" : "")} <span class="num xs">${r.score.toFixed(2)}</span></td>
     <td class="small">${r.next ? `${esc(r.next.title)} <span class="dim">${esc(r.next.d_label)}</span>` : (r.market_events || [])[0] ? `<span class="muted">시장: ${esc(r.market_events[0].title)} <span class="dim">${esc(r.market_events[0].d_label)}</span></span>` : "-"}</td><td class="r num">${r.expected_move ? "±" + R(r.expected_move) : "-"}</td>
     <td>${r.buy_multiplier < 1 ? `<span class="chip warn">매수 ×${r.buy_multiplier}</span> <span class="xs">${esc(r.reason)}</span>` : '<span class="xs dim">제한 없음</span>'}</td></tr>`).join("");
   const im = c.impact || {};

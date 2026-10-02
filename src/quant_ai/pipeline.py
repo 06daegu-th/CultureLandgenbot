@@ -322,7 +322,7 @@ class QuantAI:
         """연구/예측 모드: 모든 AI 의 독립 의견 → 합의 신호 (주문은 내지 않음). market="US" 면 미국 유니버스."""
         if market == "US":
             from . import global_market
-            bars, bench, sentiment = global_market.market_data(self, as_of)
+            bars, bench, sentiment = global_market.market_data(self, as_of, extra=symbols)
         else:
             bars, bench, sentiment = self.market_data(as_of)
         if not bars:

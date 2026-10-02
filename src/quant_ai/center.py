@@ -299,7 +299,7 @@ def oneline(app, mode: str = "paper", now: datetime | None = None) -> dict:
     return {"items": out, "level": ["ok", "ok", "warn", "bad"][worst], "as_of": label(now)}
 
 
-AI_STATE = {"verified": ("🟢", "검증됨", "기준을 넘은 상태가 이어짐 — 그래도 소액 위성에서만"),
+AI_STATE = {"verified": ("🟢", "실전 가능", "기준을 넘은 상태가 이어짐 — 그래도 소액 위성에서만"),
             "checking": ("🟡", "검증 중", "아직 기록이 부족하거나 기준 근처 — 참고만"),
             "banned": ("🔴", "사용 금지", "성적이 기준 미달 — 주문에 쓰지 않음")}
 
@@ -313,8 +313,119 @@ def ai_state(app) -> dict:
     key = "banned" if dem or lv == "UNTRUSTED" else "verified" if lv == "CANDIDATE" else "checking"
     icon, name, why = AI_STATE[key]
     last = t.get("last") or {}
-    return {"key": key, "icon": icon, "label": name, "why": why, "level": lv, "demoted": dem,
+    from .scorecard import plain
+    try:
+        pl = plain(app, 100)
+    except Exception as e:  # noqa: BLE001 - 성적표 실패가 홈을 막지 않게
+        pl = {"n": 0, "headline": f"성적 계산 실패: {type(e).__name__}"}
+    easy = {"headline": pl.get("headline"), "money": (pl.get("money") or {}).get("text"), "earned": (pl.get("money") or {}).get("earned"),
+            "beat_base": pl.get("beat_base"), "strong": pl.get("strong"), "weak": pl.get("weak"), "n": pl.get("n", 0)}
+    return {"key": key, "icon": icon, "label": name, "why": why, "level": lv, "demoted": dem, "easy": easy,
             "accuracy": last.get("accuracy"), "base": last.get("base"), "n": last.get("n"), "reasons": t["trust"].get("reasons") or []}
+
+
+def _d_word(dd: int) -> str:
+    return "오늘" if dd == 0 else "내일" if dd == 1 else f"D-{dd}"
+
+
+def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) -> dict:
+    """홈 맨 위 '오늘 내가 할 일' — 가장 중요한 3개만 (나머지는 '더 보기').
+
+    우선순위: 자동 정지 > 투자 논리 깨짐 > 보유 종목 실적·일정 임박 > AI 신호 변경 > 보유 종목 중요 공시 >
+              시장 큰 일정(CPI·FOMC·고용) > 큰 움직임 > (아무것도 없으면) 시작 안내.
+    """
+    from .thesis import breaches
+    now = now or datetime.now(UTC)
+    items: list[dict] = []
+
+    def add(pri, icon, text, link, why="", symbol=None, kind="", name=None):
+        items.append({"pri": pri, "icon": icon, "text": text, "link": link, "why": why, "symbol": symbol, "kind": kind, "name": name})
+    if ops.halted(app.engine):
+        add(100, "⛔", "자동 정지 중 — 이유를 확인하세요", "#safety", "안전장치가 모든 신규 매수를 막았습니다", kind="halt")
+    elif ops.kill_switch_on(app.engine):
+        add(90, "⏸️", "긴급 정지(수동) 켜져 있음 — 계속 둘지 확인", "#safety", "신규 매수가 멈춰 있습니다", kind="kill")
+    a = action_center(app, mode, now)
+    br = breaches(app)[:2]
+    if br:
+        from .data.db import session_scope
+        from .data.models import Instrument
+        with session_scope(app.engine) as s:
+            nm = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_([b["symbol"] for b in br])))}
+    for b in br:
+        add(80, "⚠️", f"{nm.get(b['symbol'], b['symbol'])} 투자 논리 점검 — {b['message']}", f"#analysis/{b['symbol']}", "산 이유가 깨졌을 수 있습니다",
+            b["symbol"], "thesis", nm.get(b["symbol"]))
+    for e in a.get("events_all") or []:
+        word = _d_word(e["d_day"])
+        if e.get("symbol"):
+            add(70 if e["held"] else 55, "📊" if "실적" in e["title"] else "📅", f"{e['title']} {word}" + (" (추정일)" if e.get("estimated") else ""),
+                f"#analysis/{e['symbol']}", "보유 종목" if e["held"] else "관심 종목", e["symbol"], "event")
+
+    try:  # 시장 큰 일정 (CPI·FOMC·고용 등) — 이벤트 캘린더가 아직 없어도 규칙 일정으로
+        for e in weekly_schedule(app, now, days=2)["rows"]:
+            if e.get("scope") == "시장" and e["d_day"] <= 1:
+                add(50, "🏛️", f"{e['title']} {_d_word(e['d_day'])}", "#calendar", "시장 전체가 크게 움직일 수 있는 일정", kind="macro")
+    except Exception:  # noqa: BLE001, S110 - 일정 계산 실패가 할 일 전체를 막지 않게
+        pass
+    for c in a.get("signal_changes") or []:
+        to = "NO TRADE" if c["to"] == "NO_TRADE" else c["to"]
+        fr = "NO TRADE" if c["from"] == "NO_TRADE" else c["from"]
+        add(65 if c["held"] else 45, "🤖", f"{c['name']} AI 신호 변경 {fr} → {to}", f"#analysis/{c['symbol']}",
+            "보유 종목" if c["held"] else "관심 종목", c["symbol"], "signal", c["name"])
+    for d in a.get("disclosures") or []:
+        add(60 if d["held"] else 40, "📑", f"{d['name']} 중요 공시 — {d['title'][:30]}", f"#analysis/{d['symbol']}",
+            "보유 종목" if d["held"] else "관심 종목", d["symbol"], "disclosure", d["name"])
+    for c in a.get("check") or []:
+        if any("움직임" in w for w in c.get("why") or []):
+            mv = next(w for w in c["why"] if "움직임" in w)
+            add(35 if c["held"] else 25, "📈" if "+" in mv else "📉", f"{c['name']} {mv}", f"#analysis/{c['symbol']}",
+                "보유 종목" if c["held"] else "관심 종목", c["symbol"], "move", c["name"])
+    seen, out = set(), []
+    for it in sorted(items, key=lambda x: -x["pri"]):
+        k = (it["symbol"], it["kind"]) if it["symbol"] else it["text"]
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(it)
+    empty_hint = a.get("empty_hint")
+    return {"items": out[:n], "more": max(0, len(out) - n), "total": len(out), "empty_hint": empty_hint,
+            "calm": "오늘 꼭 할 일은 없습니다 — 기다리는 것도 투자입니다" if not out and not empty_hint else None, "as_of": label(now)}
+
+
+def start_guide(app) -> dict:
+    """처음 쓰는 사람을 위한 순서: ① 데이터 ② 투자 한도 ③ 관심종목 3개 ④ 오늘 할 일. 다 하면 사라진다."""
+    from sqlalchemy import func
+
+    from .budget import get as budget_get
+    from .data.db import session_scope
+    from .data.models import PriceBar
+    from .ux import starred
+    with session_scope(app.engine) as s:
+        has_bars = (s.scalar(select(func.count()).select_from(select(PriceBar.id).limit(1).subquery())) or 0) > 0
+    b = budget_get(app)
+    n_star = len(starred(app))
+    held = 0
+    try:
+        held = sum(1 for p in app.load_portfolio("paper").positions.values() if p.qty)
+    except Exception:  # noqa: BLE001
+        held = 0
+    steps = [
+        {"key": "data", "n": 1, "title": "주가 데이터 받기", "done": has_bars,
+         "how": "터미널에서 ./run.sh 를 실행하면 처음 한 번 자동으로 받습니다 (1~3분)", "link": None,
+         "detail": "받았음" if has_bars else "아직 없음 — 대부분의 화면이 비어 보이는 이유"},
+        {"key": "budget", "n": 2, "title": "투자 한도 정하기", "done": bool(b.get("principal")),
+         "how": "넣을 돈(원금)과 최대로 잃어도 되는 돈만 정하면 나머지 한도는 자동", "link": "#budget",
+         "detail": f"원금 {b['principal']:,}원 · 최대 손실 {b['max_loss']:,}원" if b.get("principal") else "아직 안 정함"},
+        {"key": "watch", "n": 3, "title": "관심종목 3개 담기", "done": n_star >= 3,
+         "how": "위 검색창(단축키 /)에서 종목을 찾아 ★ 를 누르세요 — 매일 AI 판단·뉴스·일정을 챙겨 드립니다", "link": "search",
+         "detail": f"{n_star}/3개" + (f" · 보유 {held}종목" if held else "")},
+        {"key": "today", "n": 4, "title": "'오늘 할 일' 확인하기", "done": False,
+         "how": "매일 홈 맨 위 3줄만 보면 됩니다. 나머지 메뉴는 '고급'에 접혀 있습니다", "link": "#action", "detail": ""},
+    ]
+    need = [x for x in steps[:3] if not x["done"]]
+    nxt = need[0] if need else steps[3]
+    return {"steps": steps, "done": not need, "next": nxt["key"], "progress": sum(1 for x in steps[:3] if x["done"]),
+            "optional": [{"title": "AI 키 넣기 (선택)", "done": bool(app.settings.has_llm),
+                          "how": "없어도 규칙 AI 로 동작합니다. 무료 Gemini 키를 .env 에 넣으면 뉴스 번역·쉬운 설명이 켜집니다", "link": "#settings"}]}
 
 
 def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
@@ -363,14 +474,7 @@ def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
                 "n": len(b["cards"])}
 
     def todo():
-        a = action_center(app, mode, now)
-        items = [{"text": f"{c['name']} 확인 — {' · '.join((c.get('why') or [])[:2])}", "link": f"#analysis/{c['symbol']}", "symbol": c["symbol"]}
-                 for c in (a.get("check") or [])[:3]]
-        items += [{"text": f"{e['d_label']} {e['title']}", "link": f"#analysis/{e['symbol']}" if e.get("symbol") else "#calendar"}
-                  for e in (a.get("events") or [])[:2]]
-        items += [{"text": f"AI 신호 변경: {c['name']} {c['from']} → {c['to']}", "link": f"#analysis/{c['symbol']}"}
-                  for c in (a.get("signal_changes") or [])[:2]]
-        return {"items": items[:6], "empty_hint": a.get("empty_hint")}
+        return today3(app, mode, now)
 
     safe("market", market)
     safe("assets", assets)

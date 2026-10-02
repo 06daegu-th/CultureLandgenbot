@@ -406,9 +406,8 @@ async function fillAI(d, sym) {
   const c = a.consensus;
   const w = d.watchlist.find((x) => x.symbol === sym) || {};
   if (!c) {
-    const kr = /^\d{6}$/.test(sym);
-    box.innerHTML = kr ? analyzeCard(sym, a.name || sym, false) : empty("해외 종목은 AI 합의 대상이 아닙니다");
-    if (kr) bindAnalyze(sym, false, () => fillAI(d, sym));
+    box.innerHTML = analyzeCard(sym, a.name || sym, false);  // v19: 미국 종목도 같은 AI 합의로 판단 (주문 없음)
+    bindAnalyze(sym, false, () => fillAI(d, sym));
     return;
   }
   const roles = (c.contributions || []).filter((v) => ["primary", "nvidia", "panel", "risk", "quant"].includes(v.analyst));
@@ -680,11 +679,12 @@ async function viewAnalysis(el) {
 
   const isGlobal = a.market === "GLOBAL" || (!c && !/^\d{6}$/.test(sym));
   const fetchErr = a.fetch?.error && !a.fetch?.ok;
-  const globalNote = isGlobal ? `<div class="lesson" style="margin-top:12px">🌐 <b>해외 종목</b> — 국내 코어 전략·AI 합의(자동 매매) 대상이 아닙니다. 아래 일정·지표·전망은 무료 공개 자료(Yahoo·Nasdaq)입니다.
-    ${fetchErr ? `<div class="veto" style="margin-top:6px">시세를 받지 못했습니다 (네트워크): ${esc(a.fetch.error)}</div>` : ""}</div>` : "";
+  const globalNote = isGlobal ? `<div class="lesson" style="margin-top:12px">🌐 <b>해외 종목</b> — 자동 매매는 아직 국내만 합니다 (미국은 <a href="#usorder">주문표</a>로 직접). AI 분석은 국내와 같은 방식으로 받을 수 있습니다. 일정·지표·전망은 무료 공개 자료(Yahoo·Nasdaq)입니다.
+    ${fetchErr ? `<div class="veto" style="margin-top:6px">시세를 받지 못했습니다 — 인터넷 연결·회사망 방화벽·VPN 을 확인하세요. 잠시 뒤 자동으로 다시 시도합니다.
+      <details class="xs"><summary>자세한 오류</summary>${esc(a.fetch.error)}</details></div>` : ""}</div>` : "";
   const isKRsym = /^\d{6}$/.test(sym);
   const autoAn = isKRsym && !c && a.has_llm && !(S._analyzed?.[sym] && Date.now() - S._analyzed[sym] < 600e3);
-  const anCard = isKRsym && !c ? analyzeCard(sym, a.name || sym, autoAn) : "";
+  const anCard = !c ? analyzeCard(sym, a.name || sym, autoAn) : "";  // v19: 미국 종목도 AI 분석 가능
   const cur = a.currency || (isKRsym ? "KRW" : "USD");
   const chgCls = a.chg_pct == null ? "flat" : a.chg_pct >= 0 ? "up" : "down";
   const head = `<div id="pf-sit" class="pf-sit"></div><div class="card stock-head">
@@ -694,9 +694,7 @@ async function viewAnalysis(el) {
         <span class="${chgCls} num">${a.chg == null ? "" : `${a.chg >= 0 ? "▲" : "▼"} ${esc(priceCur(Math.abs(a.chg), cur))} (${pct(a.chg_pct)})`}</span>
         <span class="xs dim">${a.last_ts ? date(a.last_ts) + " 종가" : ""}</span></div></div>
       <div class="sh-act">${sel}${isKRsym ? '<button class="btn-sm" id="tk-jump">모의 주문</button>' : ""}<button class="btn-sm primary" data-ask="${esc(a.name || sym)} 지금 사도 될까? 일정·지표·뉴스 보고 판단 근거 알려줘">${ICONS.chat} AI 에게 묻기</button></div></div>
-    ${c ? `<div class="sh-pred"><span class="xs muted">AI 예상 (${esc(date(c.as_of))})</span> <b>${c.horizon || 5}거래일 상승 확률 ${(c.prob_up * 100).toFixed(0)}%</b>
-      ${c.expected_return != null ? ` · 예상 <b class="${c.expected_return >= 0 ? "up" : "down"}">${c.expected_return >= 0 ? "+" : ""}${(c.expected_return * 100).toFixed(1)}%</b>` : ""} ${badge(c.action)}
-      ${c.trigger ? `<span class="chip xs" title="${esc(c.trigger)}">⚡ 이벤트 재분석</span>` : ""}</div>` : ""}
+    <div id="pf-top" class="pf-top"></div>
     <div id="pf-os" class="pf-os"></div>
     <div id="pf-fresh" class="pf-fresh"></div>
     <div id="pf-trust" class="pf-trust"></div>
@@ -715,7 +713,7 @@ async function viewAnalysis(el) {
   <div id="pf-nav" class="pf-nav"></div>
   <div id="pf-body">
   <section data-w="pf-chart"><div class="grid g-21">
-    ${card("차트 <span class='small dim'>AI 매수 관심구간 · 목표 · 위험 · 지지/저항 · 뉴스·공시·실적 표시</span>", `<div id="an-chart" class="chart"></div>`)}
+    ${card("차트 <span class='small dim'>AI 매수 관심구간 · 목표 · 위험 · 지지/저항 · 뉴스·공시·실적 표시</span>", `<div id="pf-top1" class="pf-top1"></div><div id="an-chart" class="chart"></div>`)}
     ${card("투자 전 체크 <span class='small dim'>핵심 지표</span>", `<div id="pf-stats"><div class="ev-none small dim">불러오는 중…</div></div>`)}
   </div></section>
   <section data-w="pf-news"><div id="pf-news"></div></section>
@@ -727,10 +725,13 @@ async function viewAnalysis(el) {
     ${sim ? card("과거 유사 사례 (RAG 메모리)", `<div class="scroll"><table><tbody>${sim}</tbody></table></div>`) : ""}</section>
   <section data-w="pf-risk"><div class="grid g-2"><div id="pf-risk"></div><div id="pf-pretrade"></div></div><div id="pf-ticket"></div></section>
   <section data-w="pf-mine"><div id="pf-hold"></div><div class="grid g-2"><div id="pf-story"></div><div id="pf-thesis"></div></div></section>
-  </div>`;
+  </div>
+  <div class="mob-pro"><button class="btn-sm" id="mob-pro">전문 정보 보기 (재무 · 수급 · AI 세부 · 위험) ▾</button></div>`;
+  $("#mob-pro").onclick = (e) => { document.body.classList.toggle("show-pro"); e.target.textContent = document.body.classList.contains("show-pro") ? "전문 정보 접기 ▴" : "전문 정보 보기 (재무 · 수급 · AI 세부 · 위험) ▾"; };
   $("#sym-select").onchange = (e) => { location.hash = `#analysis/${e.target.value}`; };
   if (anCard) bindAnalyze(sym, autoAn, () => render());
   candleChart($("#an-chart"), sym, 800);
+  stockTop(sym);  // v19: 장 상태 · 52주 위치 · AI 최종 판단 하나 (easy.js)
   whyCard(sym); holdCard(sym); stockPage(sym, a);  // 왜 BUY/SELL/NO TRADE · 내 보유 · 과거 적중률 (truth.js)
   if (typeof stockDesk === "function") stockDesk(sym);  // 매매 계획 · 이벤트 · 옵션 · 실적 모델 · 관계 — 종목 정보와 따로 (desk.js)
   loadProfile(sym, a.name || sym, a);
@@ -1093,15 +1094,32 @@ function viewSettings(d) {
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
   // v16 메뉴: 홈 · 종목 · 시장 · 뉴스/공시 · AI · 포트폴리오 · 리스크 · 백테스트 · AI 성적표 · 일정 · 투자일지 (+ 신뢰 · 시스템)
-  ["핵심", [["dashboard", "home", "홈"], ["action", "bell", "오늘 할 일 · Action Center"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["map", "market", "증시 지도"], ["market", "market", "시장 국면 · 지표"], ["news", "news", "뉴스 보드"], ["newslist", "news", "뉴스 · 공시 원문"], ["calendar", "bell", "일정 (D-Day)"], ["replay", "review", "그날 재현 (날짜 선택)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
-  ["AI", [["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI Lab · 실패 연구"], ["ai", "score", "AI 성적 · 보정"], ["aihealth", "pulse", "AI · 모델 Health"], ["power", "learn", "실제 예측력"], ["pead", "evidence", "실적 이벤트 전략 (전진 기록)"], ["verify", "evidence", "검증실 · 예측 장부"], ["alpha", "alpha", "증명 체인 · Net Alpha"], ["graph", "models", "지식 그래프 · 업종"]]],
-  ["포트폴리오 · 리스크", [["budget", "risk", "내 투자 한도"], ["pos", "portfolio", "Portfolio OS"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 (코어-위성)"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 · 증권사 검증"], ["sheet", "sheet", "리밸런싱 주문표"], ["usorder", "sheet", "미국 주식 주문표"]]],
-  ["기록 · 연구", [["myjournal", "journal", "투자일지 vs AI"], ["profile", "settings", "내 투자 성향"], ["journal", "journal", "AI 판단 저널"], ["research", "research", "백테스트 · 리서치"], ["lab", "lab", "실험 · 승격"], ["review", "review", "복기 리포트"], ["reports", "review", "리포트 · 브리핑"], ["models", "models", "모델 · 검증"]]],
-  ["신뢰 · 시스템", [["datahealth", "data", "데이터 건강"], ["readiness", "check", "매매 준비"], ["truth", "shield", "Truth Center"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "24H 관제실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 리스크 로그"], ["ops", "ops", "운영 · 시스템"], ["settings", "settings", "설정"]]],
+  ["핵심", [["dashboard", "home", "홈"], ["action", "bell", "오늘 할 일 (전체)"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["map", "market", "증시 지도"], ["market", "market", "시장 분위기 · 경제지표"], ["news", "news", "뉴스 · 공시"], ["newslist", "news", "뉴스 · 공시 원문 목록"], ["calendar", "bell", "일정 (D-Day)"], ["replay", "review", "그날 다시 보기 (날짜 선택)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
+  ["AI", [["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI가 틀린 이유 연구"], ["ai", "score", "AI 성적 · 확률 보정"], ["aihealth", "pulse", "AI 상태 점검"], ["power", "learn", "AI 예측력 통계 검정"], ["pead", "evidence", "실적 발표 전략 (실전 기록)"], ["verify", "evidence", "예측 기록장 (봉인)"], ["alpha", "alpha", "AI가 돈을 벌었나 (증명)"], ["graph", "models", "종목 관계도 · 업종"]]],
+  ["포트폴리오 · 리스크", [["budget", "risk", "내 투자 한도"], ["pos", "portfolio", "내 자산 한눈에"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 설정"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 품질 · 증권사 점검"], ["sheet", "sheet", "국내 주문표 (리밸런싱)"], ["usorder", "sheet", "미국 주식 주문표"]]],
+  ["기록 · 연구", [["myjournal", "journal", "내 투자일지 vs AI"], ["profile", "settings", "내 투자 성향"], ["journal", "journal", "AI 판단 일지"], ["research", "research", "과거로 시험하기 (백테스트)"], ["lab", "lab", "모델 실험 · 승격"], ["review", "review", "복기 리포트"], ["reports", "review", "리포트 · 브리핑"], ["models", "models", "모델 목록 · 검증"]]],
+  ["신뢰 · 시스템", [["datahealth", "data", "데이터 상태 · 키 진단"], ["readiness", "check", "매매해도 되나 (7가지 점검)"], ["truth", "shield", "데이터 사실 확인"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "실시간 감시실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 위험 기록"], ["ops", "ops", "운영 · 작업 기록"], ["settings", "settings", "설정"]]],
 ];
 function buildNav() {
-  $("#nav").innerHTML = NAV.map(([g, items]) => `<div class="grp">${g}</div>` + items.map(([v, ic, label]) =>
-    `<a href="#${v}" data-view="${v}">${ICONS[ic] || ""}<span>${label}</span></a>`).join("")).join("");
+  // v19: 쉬운 화면 = 자주 쓰는 6개만, 나머지는 '고급 메뉴'로 접는다 (전체 화면이면 모두 펼침)
+  const easy = uiMode() === "easy";
+  const open = !easy || safeGet("qa_nav_open") === "1";
+  const easyIds = new Set(NAV_EASY.map((x) => x[0]));
+  const link = ([v, ic, label]) => `<a href="#${v}" data-view="${v}">${ICONS[ic] || ""}<span>${label}</span></a>`;
+  const nAdv = NAV.reduce((a, [, it]) => a + it.filter((x) => !easyIds.has(x[0])).length, 0);
+  let h = `<div class="grp">자주 쓰는 것</div>${NAV_EASY.map(link).join("")}`;
+  if (easy) h += `<button class="nav-more" id="nav-more">${open ? "고급 메뉴 접기 ▴" : `고급 메뉴 ${nAdv}개 펼치기 ▾`}</button>`;
+  if (open) h += NAV.map(([g, items]) => { const xs = items.filter((x) => !easyIds.has(x[0])); return xs.length ? `<div class="grp">${g}</div>${xs.map(link).join("")}` : ""; }).join("");
+  h += `<div class="ui-mode"><span class="xs dim">화면</span><button data-ui="easy" class="${easy ? "on" : ""}" title="자주 쓰는 6개 메뉴만">쉬운</button><button data-ui="pro" class="${easy ? "" : "on"}" title="모든 메뉴·자세한 홈">전체</button></div>`;
+  $("#nav").innerHTML = h;
+  const mb = $("#nav-more");
+  if (mb) mb.onclick = () => { safeSet("qa_nav_open", open ? "0" : "1"); buildNav(); markNav(); };
+  document.querySelectorAll(".ui-mode button").forEach((b) => b.onclick = () => { if (b.dataset.ui !== uiMode()) setUiMode(b.dataset.ui); });
+  document.body.classList.toggle("ui-easy", easy);
+}
+function markNav() {
+  const navView = S.view === "evidence" ? "journal" : S.view;
+  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === navView));
 }
 
 // ------------------------------------------------------------ 렌더링
@@ -1112,12 +1130,14 @@ async function render() {
   el.innerHTML = skeleton();
   $("#view").replaceChildren(el);
   clearCharts();
-  const navView = S.view === "evidence" ? "journal" : S.view;
-  document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === navView));
+  markNav();
   const d = S.data;
   if (!d) { el.innerHTML = skeleton(); return; }
   try {
-    if (S.view === "dashboard") { el.innerHTML = viewDashboard(d); fillHome(d); homeFive(el); todayCard(el).then(() => osHomeBrief(el)).then(() => weeklyCard(el, "#home-brief")); applyHomeLayout(el); }
+    if (S.view === "dashboard") {
+      if (uiMode() === "easy" && !S.homeDetail) await homeEasy(el);  // v19: 쉬운 화면은 홈 맨 위 5칸만
+      else { el.innerHTML = viewDashboard(d); fillHome(d); homeTop(el); todayCard(el).then(() => osHomeBrief(el)).then(() => weeklyCard(el, "#home-brief")); applyHomeLayout(el); }
+    }
     else if (S.view === "analysis") await viewAnalysis(el);
     else if (S.view === "market") {
       el.innerHTML = viewMarket(d);
@@ -1145,7 +1165,7 @@ async function render() {
     else if (S.view === "risk") await viewRisk(el);
     else if (S.view === "journal") await viewJournal(el);
     else if (S.view === "evidence") await viewEvidence(el, S.param);
-    else if (S.view === "settings") { el.innerHTML = alertSettingsCard() + extraSettingsCard() + viewSettings(d); bindAlertSettings(); bindExtraSettings(); notifyCard(el); }
+    else if (S.view === "settings") { el.innerHTML = uiSettingsCard() + alertSettingsCard() + extraSettingsCard() + viewSettings(d); bindUiSettings(); bindAlertSettings(); bindExtraSettings(); notifyCard(el); }
     else if (S.view === "verify") { await viewVerify(el); if (typeof notaryCard === "function") notaryCard(el); }
     else if (S.view === "readiness") await viewReadiness(el);
     else if (S.view === "truth") await viewTruth(el);
@@ -1247,7 +1267,11 @@ function tickClock() {
   const k = new Date(Date.now() + 9 * 3600e3);
   const p = (n) => String(n).padStart(2, "0");
   const c = $("#clock");
-  if (c) c.textContent = `${k.getUTCFullYear()}.${p(k.getUTCMonth() + 1)}.${p(k.getUTCDate())} ${p(k.getUTCHours())}:${p(k.getUTCMinutes())}:${p(k.getUTCSeconds())} (KST)`;
+  if (!c) return;
+  let et = "";
+  try { et = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date()); } catch { /* 시간대 정보 없음 */ }
+  c.textContent = `${p(k.getUTCMonth() + 1)}.${p(k.getUTCDate())} ${p(k.getUTCHours())}:${p(k.getUTCMinutes())}:${p(k.getUTCSeconds())} 한국${et ? ` · 뉴욕 ${et}` : ""}`;
+  c.title = `${k.getUTCFullYear()}년 · 한국시간(KST)${et ? " · 미국 동부시간(ET, 서머타임 자동)" : ""}`;
 }
 
 async function refresh() {
@@ -1256,6 +1280,7 @@ async function refresh() {
     renderChrome(S.data);
   } catch (e) {
     $("#sys-status").innerHTML = `<span class="dot bad"></span>연결 실패`;
+    if (isNetErr(e)) showOffline(e);  // v19: 작은 표시 대신 안내 화면
     throw e;
   }
 }
@@ -1266,6 +1291,7 @@ function route() {
   S.view = v; S.param = param || null;
   document.body.classList.toggle("on-chat", v === "chat");
   if (v === "analysis" && param) S.symbol = decodeURIComponent(param);
+  if (v !== "dashboard") S.homeDetail = false;
   $(".side").classList.remove("open");
   window.scrollTo(0, 0);
   render();
@@ -1305,7 +1331,10 @@ $("#search-ico").innerHTML = ICONS.search;
 $("#settings-btn").innerHTML = ICONS.settings;
 $("#bell-btn").innerHTML = ICONS.bell;
 setTheme(safeGet("qa_theme") || "dark");
-loadPrefs().then((p) => { if (p.theme && p.theme !== document.documentElement.dataset.theme) setTheme(p.theme); }).catch(() => {});
+loadPrefs().then((p) => {
+  if (p.theme && p.theme !== document.documentElement.dataset.theme) setTheme(p.theme);
+  if (p.ui?.mode && p.ui.mode !== uiMode()) { S.uiMode = p.ui.mode; safeSet("qa_ui", p.ui.mode); buildNav(); markNav(); if (S.view === "dashboard") render(); }  // v19: 기기 간 동기화
+}).catch(() => {});
 buildNav();
 initChatWidget();
 initLive();
@@ -1316,4 +1345,8 @@ tickClock(); setInterval(tickClock, 1000);
 
 window.addEventListener("hashchange", route);
 refresh().then(route).catch(() => route());
-setInterval(async () => { if (S.view === "dashboard" || S.view === "trades") { await refresh(); render(); } else { await refresh(); } }, 60000);
+setInterval(async () => {
+  if (document.querySelector(".offline")) return;  // 연결 실패 화면이 대신 다시 시도한다
+  try { await refresh(); } catch { return; }
+  if (S.view === "dashboard" || S.view === "trades") render();
+}, 60000);

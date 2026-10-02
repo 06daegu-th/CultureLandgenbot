@@ -93,10 +93,7 @@ function osHeader(sym, h, pos) {
   if (!box || !h || h.error) return;
   const n = h.news || {};
   const tile = (label, val, sub = "", cls = "", link = "") => `<div class="os-t ${cls}" ${link ? `data-jump="${link}"` : ""}><div class="xs muted">${label}</div><div class="b">${val}</div>${sub ? `<div class="xs dim">${sub}</div>` : ""}</div>`;
-  const ai = h.ai ? `${badge(h.ai.action)} <span class="num">${R(h.ai.prob_up, 0)}</span>` : '<span class="dim">판단 없음</span>';
-  const tiles = [
-    tile("장 상태", `${esc(h.session?.flag || "")} ${esc(h.session?.label || "-")}`),
-    tile("AI 상승확률", ai, h.ai ? esc(h.ai.as_of) + " 판단" : "", "", "pf-ai"),
+  const tiles = [  // v19: 장 상태 · AI 판단은 위 '첫 화면'에 크게 있으므로 여기서는 뺀다
     tile("실적 발표", h.earnings ? `<span class="${/D-Day|D-1$/.test(h.earnings.d_label) ? "warn-t" : ""}">${esc(h.earnings.d_label)}</span>` : '<span class="dim">-</span>', h.earnings ? esc(h.earnings.date) + (h.earnings.time ? " · " + esc(h.earnings.time) : "") + (h.earnings.estimated ? " 추정" : "") : "일정 없음", "", "pf-earn"),
     tile("뉴스 7일", n.n ? `<span class="up">+${n["긍정"]}</span> · ${n["중립"]} · <span class="down">−${n["부정"]}</span>` : '<span class="dim">없음</span>', "긍정 · 중립 · 부정", "", "pf-news"),
     tile("수급", h.flow?.signal ? esc(h.flow.signal) : '<span class="dim">-</span>', h.flow?.divergence ? esc(h.flow.divergence) : "외국인·기관", "", "pf-flow"),
@@ -116,6 +113,9 @@ function osHeader(sym, h, pos) {
   const fx = h.fx && h.price ? `<div class="os-fx xs"><button class="btn-sm" id="ccy-tg">${S.ccy === "KRW" ? "$ 로 보기" : "₩ 로 보기"}</button>
     <span id="ccy-val">${S.ccy === "KRW" ? `₩${num(h.price * h.fx.usdkrw)} <span class="dim">($${num(h.price, 2)})</span>` : `$${num(h.price, 2)} <span class="dim">≈ ₩${num(h.price * h.fx.usdkrw)}</span>`}</span>
     <span class="dim">환율 ${num(h.fx.usdkrw, 1)} · ${esc(h.fx.source)}</span></div>` : "";
+  const t1 = $("#pf-top1");  // v19: 차트 바로 위 '지금 가장 중요한 것' 한 줄
+  if (t1) t1.innerHTML = (h.today || []).length ? `<span class="xs muted b">지금 가장 중요한 것</span> <span class="chip ${LVL[h.today[0].level] || ""}">${h.today[0].icon} ${esc(h.today[0].text)}</span>${h.today.length > 1 ? ` <span class="xs dim">외 ${h.today.length - 1}개</span>` : ""}`
+    : '<span class="xs dim">지금 가장 중요한 것: 특이 사항 없음</span>';
   box.innerHTML = `${banner}${today}<div class="os-grid">${tiles.join("")}</div>${hz}${fx}${discs ? `<div class="os-disc xs"><span class="muted">최근 공시</span> ${discs}</div>` : ""}`;
   const tg = $("#ccy-tg");
   if (tg) tg.onclick = () => { S.ccy = S.ccy === "KRW" ? "USD" : "KRW"; safeSet("qa_ccy", S.ccy); osHeader(sym, h, pos); };

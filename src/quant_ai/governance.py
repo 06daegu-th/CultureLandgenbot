@@ -154,8 +154,9 @@ def security(app) -> dict:
         ("감사 로그", "ok", f"민감한 조작 {len(ops.get_state(app.engine, AUDIT_KEY).get('rows') or [])}건 기록 (추가만 가능)"),
         ("예측 장부 위변조 방지", "ok", "해시 봉인 · 해시 사슬 · 외부 공증(OpenTimestamps · 선택)"),
         ("백업 · 복구", "ok", "SQLite 백업 7개 보관 · 무결성 검사 · 재시작 따라잡기"),
-        ("로그인 · 2단계 인증(MFA)", "ok" if (pw and mfa) else "partial" if (pw or token) else "missing",
-         ("비밀번호 + OTP 6자리 · 실패 5번 잠금 · HttpOnly 세션" if pw and mfa else "비밀번호만 (OTP 미설정)" if pw else
+        ("로그인 · 2단계 인증(MFA)", "missing" if (mfa and not pw) else "ok" if (pw and mfa) else "partial" if (pw or token) else "missing",
+         ("⚠ 2단계 인증 값(QUANT_WEB_TOTP_SECRET)만 있고 비밀번호가 없음 — 2단계 인증이 쓰이지 않습니다. 비밀번호를 만들거나 TOTP 값을 지우세요"
+          if mfa and not pw else "비밀번호 + OTP 6자리 · 실패 5번 잠금 · HttpOnly 세션" if pw and mfa else "비밀번호만 (OTP 미설정)" if pw else
           "토큰만" if token else "없음 (이 PC 전용 접속)") + " — ./run.sh auth-setup"),
         ("역할 권한(RBAC)", "partial" if viewer else "missing",
          "관리자 / 읽기 전용(QUANT_WEB_VIEWER_TOKEN: 조회만, 쓰기 403)" if viewer else "역할 1개 — 읽기 전용 토큰 미설정 · 사용자별 계정은 서비스화 때"),

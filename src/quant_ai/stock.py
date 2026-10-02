@@ -297,7 +297,8 @@ def events(app, symbol: str, now: datetime | None = None, days: int = 45) -> lis
         if mine or (market and dd <= 21):
             out.append({"date": d.isoformat(), "d_day": dd, "d_label": "D-Day" if dd == 0 else f"D-{dd}" if dd > 0 else f"D+{-dd}",
                         "kind": e.get("kind"), "title": e.get("title"), "estimated": bool(e.get("estimated")), "scope": "종목" if mine else "시장",
-                        "source": e.get("source"), "importance": e.get("importance"), "time": e.get("time")})
+                        "source": e.get("source"), "importance": e.get("importance"), "time": e.get("time"),
+                        "eps_estimate": e.get("eps_estimate"), "revenue_estimate": e.get("revenue_estimate")})
     out += _lockup(app, symbol, today)
     if not any(x["kind"] == "earnings" and x["scope"] == "종목" for x in out) and not _earnings_known(app, symbol):
         # '일정 없음'과 '모름'을 구분 — 무료 소스에 실적일 정보가 아예 없으면 확인 안 됨으로 표시

@@ -54,6 +54,21 @@ KR_NICKNAMES = {
     "네이버": "NAVER", "카뱅": "카카오뱅크", "한화에어로": "한화에어로스페이스", "현대모비스": "현대모비스",
     "엘지화학": "LG화학", "삼성sdi": "삼성SDI", "sk하이닉스": "SK하이닉스", "엘지전자": "LG전자", "기아차": "기아",
 }
+# v19: 영문 회사명 → 국내 종목코드 ('Samsung Electronics' · 'SK Hynix' 로 검색해도 같은 종목)
+KR_ENGLISH = {
+    "samsung electronics": "005930", "samsung": "005930", "samsung elec": "005930", "sk hynix": "000660", "hynix": "000660",
+    "lg energy solution": "373220", "lges": "373220", "samsung biologics": "207940", "hyundai motor": "005380", "hyundai": "005380",
+    "kia": "000270", "celltrion": "068270", "posco holdings": "005490", "posco": "005490", "naver": "035420", "kakao": "035720",
+    "lg chem": "051910", "samsung sdi": "006400", "kb financial": "105560", "shinhan financial": "055550", "hyundai mobis": "012330",
+    "samsung c&t": "028260", "lg electronics": "066570", "sk innovation": "096770", "sk telecom": "017670", "kt": "030200",
+    "kepco": "015760", "korea electric power": "015760", "samsung life": "032830", "hana financial": "086790", "woori financial": "316140",
+    "kt&g": "033780", "samsung electro-mechanics": "009150", "samsung sds": "018260", "korea zinc": "010130", "hmm": "011200",
+    "krafton": "259960", "kakaobank": "323410", "kakao bank": "323410", "kakaopay": "377300", "ncsoft": "036570", "s-oil": "010950",
+    "hanwha aerospace": "012450", "hanwha ocean": "042660", "samsung fire": "000810", "lg display": "034220", "lg innotek": "011070",
+    "korean air": "003490", "hybe": "352820", "ecopro": "086520", "ecopro bm": "247540", "alteogen": "196170", "hanmi semiconductor": "042700",
+    "hd hyundai": "267250", "hd hyundai heavy": "329180", "hyundai rotem": "064350", "doosan enerbility": "034020", "lg corp": "003550",
+    "sk square": "402340", "sk hynix inc": "000660", "samsung heavy": "010140", "mirae asset": "006800", "coway": "021240",
+}
 
 
 def _norm(s: str) -> str:
@@ -66,11 +81,14 @@ def search(session, query: str, limit: int = 10) -> list[dict]:
     if not q:
         return []
     target = _norm(KR_NICKNAMES.get(q, KR_NICKNAMES.get(query.strip(), "")))
+    eng = {_norm(k): v for k, v in KR_ENGLISH.items()}
+    code = eng.get(q)
+    eng_part = {v for k, v in eng.items() if len(q) >= 3 and k.startswith(q)}
     out: list[tuple[int, dict]] = []
     for i in session.scalars(select(Instrument).where(Instrument.market != "INDEX")):
         name, sym = _norm(i.name or ""), i.symbol.lower()
-        score = (100 if q in (name, sym) or (target and target == name) else 80 if name.startswith(q) or sym.startswith(q)
-                 else 60 if q in name else 0)
+        score = (100 if q in (name, sym) or (target and target == name) or code == i.symbol else 80 if name.startswith(q) or sym.startswith(q)
+                 else 75 if i.symbol in eng_part else 60 if q in name else 0)
         if score:
             out.append((score, {"symbol": i.symbol, "name": i.name or i.symbol, "market": i.market,
                                 "currency": i.currency}))

@@ -948,6 +948,41 @@ class DashboardAPI:
         m = self._mode(mode)
         return self._cached(f"home5:{m}", 60, lambda: home5(self.app, m))
 
+    def verdict(self, symbol: str) -> dict:
+        """종목 첫 화면: AI 최종 판단 하나 + 52주 위치 + 이 종목 시장의 지금 상태."""
+        from ..clock import clock_status
+        from ..explain import verdict
+        sym = symbol.strip().upper()[:12]
+
+        def build():
+            v = verdict(self.app, sym)
+            b = self.app._all_bars()[0].get(sym)
+            if b is None and not sym[:1].isdigit():
+                from .. import global_market
+                b = global_market.market_data(self.app, extra=[sym])[0].get(sym)
+            if b is not None and len(b) >= 20:
+                c = b["close"].astype(float).iloc[-252:]
+                hi, lo, last = float(c.max()), float(c.min()), float(c.iloc[-1])
+                v["range52"] = {"high": round(hi, 2), "low": round(lo, 2), "last": round(last, 2), "n": len(c),
+                                "pos": round((last - lo) / (hi - lo), 3) if hi > lo else None,
+                                "from_high": round(last / hi - 1, 4), "from_low": round(last / lo - 1, 4) if lo else None}
+            m = clock_status(datetime.now(UTC))["markets"]["KRX" if sym[:1].isdigit() else "US"]
+            v["market"] = {"flag": m.get("flag"), "name": m.get("short"), "light": m.get("light"), "notice": m.get("notice"),
+                           "state": "장중" if m["phase"] == "open" else (m["session_label"] if m["trading_day"] else "휴장"),
+                           "local_time": m.get("local_time"), "tz": m.get("tz"), "next": m.get("next_event"),
+                           "next_kst": m.get("next_close_kst") if m.get("next_event") == "폐장" else m.get("next_open_kst")}
+            return v
+        return self._cached(f"verdict:{sym}", 30, build)
+
+    def ai_plain(self, symbol: str = "") -> dict:
+        from ..scorecard import plain
+        sym = symbol.strip().upper()[:12]
+        return self._cached(f"ai_plain:{sym}", 120, lambda: plain(self.app, 100, sym or None))
+
+    def start_guide(self) -> dict:
+        from ..center import start_guide
+        return self._cached("start_guide", 10, lambda: start_guide(self.app))
+
     def oneline(self, mode: str | None = None) -> dict:
         from ..center import oneline
         m = self._mode(mode)
@@ -1069,7 +1104,10 @@ class DashboardAPI:
             self._cache = None
             self._risk_cache.clear()
             return start_action(self.app, name, params)
-        return get_action(name)
+        st = get_action(name)
+        if name.startswith("analyze:") and not st.get("running"):  # 분석이 끝나면 종목 첫 화면 판단을 바로 새로
+            self._risk_cache.pop(f"verdict:{name.split(':', 1)[1].upper()}", None)
+        return st
 
     def chat(self, body: dict) -> dict:
         from ..assistant import reply
@@ -1322,9 +1360,15 @@ class DashboardAPI:
 
     def star(self, body: dict) -> dict:
         from .. import ux
-        syms = ux.set_star(self.app, str(body.get("symbol", ""))[:12], bool(body.get("on", True)))
-        self._risk_cache.pop("watchlist", None)
-        self._risk_cache.pop("today", None)
+        sym = str(body.get("symbol", ""))[:12]
+        syms = ux.set_star(self.app, sym, bool(body.get("on", True)))
+        if body.get("on", True) and sym:  # v19: 관심종목에 담는 순간 로고를 미리 받아 둔다 (화면이 느려지지 않게)
+            import threading
+
+            from ..logos import prefetch
+            threading.Thread(target=lambda: prefetch(self.app, [sym]), daemon=True, name="logo-prefetch").start()
+        self._risk_cache = {k: v for k, v in self._risk_cache.items()
+                            if k not in ("watchlist", "today", "start_guide") and not k.startswith("home5:")}
         return {"ok": True, "starred": syms}
 
     def starred(self) -> dict:

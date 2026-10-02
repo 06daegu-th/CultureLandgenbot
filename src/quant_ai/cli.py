@@ -510,6 +510,9 @@ def cmd_doctor(args):
         return _print_doctor(rows)
     st = app.settings
     add("ok", "모드", f"QUANT_MODE={st.mode.value} · 전략={st.strategy}{' (코어 전용)' if st.core_only else ''}")
+    from .auth import Auth
+    for err in Auth().config_errors():  # v19: 대시보드가 시작을 거부하는 로그인 설정 오류를 미리 알려 준다
+        add("fail", "웹 로그인", err)
     try:
         with session_scope(app.engine) as s:
             n_sym = s.scalar(select(func.count()).select_from(Instrument)) or 0
@@ -575,6 +578,33 @@ def _print_doctor(rows):
     n_fail = sum(r[0] == "fail" for r in rows)
     print(f"\n{'문제 ' + str(n_fail) + '건 — 위 ❌ 부터 해결하세요' if n_fail else '실행 준비 완료'}")
     sys.exit(1 if n_fail else 0)
+
+
+def cmd_logos(args):
+    """로고 미리 받기: 관심·보유·주요 종목 (또는 --symbols). 출처별 개수와 이니셜로 남은 종목을 보여준다."""
+    from . import logos
+    from .center import watchlist
+    app = _app(args)
+    if args.symbols:
+        syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
+    else:
+        syms = [r["symbol"] for r in watchlist(app)["rows"]]
+        for m in ("paper", "shadow", "live", "us-paper"):
+            try:
+                syms += [s_ for s_, p in app.load_portfolio(m).positions.items() if p.qty]
+            except Exception:  # noqa: BLE001, S112
+                continue
+        bars, _ = app._all_bars()
+        syms += sorted(bars)[: args.top]
+    print(f"로고 {len(dict.fromkeys(syms))}종목 받는 중… (실패 기억 무시: {'예' if args.retry else '아니오'})")
+    r = logos.prefetch(app, syms, force=args.retry)
+    names = {"custom": "직접 넣은 파일", "toss": "토스증권 아이콘", "alpha": "알파스퀘어 아이콘", "fmp": "FMP(미국)", "favicon": "홈페이지 아이콘",
+             "cache": "이전에 받은 것", "monogram": "이니셜 (못 받음)"}
+    for k, v in sorted(r["by_source"].items(), key=lambda x: -x[1]):
+        print(f"  {names.get(k, k)}: {v}")
+    if r["missing"]:
+        print(f"  이니셜로 남은 종목: {', '.join(r['missing'][:20])}{' …' if len(r['missing']) > 20 else ''}")
+        print("  → 인터넷 연결 확인 후 ./run.sh logos --retry · 원하는 그림은 artifacts/logos/custom/<종목코드>.png 로 직접 넣기")
 
 
 def cmd_db_ping(args):
@@ -759,6 +789,11 @@ def main(argv: list[str] | None = None) -> None:
     rd.set_defaults(fn=cmd_readiness)
     sub.add_parser("health").set_defaults(fn=cmd_health)
     sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
+    lg = sub.add_parser("logos", help="종목 로고 미리 받기 (관심·보유·주요 종목)")
+    lg.add_argument("--symbols", help="쉼표로 구분한 종목 (생략하면 관심·보유·주요 종목)")
+    lg.add_argument("--top", type=int, default=100, help="주요 종목 몇 개까지 (기본 100)")
+    lg.add_argument("--retry", action="store_true", help="이전 실패 기억을 무시하고 다시 받기")
+    lg.set_defaults(fn=cmd_logos)
     od = sub.add_parser("orders", help="리밸런싱 주문표 (다른 증권사·ISA·수동 매매용, 주문은 내지 않음)")
     od.add_argument("--cash", type=float, required=True, help="주문 가능 현금 (원)")
     od.add_argument("--holdings", help="보유 종목 CSV (종목코드,수량). '-' 는 표준입력. 없으면 전액 현금에서 시작")
