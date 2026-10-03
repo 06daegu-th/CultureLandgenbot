@@ -599,6 +599,15 @@ def cmd_logos(args):
     app = _app(args)
     if args.symbols:
         syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
+    elif getattr(args, "all", False):  # v24: 유명하지 않은 종목까지 — 화면에 처음 나올 때 기다리지 않게 미리
+        from sqlalchemy import select
+
+        from .data.db import session_scope
+        from .data.global_stocks import GLOBAL_STOCKS
+        from .data.models import Instrument
+        with session_scope(app.engine) as s:
+            syms = [i.symbol for i in s.scalars(select(Instrument).where(Instrument.market != "INDEX"))]
+        syms += [g[0] for g in GLOBAL_STOCKS]
     else:
         syms = [r["symbol"] for r in watchlist(app)["rows"]]
         for m in ("paper", "shadow", "live", "us-paper"):
@@ -611,6 +620,7 @@ def cmd_logos(args):
     print(f"로고 {len(dict.fromkeys(syms))}종목 받는 중… (실패 기억 무시: {'예' if args.retry else '아니오'})")
     r = logos.prefetch(app, syms, force=args.retry)
     names = {"custom": "직접 넣은 파일", "toss": "토스증권 아이콘", "alpha": "알파스퀘어 아이콘", "fmp": "FMP(미국)", "favicon": "홈페이지 아이콘",
+             "naver": "네이버 증권 로고", "cmc": "companiesmarketcap", "eodhd": "EODHD(미국)",
              "cache": "이전에 받은 것", "bundled": "내장 로고 (프로젝트에 포함)", "logodev": "logo.dev",
              "default": "기본 기업 아이콘 (못 받음)", "monogram": "이니셜 (못 받음)"}
     for k, v in sorted(r["by_source"].items(), key=lambda x: -x[1]):
@@ -834,6 +844,7 @@ def main(argv: list[str] | None = None) -> None:
     lg.add_argument("--symbols", help="쉼표로 구분한 종목 (생략하면 관심·보유·주요 종목)")
     lg.add_argument("--top", type=int, default=100, help="주요 종목 몇 개까지 (기본 100)")
     lg.add_argument("--retry", action="store_true", help="이전 실패 기억을 무시하고 다시 받기")
+    lg.add_argument("--all", action="store_true", help="DB 의 모든 상장 종목 + 해외 목록 (처음 한 번 수십 분 · 이미 받은 것은 건너뜀)")
     lg.set_defaults(fn=cmd_logos)
     od = sub.add_parser("orders", help="리밸런싱 주문표 (다른 증권사·ISA·수동 매매용, 주문은 내지 않음)")
     od.add_argument("--cash", type=float, required=True, help="주문 가능 현금 (원)")

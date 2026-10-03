@@ -496,7 +496,18 @@ function initSearch() {
       box.querySelector("a[data-ask]").onclick = () => { box.classList.remove("open"); input.value = ""; window.askAI?.(`${q} 어때?`); };
     }, 180);
   }, true);
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") box.querySelector("a")?.click(); });
+  // v24: Enter = 첫 결과의 올인원 종목 화면 — 검색 결과가 아직 안 왔어도 바로 찾아서 이동
+  input.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    const first = box.querySelector("a[data-sym]");
+    if (first) { first.click(); return; }
+    const q = input.value.trim();
+    if (!q) return;
+    try {
+      const r = (await api(`/api/search?q=${encodeURIComponent(q)}`)).results || [];
+      if (r[0]) { box.classList.remove("open"); input.value = ""; location.hash = `#analysis/${encodeURIComponent(r[0].symbol)}`; }
+    } catch { /* 검색 실패는 결과 상자에 표시됨 */ }
+  });
 }
 
 

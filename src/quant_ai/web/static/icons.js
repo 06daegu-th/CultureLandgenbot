@@ -94,6 +94,7 @@ function aiIcon(provider, role, model, size = 30) {
 const CAT_EMOJI = { 정책: "🏛️", 실적: "📊", 공시: "📄", 원자재: "🛢️", 환율: "💱", 기업: "🏢", 거시: "🌐", 시장: "📈", 이벤트: "⚡", 공급: "🚚" };
 const catIcon = (c) => `<span class="cat-ic" title="${c || ""}">${CAT_EMOJI[c] || "📰"}</span>`;
 const FLAGS = { US: "🇺🇸", KR: "🇰🇷", JP: "🇯🇵", CN: "🇨🇳", EU: "🇪🇺", GB: "🇬🇧" };
-const flag = (c) => `<span class="flag" title="${c || ""}">${FLAGS[c] || "🌐"}</span>`;
+// v24: 국기 이모지 대신 작은 글자 표시 (KR · US …) — 이모지 없이도 나라를 알아볼 수 있게
+const flag = (c) => c ? `<span class="flag cc" title="${c}">${String(c).slice(0, 2).toUpperCase()}</span>` : "";
 
 window.ICONS = ICONS; window.aiIcon = aiIcon; window.providerOf = providerOf; window.catIcon = catIcon; window.flag = flag;

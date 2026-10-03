@@ -48,7 +48,7 @@ function foldPro(root, keepSel, label) {
 // 장식용 그림(📰🤖🎯🧪🔒…)은 지운다. ★☆✓✕ 같은 기호는 그대로 둔다. 화면을 그리는 코드 수백 곳을 하나하나 고치지 않고
 // 그려진 뒤 한 번 거른다 (입력칸·코드 블록은 손대지 않음).
 const EMO_DOT = { "🔴": "bad", "⛔": "bad", "🛑": "bad", "❌": "bad", "🟠": "warn", "🟡": "warn", "⚠": "warn", "🟢": "good", "✅": "good", "⚪": "idle" };
-const EMO_RE = /(🔴|⛔|🛑|❌|🟠|🟡|⚠|🟢|✅|⚪|[\u{1F300}-\u{1FAFF}]|[\u{2600}-\u{26FF}](?<![★☆]))️?\s?/gu;
+const EMO_RE = /(🔴|⛔|🛑|❌|🟠|🟡|⚠|🟢|✅|⚪|[\u{1F1E6}-\u{1F1FF}]{1,2}|[\u{1F300}-\u{1FAFF}]|[\u{2600}-\u{26FF}](?<![★☆]))️?\s?/gu;
 const EMO_KEEP = new Set(["★", "☆", "☀", "☁"]);
 function deEmojiNode(t) {
   const s = t.nodeValue;
@@ -70,6 +70,20 @@ function deEmojiNode(t) {
   if (last < s.length) frag.append(s.slice(last));
   p.replaceChild(frag, t);
 }
+// v24: 화면 어디든 종목 링크(#analysis/종목)에 로고가 없으면 작게 붙인다 — 뷰마다 따로 챙기지 않아도 같은 규칙
+function logoLinks(root) {
+  if (!root || root.nodeType !== 1 || typeof stockLogo !== "function") return;
+  const links = root.matches?.('a[href^="#analysis/"]') ? [root] : root.querySelectorAll('a[href^="#analysis/"]');
+  links.forEach((a) => {
+    if (a.dataset.lg || a.querySelector("img.lg") || a.closest(".co-id, .side, .tabbar, .tabs, nav, .sh-act, .no-logo, button")
+      || a.classList.contains("btn") || a.classList.contains("btn-sm") || a.previousElementSibling?.matches?.("img.lg")
+      || a.parentElement?.querySelector(":scope > img.lg")) return;
+    const sym = decodeURIComponent((a.getAttribute("href") || "").split("/")[1] || "");
+    if (!/^[0-9A-Z][0-9A-Z.\-]{0,11}$/.test(sym) || !(a.textContent || "").trim()) return;
+    a.dataset.lg = "1";
+    a.insertAdjacentHTML("afterbegin", stockLogo(sym, a.textContent.trim().slice(0, 30), 16) + " ");
+  });
+}
 function deEmoji(root) {
   if (!root) return;
   if (root.nodeType === 3) { deEmojiNode(root); return; }
@@ -82,7 +96,7 @@ function deEmoji(root) {
 if (typeof MutationObserver !== "undefined" && typeof document !== "undefined") {
   const start = () => {
     deEmoji(document.body);
-    new MutationObserver((ms) => ms.forEach((m) => { m.addedNodes.forEach(deEmoji); if (m.type === "characterData") deEmojiNode(m.target); }))
+    new MutationObserver((ms) => ms.forEach((m) => { m.addedNodes.forEach((n) => { deEmoji(n); logoLinks(n); }); if (m.type === "characterData") deEmojiNode(m.target); }))
       .observe(document.body, { childList: true, subtree: true, characterData: true });
   };
   if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);

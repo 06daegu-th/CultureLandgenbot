@@ -245,6 +245,50 @@ def weekly_schedule(app, now: datetime | None = None, days: int = 7) -> dict:
     return {"rows": rows, "n": len(rows), "as_of": label(now)}
 
 
+def upcoming(app, now: datetime | None = None, days: int = 21, n: int = 8) -> dict:
+    """홈 '다가오는 일정' 띠 — 시장 큰 일정(FOMC·CPI·고용·금통위·만기·휴장)은 관심종목이 없어도 항상,
+    여기에 내 보유·관심 종목의 실적·배당 일정을 더해 가까운 순으로 (토스처럼 D-day 하나로 읽히게)."""
+    from zoneinfo import ZoneInfo
+
+    from .engines import events as E
+    from .stock import ALWAYS_KINDS
+    now = now or datetime.now(UTC)
+    today = now.astimezone(ZoneInfo("Asia/Seoul")).date()
+    cal = ops.get_state(app.engine, "event_calendar")
+    evs = [e for e in cal.get("events") or [] if not e.get("symbol")]
+    try:
+        evs += E.market_events(today, today + timedelta(days=days)) + \
+            E.econ_events(today, today + timedelta(days=days), ops.get_state(app.engine, "fred_releases").get("dates"))
+    except Exception:  # noqa: BLE001, S110 - 규칙 일정 생성 실패 → 저장된 일정만
+        pass
+    rows, seen = [], set()
+    for e in evs:
+        try:
+            d = date.fromisoformat(str(e["date"])[:10])
+        except (KeyError, ValueError):
+            continue
+        dd = (d - today).days
+        if not 0 <= dd <= days or not (e.get("kind") in ALWAYS_KINDS | {"holiday", "half_day"} or (e.get("importance") or 0) >= 0.8):
+            continue
+        key = (e.get("title"), d)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"d_day": dd, "date": d.isoformat(), "kind": e.get("kind"), "title": e.get("title"), "market": e.get("market"),
+                     "scope": "시장", "symbol": None, "estimated": bool(e.get("estimated"))})
+    try:
+        for e in weekly_schedule(app, now, days=days)["rows"]:
+            if e.get("scope") == "종목" and e.get("kind") in ("earnings", "ex_div", "div_pay") and e["d_day"] >= 0:
+                rows.append({"d_day": e["d_day"], "date": e["date"], "kind": e["kind"], "title": e["title"], "market": None,
+                             "scope": "종목", "symbol": e.get("symbol"), "estimated": bool(e.get("estimated"))})
+    except Exception:  # noqa: BLE001, S110
+        pass
+    rows.sort(key=lambda x: (x["d_day"], x["scope"] != "종목"))
+    for r in rows:
+        r["d_label"] = "오늘" if r["d_day"] == 0 else "내일" if r["d_day"] == 1 else f"D-{r['d_day']}"
+    return {"rows": rows[:n], "more": max(0, len(rows) - n), "as_of": label(now)}
+
+
 def weekly_alert(app, now: datetime | None = None) -> int:
     """월요일(한국 시간)에 한 번: 이번 주 보유 종목 일정을 알림으로."""
     from zoneinfo import ZoneInfo
@@ -635,7 +679,7 @@ def watch_verdicts(app, n: int = 6) -> list[dict]:
     w = watchlist(app)
     rows = [r for r in w["rows"] if r["starred"]] or w["rows"]
     return [{"symbol": r["symbol"], "name": r["name"], "ai": r["ai"], "prob_up": r["prob_up"], "chg_pct": r["chg_pct"], "held": r["held"],
-             "change": r["change"]} for r in rows[:n]]
+             "change": r["change"], "last": r["last"]} for r in rows[:n]]
 
 
 def conclusion(h: dict) -> dict:
@@ -722,6 +766,7 @@ def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
     safe("caution", lambda: caution3(app, mode, now))
     safe("core", lambda: market_core(app, now))
     safe("watch", lambda: watch_verdicts(app))
+    safe("upcoming", lambda: upcoming(app, now))
 
     def data_():  # v23: 데이터 상태 한 줄 (점수 + 종류별 정상/지연/문제)
         from . import datahealth

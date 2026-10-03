@@ -22,10 +22,11 @@ async def main(base: str) -> int:
         errs: list[str] = []
         pg.on("pageerror", lambda e: errs.append(str(e)[:160]))
         await pg.goto(f"{base}/#dashboard")
-        await pg.wait_for_timeout(4000)
         for word in ("오늘 확인할 것", "오늘 주의할 것", "오늘의 결론"):
-            if not await pg.get_by_text(word).count():
-                fails.append(f"홈에 '{word}' 없음")
+            try:
+                await pg.get_by_text(word).first.wait_for(timeout=20000)  # 처음 계산은 몇 초 걸릴 수 있다
+            except Exception:  # noqa: BLE001
+                fails.append(f"홈에 '{word}' 없음 (20초 안에 안 나타남)")
         for q, sym in (("삼성전자", "005930"), ("엔비디아", "NVDA")):
             await pg.fill("#search", q)
             await pg.wait_for_timeout(1200)

@@ -68,7 +68,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
             return host in allowed_hosts
 
-        def _send(self, code: int, body: bytes, ctype: str, cache: str = "no-store") -> None:
+        def _send(self, code: int, body: bytes, ctype: str, cache: str = "no-store", csp: str | None = None) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
@@ -76,7 +76,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", CSP)
+            self.send_header("Content-Security-Policy", csp or CSP)
             self.end_headers()
             self.wfile.write(body)
 
@@ -114,7 +114,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json({"error": "bad symbol"}, 400)
                 # 진짜 로고는 하루 · 이니셜은 금방 다시 물어본다 (뒤에서 받는 중이면 1분, 없다고 확인됐으면 1시간)
                 cc = {"monogram": "public, max-age=3600", "default": "public, max-age=3600", "pending": "no-cache, max-age=60"}.get(src, "public, max-age=86400")
-                return self._send(200, data, ctype, cc)
+                # v24: 로고는 그림일 뿐 — 바로 열어도 스크립트가 절대 돌지 않게 (외부 SVG 를 정화한 뒤에도 한 번 더)
+                return self._send(200, data, ctype, cc, csp="default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox")
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):
                     return self._json({"error": "unauthorized"}, 401)
@@ -222,6 +223,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.ops_status())
                     if url.path == "/api/baseline":
                         return self._json(api.baseline(arg("mode", "paper")))
+                    if url.path == "/api/ai-trust":  # v24: AI 신뢰 센터 (한 화면)
+                        return self._json(api.ai_trust())
                     if url.path == "/api/ai-context":  # v23: 상황별 AI 성적 (뉴스 유형 · 실적 전후 · 종목)
                         return self._json(api.ai_context())
                     if url.path == "/api/ai-plain":

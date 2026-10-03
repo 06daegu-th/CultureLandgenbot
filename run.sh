@@ -20,7 +20,7 @@
 #   ./run.sh guardian         자동 킬스위치 10개 조건 점검
 #   ./run.sh us               미국 장부 (일봉 받기 + 코어·AI 가상매매 한 사이클)
 #   ./run.sh warmup           빈 화면 채우기 (뉴스·공시·거시 · AI 판단 1회)
-#   ./run.sh logos [--retry]  종목 로고 미리 받기 (관심·보유·주요 종목 · 실제 회사 로고, 못 받으면 이니셜)
+#   ./run.sh logos [--retry] [--all]  종목 로고 미리 받기 (관심·보유·주요 종목 · --all 은 전 종목 · 못 받으면 기본 기업 아이콘)
 #   ./run.sh install-service  PC 를 켜면 자동으로 24시간 운영 시작 (macOS launchd · Linux systemd) — 꺼져 있으면 데이터가 밀린다
 #   ./run.sh uninstall-service  자동 시작 해제
 #   ./run.sh report           점검 보고서 (키·계좌번호·금액 없음) — 문제가 있을 때 이 글을 그대로 보내 주세요
@@ -561,7 +561,7 @@ cmd_auto() {
   ok "대시보드: http://127.0.0.1:$PORT"
   open_browser "http://127.0.0.1:$PORT"
   # 빈 화면 채우기 (뉴스·공시·거시 수집 · AI 판단 1회 · 미국 장부) — 대시보드는 바로 쓰고 뒤에서 진행
-  ( qa warmup; [[ "$(env_get QUANT_US)" == "false" ]] || qa us; qa logos --top 60 ) >"$LOG_DIR/warmup.log" 2>&1 &
+  ( qa warmup; [[ "$(env_get QUANT_US)" == "false" ]] || qa us; qa logos --top 60; qa logos --all ) >"$LOG_DIR/warmup.log" 2>&1 &
   WARM_PID=$!
   ok "뒤에서 데이터 채우는 중 (뉴스·AI 판단·미국 장부) — 진행: logs/warmup.log · 대시보드 '시작 체크리스트'"
   if [[ "$mode" == "paper" ]]; then

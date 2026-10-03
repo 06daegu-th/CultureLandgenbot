@@ -85,7 +85,7 @@ async function homeTop(root) {
       ${ez.excess != null ? `<div><span>그대로 샀다면</span><b class="num ${ez.excess >= 0 ? "up" : "down"}">지수 ${ez.excess >= 0 ? "+" : ""}${(ez.excess * 100).toFixed(1)}%p</b><em>비용 뺀 뒤</em></div>` : ""}
       ${ez.alpha ? `<div><span>시장 대비 적중</span><b class="num ${ez.alpha.proven ? "up" : ez.alpha.worse ? "down" : ""}">${Math.round(ez.alpha.hit * 100)}%</b><em>기준 ${Math.round(Math.max(0.5, ez.alpha.base) * 100)}%</em></div>` : ""}
     </div>
-    <a class="xs" href="#scorecard">성적 자세히 →</a>`;
+    <a class="xs" href="#aitrust">AI 신뢰 센터 →</a>`;
   const mk = m.error ? err(m) : `
     ${(m.markets || []).map((x) => `<div class="small">${esc(x.name)} ${dotText(`${x.light || ""} ${x.state || ""}`)}</div>`).join("")}
     ${m.index ? `<div class="small">${esc(m.index.name)} <b class="num ${m.index.chg >= 0 ? "up" : "down"}">${P(m.index.chg, 2)}</b> <span class="xs dim">${esc(m.index.date)}</span></div>` : ""}
@@ -126,8 +126,10 @@ async function homeTop(root) {
     : '<div class="td-empty"><div class="small">특별히 조심할 것은 없습니다</div></div>';
   const ACT_TXT = (r) => r.ai ? `${koAct(r.ai === "NO_TRADE" ? "NO TRADE" : r.ai)}${r.prob_up != null && r.ai !== "NO_TRADE" ? ` ${Math.round(r.prob_up * 100)}%` : ""}` : "판단 없음";
   const wl = Array.isArray(h.watch) ? h.watch : [];
-  const wlB = h.watch?.error ? err(h.watch) : wl.length ? `<div class="wl-mini">${wl.map((r) => `<a class="wl-row" href="#analysis/${esc(r.symbol)}">${coId(r.symbol, r.name, { size: 26, link: false, tail: r.held ? " · 보유" : "" })}
-      <span class="wl-r"><span class="act-pill act-${esc(r.ai || "none")}">${esc(ACT_TXT(r))}</span>${r.chg_pct != null ? `<span class="num xs ${r.chg_pct >= 0 ? "up" : "down"}">${P(r.chg_pct, 2)}</span>` : ""}</span></a>`).join("")}</div>
+  // v24 토스식 목록 한 줄: [로고 · 이름 / AI 판단]  ······  [가격 / 등락]
+  const wlB = h.watch?.error ? err(h.watch) : wl.length ? `<div class="wl-mini">${wl.map((r) => `<a class="wl-row t-row" href="#analysis/${esc(r.symbol)}">
+      ${coId(r.symbol, r.name, { size: 36, link: false, tail: (r.held ? " · 보유" : "") + ` · <span class="act-t act-${esc(r.ai || "none")}">${esc(ACT_TXT(r))}</span>` })}
+      <span class="wl-r"><b class="num t-px">${r.last == null ? "-" : esc(price(r.last, r.symbol))}</b>${r.chg_pct != null ? `<span class="num t-chg ${r.chg_pct >= 0 ? "up" : "down"}">${P(r.chg_pct, 2)}</span>` : ""}</span></a>`).join("")}</div>
       <a class="xs" href="#watch">관심종목 전체 →</a>`
     : '<div class="td-empty"><div class="small">관심종목이 없습니다 — 종목을 검색해 ☆ 를 누르세요</div><button class="btn-sm" data-focus-search>종목 검색 ( / )</button></div>';
   const core = h.core || {};
@@ -135,20 +137,26 @@ async function homeTop(root) {
       ${core.as_of ? `<div class="xs dim">경제지표 기준 ${esc(core.as_of)}</div>` : ""}` : `<div class="small muted">${esc(core.hint || "")}</div>`;
   const STAGE_KO = { BACKTEST: "과거 시험만", SHADOW: "그림자 기록 (주문 없음)", PAPER: "모의투자", LIVE: "소액 실전" };
   const aiTop = ai.error ? "" : `<div class="ai-stage xs"><span class="stage-tag">${esc(ai.stage || "")}</span> ${esc(STAGE_KO[ai.stage] || "")}</div>`;
+  const up = h.upcoming || {};
+  const KIND_DOT = { earnings: "earn", ex_div: "div", div_pay: "div", holiday: "off", half_day: "off", fomc: "macro", cpi: "macro", nfp: "macro", pce: "macro", bok: "macro" };
+  const upB = (up.rows || []).length ? `<div class="up-strip">${up.rows.map((e) => `<a class="up-it" href="${e.symbol ? `#analysis/${esc(e.symbol)}` : "#calendar"}">
+      <b class="up-d ${e.d_day <= 1 ? "soon" : ""}">${esc(e.d_label)}</b>${calDot(e.kind)}<span class="up-t">${e.symbol ? stockLogo(e.symbol, "", 16) + " " : e.market ? `<span class="flag cc">${esc(e.market)}</span>` : ""}${esc(e.title)}${e.estimated ? '<span class="xs dim"> 추정</span>' : ""}</span></a>`).join("")}
+      ${up.more ? `<a class="up-it more" href="#calendar">+${up.more}</a>` : ""}</div>` : "";
   const cc = h.conclusion || {};
   box.innerHTML = `${showGuide ? guideCard(g) : ""}
   <div class="card h5-mkt"><div class="h5-h">시장</div>${mkt}${dataLine}${sysLine}</div>
+  ${upB ? `<div class="card h5-up"><div class="h5-h">다가오는 일정 <a class="xs" href="#calendar">전체 일정 →</a></div>${upB}</div>` : ""}
   <div class="h5-grid two">
     <div class="h5 card h5-todo"><div class="h5-h">오늘 확인할 것 <span class="xs dim">${esc(td.as_of || "")}</span></div>${todo}</div>
     <div class="h5 card h5-todo"><div class="h5-h">오늘 주의할 것</div>${cauB}</div>
   </div>
   ${hero}
   <div class="h5-grid two">
+    <div class="h5 card"><div class="h5-h">관심종목 — AI 판단</div>${wlB}</div>
     <div class="h5 card h5-ai ai-${esc(ai.key || "")}"><div class="h5-h">AI 상태 — 지금 믿을 만한가</div>${aiTop}${aiB}</div>
-    <div class="h5 card"><div class="h5-h">시장 핵심 <span class="xs dim">최근 5거래일</span></div>${coreB}</div>
   </div>
   <div class="h5-grid two">
-    <div class="h5 card"><div class="h5-h">관심종목 — AI 판단</div>${wlB}</div>
+    <div class="h5 card"><div class="h5-h">시장 핵심 <span class="xs dim">최근 5거래일</span></div>${coreB}</div>
     <div class="h5 card"><div class="h5-h">중요한 뉴스</div>${nwB}</div>
   </div>
   ${cc.text ? `<div class="card concl concl-${esc(cc.level || "ok")}"><div class="h5-h">오늘의 결론</div><div class="concl-t">${esc(cc.text)}</div></div>` : ""}`;
@@ -223,7 +231,7 @@ async function stockTop(sym) {
   if ($("#pf-top") !== box) return;  // 그 사이 다른 종목으로 이동
   const m = v.market || {};
   const r = v.range52;
-  const mk = `<div class="vt-mkt">${esc(m.flag || "")} <b>${esc(m.name || "")}</b> ${dotText(`${m.light || ""} ${m.state || ""}`)}
+  const mk = `<div class="vt-mkt"><b>${esc(m.name || "")}</b> ${dotText(`${m.light || ""} ${m.state || ""}`)}
     ${m.local_time ? `<span class="xs dim">· 현지 ${esc(String(m.local_time).slice(11, 16) || m.local_time)}</span>` : ""}
     ${m.next_kst ? `<span class="xs dim">· 다음 ${esc(m.next === "폐장" ? "마감" : "개장")} ${esc(m.next_kst)}</span>` : ""}
     ${m.notice && !($("#market-notice")?.textContent || "").includes(m.notice.slice(0, 12)) ? `<div class="xs warn-t">${esc(m.notice)}</div>` : ""}</div>`;

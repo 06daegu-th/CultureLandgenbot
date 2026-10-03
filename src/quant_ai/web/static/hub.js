@@ -413,3 +413,33 @@ async function contextScore(box) {
   box.innerHTML = card("상황별 성적 <span class='small dim'>어떤 상황에서 맞고 틀리나 — 방향 적중률</span>",
     `<div class="grid g-3">${tb("뉴스 유형별", r.news)}${tb("실적 발표 전후", r.earnings)}${tb("종목별", r.symbol)}</div><div class="xs dim" style="margin-top:6px">${esc(r.note)}</div>`);
 }
+
+// v24 AI 신뢰 센터 — "지금 AI 를 믿어도 되나?" 를 한 화면에서: 판정 → 근거(전진 기록·독립 평가·봉인) → 약점 → 단계
+async function viewAITrust(el) {
+  const t = await api("/api/ai-trust");
+  const st = t.state || {}, ez = st.easy || {}, lad = t.ladder || {}, ev = t.evaluation, led = t.ledger || {}, fl = t.failures, cx = t.context || {};
+  const KEY = { verified: "good", checking: "warn", banned: "bad" };
+  const STAGE = { BACKTEST: "과거 시험만", SHADOW: "그림자 기록 (주문 없음)", PAPER: "모의투자에서 사용", LIVE: "소액 실전" };
+  const stage = String(lad.stage || "backtest").toUpperCase();
+  const row = (k, v, sub) => `<div class="tc-row"><span class="tc-k">${esc(k)}</span><span class="tc-v">${v}</span>${sub ? `<span class="xs dim tc-s">${esc(sub)}</span>` : ""}</div>`;
+  const pct = (x) => x == null ? "-" : `${Math.round(x * 100)}%`;
+  const verdict = `<div class="tc-hero tc-${esc(KEY[st.key] || "idle")}"><div class="xs muted">지금 AI 판단을</div>
+    <div class="tc-big">${lvDot(KEY[st.key] || "idle")}${esc(st.label || "-")}</div><div class="small">${esc(st.why || "")}</div>
+    <div class="tc-stage"><span class="stage-tag">${esc(stage)}</span> ${esc(STAGE[stage] || "")}</div></div>`;
+  const record = card("실제 기록 — 미래를 맞혔나 (전진 기록만)", [
+    row("방향 적중", ez.n ? `<b class="num">${ez.hits}/${ez.n}</b>` : "아직 부족", ez.n ? `'항상 오른다'고 했어도 ${ez.base_hits}` : "판단 뒤 5거래일이 지나야 채점"),
+    row("비용 뺀 뒤 지수 대비", ez.excess == null ? "-" : `<b class="num ${ez.excess >= 0 ? "up" : "down"}">${ez.excess >= 0 ? "+" : ""}${(ez.excess * 100).toFixed(1)}%p</b>`, "AI 가 '산다' 한 것만 샀다면"),
+    row("시장 대비 적중", ez.alpha ? `<b class="num">${pct(ez.alpha.hit)}</b>` : "-", ez.alpha ? `기준 ${pct(Math.max(0.5, ez.alpha.base))} · ${ez.alpha.verdict}` : "시장이 다 같이 오를 때의 '공짜 적중'을 빼고 채점"),
+  ].join(""));
+  const proof = card("증명 — 사후에 고칠 수 없게", [
+    row("독립 평가 결론", ev ? `<b>${esc(ev.verdict || "-")}</b>` : "아직 없음", ev ? `${ev.n ?? "-"}건 · 적중 ${pct(ev.hit_rate)} vs 기준선 ${pct(ev.best_baseline)}${ev.p_value != null && ev.hit_rate > ev.best_baseline ? ` · 우연일 확률 ${(ev.p_value * 100).toFixed(1)}%` : ""}` : "매일 밤 자동으로 채점"),
+    row("예측 장부 봉인", led.error ? "확인 실패" : led.ok ? `<b class="good">이상 없음</b>` : `<b class="bad-t">문제 발견</b>`, led.sealed != null ? `봉인 ${num(led.sealed)}건 · 봉인 전 기록 ${num(led.legacy || 0)}건` : ""),
+    row("자동 강등", st.demoted ? '<b class="bad-t">강등됨 — 주문에 쓰지 않음</b>' : "없음", "성적이 기준 아래로 떨어지면 사람 없이 자동으로 내린다"),
+  ].join(""));
+  const weak = fl && (fl.findings || []).length ? card("약점 — 어디서 자주 틀리나", fl.findings.map((f) => `<div class="tc-f"><div class="small">${esc(f.text)}</div>${f.action ? `<div class="xs muted">대응: ${esc(typeof f.action === "string" ? f.action : "")}</div>` : ""}</div>`).join("")
+    + '<a class="xs" href="#ailab">틀린 이유 연구 전체 →</a>') : card("약점 — 어디서 자주 틀리나", `<div class="small muted">${esc(fl?.message || "채점된 기록이 쌓이면 자동으로 찾습니다")}</div>`);
+  const ctx = (cx.news || []).length ? card("상황별 성적", `<div class="grid g-3">${[["뉴스 유형별", cx.news], ["실적 발표 전후", cx.earnings], ["종목별", cx.symbol]].map(([h, rows]) => `<div><div class="small b">${esc(h)}</div>${(rows || []).slice(0, 5).map((x) => `<div class="tc-row ${x.enough ? "" : "dim"}"><span class="tc-k">${esc(x.key)}</span><span class="tc-v num">${pct(x.hit)}</span><span class="xs dim tc-s">${x.n}건</span></div>`).join("")}</div>`).join("")}</div>`) : "";
+  const nextStep = (lad.reasons || []).length ? card("다음 단계로 가려면", `<ul class="plain small">${lad.reasons.slice(0, 5).map((r) => `<li>· ${esc(typeof r === "string" ? r : r.text || JSON.stringify(r))}</li>`).join("")}</ul>`) : "";
+  el.innerHTML = `${verdict}<div class="grid g-2">${record}${proof}</div>${weak}${ctx}${nextStep}
+    <div class="xs dim" style="margin:8px 2px">성적은 결과가 확정된 실제 판단만으로 계산합니다 (과거 시험 결과는 섞지 않음) · 자세한 지표: <a href="#scorecard">AI 성적표</a> · <a href="#verify">예측 기록장</a> · <a href="#aihealth">AI 상태 점검</a></div>`;
+}

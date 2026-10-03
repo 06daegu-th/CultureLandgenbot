@@ -131,3 +131,47 @@ nav a.active svg { color: var(--accent); }
   .mkt-it { flex-wrap: wrap; gap: 2px 8px; }
   .mkt-s { white-space: nowrap; }
 }
+.flag.cc { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .3px; color: var(--muted); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 4px; margin-right: 6px; line-height: 15px; }
+
+/* ===== v24 토스식 정리 — 굵은 제목 · 넉넉한 행 · 오른쪽 정렬 숫자 · 회색 보조 글자 ===== */
+:root { --radius: 16px; }
+.card { padding: 20px 22px !important; border-color: transparent !important; }
+:root[data-theme="light"] .card { border-color: transparent !important; }
+.h5-h { font-size: 17px !important; font-weight: 800 !important; color: var(--text) !important; margin-bottom: 10px; display: flex; align-items: baseline; gap: 8px; justify-content: space-between; }
+.h5-h .xs, .h5-h .small { font-weight: 500; color: var(--dim); }
+.h5-grid.two, .h5-mkt, .h5-up, .concl, .home-hero { margin-bottom: 14px !important; }
+.t-row { padding: 12px 0 !important; min-height: 60px; }
+.t-row .co-n { font-size: 15.5px; }
+.t-row .co-s { font-size: 12.5px; }
+.t-px { font-size: 15.5px; font-weight: 800; }
+.t-chg { font-size: 13px; font-weight: 600; }
+.act-t { font-weight: 700; }
+.act-t.act-BUY { color: var(--up); } .act-t.act-SELL { color: var(--down); } .act-t.act-HOLD { color: var(--text); } .act-t.act-NO_TRADE, .act-t.act-none { color: var(--dim); }
+.td-it { padding: 12px 4px !important; border-radius: 12px; }
+.td-it:hover, .t-row:hover { background: var(--panel-2); }
+.td-tx b { font-size: 15px; }
+/* 다가오는 일정 — 가로로 넘기는 D-day 칩 */
+.up-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.up-it { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 12px; background: var(--panel-2); color: var(--text); text-decoration: none; max-width: 340px; }
+.up-it:hover { background: var(--panel-3); }
+.up-d { font-weight: 800; font-size: 13px; color: var(--muted); min-width: 34px; }
+.up-d.soon { color: var(--up); }
+.up-t { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-it.more { color: var(--muted); font-weight: 700; }
+/* 설명 문장은 작고 회색으로 물러나게 */
+.xs.muted, .xs.dim, .small.muted { line-height: 1.5; }
+@media (max-width: 760px) {
+  .card { padding: 16px !important; border-radius: 14px; }
+  .h5-h { font-size: 16px !important; }
+}
+.ui-easy.on-home #market-notice { display: none; }
+/* v24 AI 신뢰 센터 */
+.tc-hero { background: var(--panel); border-radius: var(--radius); padding: 24px; margin-bottom: 14px; border-left: 4px solid var(--ok); }
+.tc-hero.tc-warn { border-left-color: var(--warn); } .tc-hero.tc-bad { border-left-color: var(--bad); }
+.tc-big { font-size: 30px; font-weight: 800; margin: 4px 0; }
+.tc-stage { margin-top: 10px; color: var(--muted); font-size: var(--fs-s); }
+.tc-row { display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.tc-k { white-space: nowrap; }
+.tc-row:last-child { border-bottom: 0; } .tc-row.dim { opacity: .55; }
+.tc-k { color: var(--muted); } .tc-v { text-align: right; } .tc-s { grid-column: 1 / -1; }
+.tc-f { padding: 8px 0; border-bottom: 1px dashed var(--line); }

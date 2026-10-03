@@ -12,7 +12,7 @@
 v21: 화면은 기다리지 않는다 — 처음 보는 종목은 이니셜을 바로 보내고 진짜 로고는 뒤에서 받아 둔다 (다음 화면부터 로고).
      브라우저와 같은 User-Agent 로 받는다 (프로그램 이름이면 막는 CDN 이 있다) · 예전 버전의 실패 기록은 무시하고 다시 받는다.
 상용 서비스: QUANT_LOGO_DEV_TOKEN 이 있으면 logo.dev(라이선스 로고 API)를 가장 먼저 쓴다 (국내 .KS · 미국 티커).
-QUANT_LOGOS=off 면 네트워크를 쓰지 않고 이니셜만. QUANT_LOGO_SOURCES=logodev,toss,alpha,fmp,favicon 으로 쓸 출처·순서를 바꿀 수 있다.
+QUANT_LOGOS=off 면 네트워크를 쓰지 않고 이니셜만. QUANT_LOGO_SOURCES=logodev,toss,alpha,naver,fmp,cmc,eodhd,favicon 으로 쓸 출처·순서를 바꿀 수 있다.
 미리 받기: ./run.sh logos (관심·보유·주요 종목) · 관심종목 ★ 를 누르면 그 종목은 바로 받아 둔다.
 로고는 각 회사의 상표다 — 종목 식별용 표시로만 쓴다 (docs/DATA_LICENSES.md).
 """
@@ -36,11 +36,14 @@ TOSS_URL = "https://static.toss.im/png-icons/securities/icn-sec-fill-{sym}.png"
 ALPHA_URL = "https://file.alphasquare.co.kr/media/images/stock_logo/kr/{sym}.png"
 FAVICON_URL = "https://www.google.com/s2/favicons?domain={domain}&sz=128"
 LOGODEV_URL = "https://img.logo.dev/ticker/{sym}?token={token}&size=128&format=png&fallback=404"
+NAVER_URL = "https://ssl.pstatic.net/imgstock/fn/real/logo/stock/Stock{sym}.svg"  # v24: 국내 전 종목 (SVG → 정화 후 저장)
+CMC_URL = "https://companiesmarketcap.com/img/company-logos/64/{sym}.webp"  # v24: 미국·해외 상장사 대부분
+EODHD_URL = "https://eodhd.com/img/logos/US/{sym}.png"  # v24: 미국 (소문자 티커)
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-META_V = 2  # 실패 기록 형식 — 이보다 옛 기록(v19~v20: 403 도 '없음'으로 7일 막던 것)은 무시
+META_V = 3  # 실패 기록 형식 — v24 에 출처(네이버·companiesmarketcap·EODHD)가 늘어 이전 실패 기록은 다시 시도
 RETRY_AFTER = 7 * 86400  # 로고가 없다고 확인된 종목
 RETRY_NET = 3600  # 네트워크 오류 — 연결이 돌아오면 금방 다시
-SOURCES = ("logodev", "toss", "alpha", "fmp", "favicon")
+SOURCES = ("logodev", "toss", "alpha", "naver", "fmp", "cmc", "eodhd", "favicon")
 MAX_BYTES = 300_000
 TYPES = {b"\x89PNG": ("png", "image/png"), b"\xff\xd8\xff": ("jpg", "image/jpeg"), b"GIF8": ("gif", "image/gif"),
          b"RIFF": ("webp", "image/webp"), b"<svg": ("svg", "image/svg+xml"), b"<?xm": ("svg", "image/svg+xml")}
@@ -124,8 +127,14 @@ def candidates(app, sym: str) -> list[tuple[str, str]]:
             out.append(("toss", TOSS_URL.format(sym=sym)))
         elif src == "alpha" and kr:
             out.append(("alpha", ALPHA_URL.format(sym=sym)))
+        elif src == "naver" and kr:
+            out.append(("naver", NAVER_URL.format(sym=sym)))
         elif src == "fmp" and not kr:
             out.append(("fmp", FMP_URL.format(sym=sym.replace(".", "-"))))
+        elif src == "cmc" and not kr:
+            out.append(("cmc", CMC_URL.format(sym=sym.replace("-", "."))))
+        elif src == "eodhd" and not kr:
+            out.append(("eodhd", EODHD_URL.format(sym=sym.lower())))
         elif src == "favicon":
             dom = domain_for(app, sym)
             if dom:
@@ -141,6 +150,24 @@ def _fetch(url: str, timeout: float = 4.0) -> bytes:
         data = r.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
         raise ValueError("너무 큼")
+    return data
+
+
+_SVG_BAD = re.compile(rb"<script|<foreignObject|<iframe|<!ENTITY|<!DOCTYPE|javascript:|data:text|\bon[a-z]+\s*=|(?:xlink:)?href\s*=\s*[\"'](?!#)|@import|url\(\s*[\"']?(?!#)", re.I)
+
+
+def sanitize_svg(data: bytes) -> bytes | None:
+    """외부에서 받은 SVG 를 그림 요소만 남았는지 검사 — 위험한 요소가 하나라도 있으면 통째로 버린다(고치지 않는다).
+    XML 로 안전하게 읽히는지도 확인한다 (외부 엔티티 금지)."""
+    if len(data) > MAX_BYTES or _SVG_BAD.search(data):
+        return None
+    try:
+        from defusedxml import ElementTree as DET
+        root = DET.fromstring(data)
+    except Exception:  # noqa: BLE001 - 깨진 SVG 는 버림
+        return None
+    if not str(root.tag).endswith("svg"):
+        return None
     return data
 
 
@@ -244,7 +271,10 @@ def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = 
             try:
                 data = (fetch or _fetch)(url)
                 t = kind_of(data)
-                if not t or t[0] == "svg" or len(data) < 200:  # 외부 SVG 는 받지 않음(스크립트 위험) · 빈 기본 파비콘은 거른다
+                if t and t[0] == "svg":  # v24: 외부 SVG 는 정화를 통과한 것만 (스크립트·이벤트·외부 참조가 있으면 버림)
+                    data = sanitize_svg(data)
+                    t = ("svg", "image/svg+xml") if data else None
+                if not t or len(data) < 200:  # 빈 기본 파비콘·깨진 응답은 거른다
                     net_only = False
                     tried.append(f"{src}: 이미지 아님")
                     continue
@@ -298,4 +328,4 @@ def prefetch(app, symbols: list[str], force: bool = False, fetch=None) -> dict:
     return {"by_source": out, "missing": missing[:50], "n": sum(out.values())}
 
 
-__all__ = ["get", "prefetch", "monogram", "default_icon", "candidates", "domain_for", "kind_of", "KR_DOMAINS"]
+__all__ = ["get", "prefetch", "monogram", "default_icon", "sanitize_svg", "candidates", "domain_for", "kind_of", "KR_DOMAINS"]

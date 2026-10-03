@@ -1010,6 +1010,35 @@ class DashboardAPI:
             return v
         return self._cached(f"verdict:{sym}", 30, build)
 
+    def ai_trust(self) -> dict:
+        """v24 AI 신뢰 센터 — 한 화면에 모은다: 지금 믿을 만한가(3단계) · 단계(사다리) · 실제 전진 기록 성적 vs 기준선 ·
+        독립 평가 결론 · 예측 장부 봉인 상태 · 자동 강등 · 틀린 이유 Top · 상황별 성적. 각 칸은 실패해도 나머지는 보인다."""
+        def build():
+            from ..center import ai_state
+            out: dict = {}
+
+            def safe(k, fn):
+                try:
+                    out[k] = fn()
+                except Exception as e:  # noqa: BLE001
+                    out[k] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+            safe("state", lambda: ai_state(self.app))
+            safe("ladder", lambda: {k: v for k, v in self.app.ladder(act=False).items() if k in ("stage", "changed", "reasons", "ready", "next")})
+            ev = _ops.get_state(self.engine, "evaluation") or {}
+            out["evaluation"] = {k: ev.get(k) for k in ("verdict", "status", "n", "hit_rate", "best_baseline", "p_value", "sealed_share", "evaluated_at")} if ev else None
+
+            def ledger_():
+                from ..review.ledger import verify as ledger_verify
+                with session_scope(self.engine) as s:
+                    r = ledger_verify(s, sample_limit=5)
+                return {k: r.get(k) for k in ("ok", "sealed", "legacy", "pending")}
+            safe("ledger", ledger_)
+            fl = _ops.get_state(self.engine, "failure_lab") or {}
+            out["failures"] = {"n": fl.get("n"), "findings": (fl.get("findings") or [])[:4], "message": fl.get("message")} if fl else None
+            safe("context", lambda: self.ai_context())
+            return out
+        return self._cached("ai_trust", 120, build)
+
     def ai_context(self) -> dict:
         from ..scorecard import by_context
         return self._cached("ai_context", 300, lambda: by_context(self.app))
