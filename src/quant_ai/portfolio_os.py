@@ -18,11 +18,11 @@ from .asof import label
 LEVEL = {"ok": "LOW", "warn": "MEDIUM", "bad": "HIGH"}
 
 
-def _book(app, mode: str) -> tuple[dict[str, float], float, float, dict[str, str]]:
-    """(종목→평가금액, 현금, 총액, 이름) — 사용자가 입력한 계좌가 있으면 그것을, 없으면 시스템 장부."""
+def _book(app, mode: str, source: str = "auto") -> tuple[dict[str, float], float, float, dict[str, str]]:
+    """(종목→평가금액, 현금, 총액, 이름) — source: auto(입력한 계좌가 있으면 그것, 없으면 시스템 장부) · accounts · system."""
     from . import accounts
     s = accounts.summary(app)
-    mine = [a for a in s["accounts"] if a["type"] != "system"]
+    mine = [a for a in s["accounts"] if a["type"] != "system"] if source != "system" else []
     vals, cash, names = {}, 0.0, {}
     if mine:
         for a in mine:
@@ -39,18 +39,94 @@ def _book(app, mode: str) -> tuple[dict[str, float], float, float, dict[str, str
                 px = float(bars[sym]["close"].iloc[-1]) if sym in bars and len(bars[sym]) else p.avg_price
                 vals[sym] = p.qty * px
         cash = pf.cash
-        src = f"{mode.upper()} 장부 (시스템)"
+        src = {"paper": "모의투자 장부", "live": "실계좌 장부", "shadow": "그림자 매매 장부"}.get(mode, f"{mode} 장부")
     return vals, cash, sum(vals.values()) + cash, names | {"_src": src}
 
 
-def overview(app, mode: str = "paper") -> dict:
+# v19: 테마 — 업종 이름이 달라도 사실상 같은 베팅인 묶음 (NVDA+AMD+AVGO+TSM = 반도체·AI)
+THEMES = {
+    "반도체·AI": {"005930", "005935", "000660", "042700", "403870", "058470", "039030", "NVDA", "AMD", "AVGO", "TSM", "MU", "INTC", "ASML",
+                "QCOM", "ARM", "SMCI", "MRVL", "AMAT", "LRCX", "KLAC", "TXN"},
+    "2차전지·전기차": {"373220", "006400", "051910", "247540", "086520", "003670", "066970", "TSLA", "RIVN", "ALB"},
+    "빅테크·플랫폼": {"035420", "035720", "323410", "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "NFLX", "ORCL", "CRM"},
+    "자동차": {"005380", "000270", "012330", "TSLA", "GM", "F", "TM"},
+    "바이오·헬스": {"207940", "068270", "196170", "028300", "000100", "128940", "LLY", "NVO", "MRNA", "PFE", "JNJ", "UNH"},
+    "금융": {"105560", "055550", "086790", "316140", "024110", "032830", "000810", "JPM", "BAC", "GS", "V", "MA", "BRK-B"},
+    "방산·조선": {"012450", "042660", "064350", "329180", "010140", "047810", "009540", "LMT", "RTX", "NOC", "GD"},
+}
+SECTOR_THEME = (("반도체", "반도체·AI"), ("2차전지", "2차전지·전기차"), ("자동차", "자동차"), ("바이오", "바이오·헬스"), ("제약", "바이오·헬스"),
+                ("은행", "금융"), ("증권", "금융"), ("보험", "금융"), ("조선", "방산·조선"), ("우주항공", "방산·조선"))
+
+
+def themes(weights: dict[str, float], sectors: dict[str, str], names: dict[str, str]) -> list[dict]:
+    """테마별 비중 · 들어 있는 종목 — 25% 넘으면 '사실상 같은 베팅' 경고."""
+    agg: dict[str, list] = {}
+    for sym, w in weights.items():
+        ts = {t for t, xs in THEMES.items() if sym in xs}
+        sec = sectors.get(sym) or ""
+        ts |= {t for k, t in SECTOR_THEME if k in sec}
+        for t in ts:
+            agg.setdefault(t, []).append((sym, w))
+    out = []
+    for t, xs in sorted(agg.items(), key=lambda kv: -sum(w for _, w in kv[1])):
+        tot = sum(w for _, w in xs)
+        members = [names.get(s_, s_) for s_, _ in sorted(xs, key=lambda x: -x[1])]
+        out.append({"theme": t, "weight": round(tot, 4), "n": len(xs), "members": members[:6],
+                    "level": "HIGH" if tot > 0.4 else "MEDIUM" if tot > 0.25 else "LOW",
+                    "text": f"{t} 집중 {tot:.0%} ({'·'.join(members[:4])}{' 외' if len(members) > 4 else ''})"
+                            + (" — 사실상 같은 베팅" if tot > 0.25 and len(xs) >= 2 else "")})
+    return out
+
+
+def holding_extras(app, symbols: list[str], now: datetime | None = None) -> dict[str, dict]:
+    """보유 종목마다: AI 마지막 판단 · 최근 3일 중요 뉴스 · 14일 안 실적 발표 D-day."""
+    from datetime import timedelta
+
+    from sqlalchemy import func, select
+
+    from . import ops
+    from .data.db import session_scope
+    from .data.models import ConsensusRecord, NewsArticle
+    now = now or datetime.now(UTC)
+    out: dict[str, dict] = {s_: {} for s_ in symbols}
+    if not symbols:
+        return out
+    icon = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡", "NO_TRADE": "⚪"}
+    with session_scope(app.engine) as s:
+        sub = select(ConsensusRecord.symbol, func.max(ConsensusRecord.id).label("mid")).where(
+            ConsensusRecord.symbol.in_(symbols)).group_by(ConsensusRecord.symbol).subquery()
+        for c in s.scalars(select(ConsensusRecord).join(sub, ConsensusRecord.id == sub.c.mid)):
+            out[c.symbol]["ai"] = {"action": c.action, "icon": icon.get(c.action, "⚪"), "prob_up": round(c.prob_up, 3), "at": label(c.as_of, with_time=False)}
+        for n in s.scalars(select(NewsArticle).where(NewsArticle.published_at >= now - timedelta(days=3), NewsArticle.importance >= 0.7)
+                           .order_by(NewsArticle.importance.desc()).limit(2000)):
+            for sym in set(n.symbols or []) & set(symbols):
+                d = out[sym].setdefault("news", {"n": 0, "top": None})
+                d["n"] += 1
+                d["top"] = d["top"] or {"id": n.id, "title": n.title}
+    today = now.date()
+    for e in ops.get_state(app.engine, "event_calendar").get("events") or []:
+        sym = e.get("symbol")
+        if sym in out and e.get("kind") == "earnings":
+            try:
+                dd = (datetime.fromisoformat(str(e["date"])[:10]).date() - today).days
+            except ValueError:
+                continue
+            if 0 <= dd <= 14 and (not out[sym].get("earn") or dd < out[sym]["earn"]["d_day"]):
+                out[sym]["earn"] = {"d_day": dd, "d_label": "D-Day" if dd == 0 else f"D-{dd}", "date": str(e["date"])[:10],
+                                    "estimated": bool(e.get("estimated"))}
+    return out
+
+
+def overview(app, mode: str = "paper", source: str = "auto") -> dict:
     from sqlalchemy import select
 
+    from . import accounts
     from .center import risk_simple
     from .data.db import session_scope
     from .data.models import Instrument
     from .engines.sector import sector_map
-    vals, cash, total, names = _book(app, mode)
+    n_mine = sum(1 for a in accounts.summary(app)["accounts"] if a["type"] != "system")
+    vals, cash, total, names = _book(app, mode, source)
     src = names.pop("_src")
     if total <= 0:
         return {"empty": True, "headline": "보유 자산 기록이 없습니다 — '계좌 · 세금 · 배당'에서 내 계좌를 입력하면 여기서 한눈에 봅니다"}
@@ -84,13 +160,42 @@ def overview(app, mode: str = "paper") -> dict:
     risks.sort(key=lambda x: -x[0])
     biggest = risks[0][1] if risks else "두드러진 집중·한도 초과 위험 없음 — 시장 전체 하락(베타)이 가장 큰 위험"
     lvl = rs.get("level") or ("bad" if any(x[0] > 0.3 for x in risks) else "warn" if risks else "ok")
-    return {"source": src, "total": round(total), "stock": round(stock), "cash": round(cash), "stock_pct": round(stock / total, 4),
+    th = themes(w, sectors, names)
+    hot = [t for t in th if t["level"] != "LOW" and t["n"] >= 2]
+    if hot:
+        risks.append((hot[0]["weight"], hot[0]["text"] + " — 한 가지 재료(예: AI 수요·금리)에 같이 오르내림"))
+        risks.sort(key=lambda x: -x[0])
+        biggest = risks[0][1]
+    # v23 '사실상 하나의 큰 베팅' — 같은 테마(이름으로 묶임) + 최근 같이 움직인 묶음(상관 0.6 이상, 실제 가격으로)
+    bets = [{"label": t["theme"], "weight": t["weight"], "members": t["members"], "why": "같은 테마·업종", "level": t["level"]}
+            for t in th if t["n"] >= 2 and t["weight"] > 0.15]
+    try:
+        from .trading.portfolio_risk import portfolio_risk
+        bars, bench, _ = app.market_data()
+        pr = portfolio_risk({k: v for k, v in w.items() if k in bars}, bars, bench, names=names)
+        for c in pr.get("clusters") or []:
+            if c["weight"] > 0.15 and not any(set(c["members"]) <= set(b["members"]) for b in bets):
+                bets.append({"label": "같이 움직이는 묶음", "weight": c["weight"], "members": c["members"][:6],
+                             "why": f"최근 1년 하루 등락이 같이 움직임 (상관 {0.6:.1f} 이상)",
+                             "level": "HIGH" if c["weight"] > 0.4 else "MEDIUM" if c["weight"] > 0.25 else "LOW"})
+    except Exception:  # noqa: BLE001, S110 - 가격이 부족하면 테마 묶음만
+        pass
+    bets.sort(key=lambda b: -b["weight"])
+    top12 = [s_ for s_, _ in sorted(vals.items(), key=lambda x: -x[1])[:12]]
+    ex = holding_extras(app, top12)
+    level = LEVEL.get(lvl, "MEDIUM")
+    if hot and hot[0]["level"] == "HIGH" and level == "LOW":
+        level = "MEDIUM"
+    return {"source": src, "source_key": "accounts" if src.startswith("내 계좌") else "system", "n_accounts": n_mine, "total": round(total), "stock": round(stock), "cash": round(cash), "stock_pct": round(stock / total, 4),
             "cash_pct": round(cash / total, 4), "n": len(vals),
-            "holdings": [{"symbol": s_, "name": names.get(s_, s_), "value": round(v), "weight": round(v / total, 4), "sector": sectors.get(s_) or "미분류"}
-                         for s_, v in sorted(vals.items(), key=lambda x: -x[1])[:12]],
+            "holdings": [{"symbol": s_, "name": names.get(s_, s_), "value": round(vals[s_]), "weight": round(vals[s_] / total, 4),
+                          "sector": sectors.get(s_) or "미분류", **ex.get(s_, {})} for s_ in top12],
+            "themes": th[:5], "bets": bets[:4], "earnings_soon": sorted([{"symbol": s_, "name": names.get(s_, s_), **x["earn"]} for s_, x in ex.items() if x.get("earn")],
+                                                       key=lambda e: e["d_day"]),
+            "news_alerts": [{"symbol": s_, "name": names.get(s_, s_), **x["news"]} for s_, x in ex.items() if x.get("news")],
             "sectors": [{"sector": k, "weight": round(v, 4)} for k, v in sec_sorted[:6]], "sector_level": sec_level,
             "top": {"symbol": top[0], "name": names.get(top[0], top[0]), "weight": round(top[1], 4)} if top[0] else None,
-            "risk_level": LEVEL.get(lvl, "MEDIUM"), "biggest_risk": biggest, "other_risks": [r[1] for r in risks[1:4]],
+            "risk_level": level, "biggest_risk": biggest, "other_risks": [r[1] for r in risks[1:4]],
             "risk_cards": rs.get("cards"), "as_of": label(datetime.now(UTC))}
 
 

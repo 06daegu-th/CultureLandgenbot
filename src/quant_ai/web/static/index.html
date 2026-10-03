@@ -14,21 +14,22 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
-<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<link rel="stylesheet" href="/calm.css">
+<!-- 차트 라이브러리는 서버가 직접 제공 (CDN 이 막혀도 차트가 그려지게) · Apache-2.0 · vendor/LICENSE-lightweight-charts.txt -->
+<script src="/vendor/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 <div class="app">
   <aside class="side">
     <a class="brand" href="#dashboard">
       <div class="logo" id="brand-logo"></div>
-      <div><div class="brand-name">QUANT AI</div><div class="brand-sub">AI-Powered Trading &amp; Research</div></div>
+      <div><div class="brand-name">QUANT AI</div><div class="brand-sub">내 투자 비서 · 확률로 판단</div></div>
     </a>
     <nav id="nav"></nav>
     <div class="side-foot">
       <div class="side-card" id="mode-card"></div>
       <div class="side-card" id="balance-card"></div>
       <button id="kill-btn" class="kill-big" title="긴급 정지: 신규 매수 즉시 중단 (매도·위험 축소는 계속)"></button>
-      <div class="quote">"데이터는 거짓말을 하지 않는다.<br>다만, 해석이 다를 뿐이다."</div>
       <div class="ver">Quant AI · <span id="sys-last" class="mono">-</span></div>
     </div>
   </aside>
@@ -54,12 +55,14 @@
         <div class="avatar" id="avatar" title="운영 모드">QA</div>
       </div>
     </header>
+    <div id="market-notice"></div>
     <section id="view" class="view"></section>
     <nav class="tabbar" id="tabbar"></nav>
     <footer class="disclaimer">본 화면의 신호·예측·시나리오는 정보 제공 목적이며 투자 권유나 수익 보장이 아닙니다. 백테스트·가상매매 성과는 실제 성과와 다를 수 있으며, 투자 판단과 그 결과의 책임은 투자자 본인에게 있습니다.</footer>
   </main>
 </div>
 <script src="/icons.js"></script>
+<script src="/words.js"></script>
 <script src="/pro.js"></script>
 <script src="/live.js"></script>
 <script src="/verify.js"></script>
@@ -69,6 +72,8 @@
 <script src="/os.js"></script>
 <script src="/hub.js"></script>
 <script src="/board.js"></script>
+<script src="/easy.js"></script>
+<script src="/goal.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

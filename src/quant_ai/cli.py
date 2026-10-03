@@ -71,6 +71,18 @@ def cmd_collect(args):
             sys.exit("--marcap-dir 필요 (FinanceData/marcap 의 data 폴더)")
         r = app.ingest_krx(args.marcap_dir, years=args.years, top_n=args.top)
         print(f"KRX: 종목 {r['symbols']} · 봉 {r['bars']:,} · 월별 유니버스 {r['months']}개월 · 마지막 {r['last_date']}")
+    elif args.what == "sectors":
+        from . import desk
+        from .engines.sector import fill_map, sector_map
+        w = desk.wics(app, force=True)
+        print(f"WICS 공식 업종: {w.get('mapped', 0)}종목" + (f" (실패: {w['error']})" if w.get("error") else ""))
+        bars, _, _ = app.market_data()
+        todo = [s_ for s_ in bars if s_ not in sector_map(app.engine)]
+        if todo:
+            r = fill_map(app.engine, todo, limit=min(len(todo), 120), pause=0.5)
+            print(f"나머지 (Yahoo 업종 → 한국어): {len(r['new'])}/{r['tried']}종목")
+        mp = sector_map(app.engine)
+        print(f"업종 분류: {sum(1 for s_ in bars if s_ in mp)}/{len(bars)}종목")
     elif args.what == "news":
         from .data.collectors.news import NewsCollector
         with session_scope(app.engine) as s:
@@ -510,6 +522,9 @@ def cmd_doctor(args):
         return _print_doctor(rows)
     st = app.settings
     add("ok", "모드", f"QUANT_MODE={st.mode.value} · 전략={st.strategy}{' (코어 전용)' if st.core_only else ''}")
+    from .auth import Auth
+    for err in Auth().config_errors():  # v19: 대시보드가 시작을 거부하는 로그인 설정 오류를 미리 알려 준다
+        add("fail", "웹 로그인", err)
     try:
         with session_scope(app.engine) as s:
             n_sym = s.scalar(select(func.count()).select_from(Instrument)) or 0
@@ -575,6 +590,67 @@ def _print_doctor(rows):
     n_fail = sum(r[0] == "fail" for r in rows)
     print(f"\n{'문제 ' + str(n_fail) + '건 — 위 ❌ 부터 해결하세요' if n_fail else '실행 준비 완료'}")
     sys.exit(1 if n_fail else 0)
+
+
+def cmd_logos(args):
+    """로고 미리 받기: 관심·보유·주요 종목 (또는 --symbols). 출처별 개수와 이니셜로 남은 종목을 보여준다."""
+    from . import logos
+    from .center import watchlist
+    app = _app(args)
+    if args.symbols:
+        syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
+    elif getattr(args, "all", False):  # v24: 유명하지 않은 종목까지 — 화면에 처음 나올 때 기다리지 않게 미리
+        from sqlalchemy import select
+
+        from .data.db import session_scope
+        from .data.global_stocks import GLOBAL_STOCKS
+        from .data.models import Instrument
+        with session_scope(app.engine) as s:
+            syms = [i.symbol for i in s.scalars(select(Instrument).where(Instrument.market != "INDEX"))]
+        syms += [g[0] for g in GLOBAL_STOCKS]
+    else:
+        syms = [r["symbol"] for r in watchlist(app)["rows"]]
+        for m in ("paper", "shadow", "live", "us-paper"):
+            try:
+                syms += [s_ for s_, p in app.load_portfolio(m).positions.items() if p.qty]
+            except Exception:  # noqa: BLE001, S112
+                continue
+        bars, _ = app._all_bars()
+        syms += sorted(bars)[: args.top]
+    print(f"로고 {len(dict.fromkeys(syms))}종목 받는 중… (실패 기억 무시: {'예' if args.retry else '아니오'})")
+    r = logos.prefetch(app, syms, force=args.retry)
+    names = {"custom": "직접 넣은 파일", "toss": "토스증권 아이콘", "alpha": "알파스퀘어 아이콘", "fmp": "FMP(미국)", "favicon": "홈페이지 아이콘",
+             "naver": "네이버 증권 로고", "cmc": "companiesmarketcap", "eodhd": "EODHD(미국)",
+             "cache": "이전에 받은 것", "bundled": "내장 로고 (프로젝트에 포함)", "logodev": "logo.dev",
+             "default": "기본 기업 아이콘 (못 받음)", "monogram": "이니셜 (못 받음)"}
+    for k, v in sorted(r["by_source"].items(), key=lambda x: -x[1]):
+        print(f"  {names.get(k, k)}: {v}")
+    if r["missing"]:
+        print(f"  기본 아이콘으로 남은 종목: {', '.join(r['missing'][:20])}{' …' if len(r['missing']) > 20 else ''}")
+        print("  → 인터넷 연결 확인 후 ./run.sh logos --retry · 원하는 그림은 artifacts/logos/custom/<종목코드>.png 로 직접 넣기")
+
+
+def cmd_ops_status(args):
+    """./run.sh status 가 부른다 — 24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패."""
+    from .center import ops_status
+    st = ops_status(_app(args))
+    hb = st["heartbeat_age_s"]
+    print(f"{'✔' if st['running'] else '⚠'} 24시간 운영: {'켜짐' if st['running'] else '꺼짐'}" + (f" (마지막 신호 {hb / 60:.0f}분 전)" if hb is not None else ""))
+    b = st["bar"]
+    print(f"{'✔' if not b.get('lag_days') else '⚠'} 주가 데이터: {b.get('label') or '없음'}" + (f" · {b['lag_days']}거래일 밀림" if b.get("lag_days") else " · 최신"))
+    print(f"  최근 24시간 뉴스 {st['news_24h']}건 · 작업 실패 {st['job_failures_24h']}건")
+    for it in st["issues"]:
+        print(f"  → {it['text']}: {it['fix']}")
+
+
+def cmd_report(args):
+    """사용자 PC 점검 보고서 — 키·계좌번호·금액 없이, 그대로 보내도 되는 글 (report.py)."""
+    from pathlib import Path
+
+    from .report import write
+    out, text = write(_app(args), Path(args.out) if args.out else None, net=not args.no_net)
+    print(text)
+    print(f"\n저장: {out.resolve()}")
 
 
 def cmd_db_ping(args):
@@ -707,7 +783,7 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--port", type=int, default=8050)
     s.set_defaults(fn=cmd_serve)
     c = sub.add_parser("collect")
-    c.add_argument("what", choices=["prices", "krx", "news", "disclosures", "macro"])
+    c.add_argument("what", choices=["prices", "krx", "news", "disclosures", "macro", "sectors"])
     c.add_argument("--marcap-dir", default="")
     c.add_argument("--top", type=int, default=100)
     c.add_argument("--source", default="yahoo", choices=["yahoo", "synthetic"])
@@ -720,6 +796,10 @@ def main(argv: list[str] | None = None) -> None:
     au.add_argument("--viewer", action="store_true", help="읽기 전용 토큰도 만들기")
     au.set_defaults(fn=cmd_auth_setup)
     sub.add_parser("netcheck", help="외부 데이터 소스 연결 점검").set_defaults(fn=cmd_netcheck)
+    rp = sub.add_parser("report", help="점검 보고서 (키·계좌번호·금액 없음 — 그대로 보내도 됨)")
+    rp.add_argument("--out", default="")
+    rp.add_argument("--no-net", action="store_true", help="외부 연결 시험 생략")
+    rp.set_defaults(fn=cmd_report)
     bg = sub.add_parser("budget", help="원금·최대 손실 → 모든 한도 계산 (--save 로 저장)")
     bg.add_argument("--principal", type=float, required=True)
     bg.add_argument("--max-loss", type=float, required=True)
@@ -759,6 +839,13 @@ def main(argv: list[str] | None = None) -> None:
     rd.set_defaults(fn=cmd_readiness)
     sub.add_parser("health").set_defaults(fn=cmd_health)
     sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
+    sub.add_parser("ops-status", help="운영 상태 (24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패)").set_defaults(fn=cmd_ops_status)
+    lg = sub.add_parser("logos", help="종목 로고 미리 받기 (관심·보유·주요 종목)")
+    lg.add_argument("--symbols", help="쉼표로 구분한 종목 (생략하면 관심·보유·주요 종목)")
+    lg.add_argument("--top", type=int, default=100, help="주요 종목 몇 개까지 (기본 100)")
+    lg.add_argument("--retry", action="store_true", help="이전 실패 기억을 무시하고 다시 받기")
+    lg.add_argument("--all", action="store_true", help="DB 의 모든 상장 종목 + 해외 목록 (처음 한 번 수십 분 · 이미 받은 것은 건너뜀)")
+    lg.set_defaults(fn=cmd_logos)
     od = sub.add_parser("orders", help="리밸런싱 주문표 (다른 증권사·ISA·수동 매매용, 주문은 내지 않음)")
     od.add_argument("--cash", type=float, required=True, help="주문 가능 현금 (원)")
     od.add_argument("--holdings", help="보유 종목 CSV (종목코드,수량). '-' 는 표준입력. 없으면 전액 현금에서 시작")

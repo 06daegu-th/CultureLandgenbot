@@ -22,13 +22,13 @@ async function viewNewsBoard(el) {
   const tot = (c["긍정"] || 0) + (c["중립"] || 0) + (c["부정"] || 0) || 1;
   const tabs = (id, list, cur) => `<div class="tabs" id="${id}">${list.map(([k, v]) => `<button data-k="${k}" class="${String(cur) === String(k) ? "on" : ""}">${v}</button>`).join("")}</div>`;
   const cardHtml = (x) => `<div class="nb-card" style="--tone:${TONE_COLOR[x.tone]}">
-    <div class="nb-top"><span class="nb-ev" title="${esc(x.event_ko)}">${EV_IC[x.event] || "📰"} ${esc(x.event_ko)}</span>
+    <div class="nb-top"><span class="nb-lv" title="${esc(x.level?.label || "")}">${esc(x.level?.icon || "")}</span><span class="nb-ev" title="${esc(x.event_ko)}">${EV_IC[x.event] || "📰"} ${esc(x.event_ko)}</span>
       <span class="nb-tone" style="color:${TONE_COLOR[x.tone]}">● ${esc(x.tone)}${x.confidence != null ? ` <span class="xs dim">확신 ${Math.round(x.confidence * 100)}%</span>` : ""}</span>
       ${x.rumor ? '<span class="chip xs warn">루머·관측</span>' : ""}${x.n > 1 ? `<span class="chip xs">같은 소식 ${x.n}건 · 매체 ${x.sources.length}곳</span>` : ""}
       <span class="xs dim nb-time">${esc(x.first)}</span></div>
-    <a class="nb-title" href="${esc(x.articles[0]?.url || "#")}" target="_blank" rel="noopener noreferrer">${esc(x.title)}</a>
+    <a class="nb-title" href="#" data-news="${x.id}" title="눌러서 원문·번역·쉬운 설명·영향 보기">${esc(x.title)}</a>
     ${x.summary ? `<div class="nb-sum">🤖 ${esc(x.summary)}</div>` : ""}
-    ${x.symbols.length ? `<div class="nb-syms">${x.symbols.map((s) => `<a class="nb-sym" href="#analysis/${esc(s.symbol)}"><b>${esc(s.name)}</b> ${miniSpark(s.spark)}
+    ${x.symbols.length ? `<div class="nb-syms">${x.symbols.map((s) => `<a class="nb-sym" href="#analysis/${esc(s.symbol)}">${stockLogo(s.symbol, s.name, 18)} <b>${esc(s.name)}</b> ${miniSpark(s.spark)}
       <span class="num ${s.since >= 0 ? "up" : "down"}">${s.since == null ? "" : `뉴스 후 ${P(s.since, 1)}`}</span>${s.ai ? ` ${badge(s.ai)}` : ""}</a>`).join("")}</div>` : ""}
     <details class="nb-more"><summary class="xs muted">출처 ${x.sources.map(esc).join(" · ") || "-"} · 신뢰도 ${Math.round(x.trust * 100)}%${x.why.length ? " · 왜 이 톤?" : ""}</summary>
       ${x.why.length ? `<div class="xs">근거 단어: ${x.why.map((w) => `<span class="chip xs ${w.includes("(부정)") ? "warn" : ""}">${esc(w)}</span>`).join(" ")} <span class="dim">${x.by === "llm" ? "· AI 구조화" : "· 규칙(키워드+부정어)"}</span></div>` : ""}
@@ -36,15 +36,28 @@ async function viewNewsBoard(el) {
   el.innerHTML = `
   <div class="card"><div class="card-h"><h3>뉴스 보드 <span class="small dim">같은 소식은 한 장 · 색 = 톤 · 관련 종목은 뉴스 이후 주가와 함께</span></h3>
     <div class="right"><button class="btn-sm" id="nb-ex">지금 분석</button> <a class="btn-sm" href="#newslist">원문 목록</a></div></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${tabs("nb-days", [[1, "오늘"], [3, "3일"], [7, "7일"]], S.nb.days)}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${tabs("nb-days", [[1, "24시간"], [3, "3일"], [7, "7일"], [30, "30일"]], S.nb.days)}
+      <input id="nb-q" class="nb-q" placeholder="뉴스 검색 (예: NVDA 중국 규제, 삼성전자 HBM)" value="${esc(S.nb.q || "")}">
       ${tabs("nb-only", [["", "전체"], ["mine", "보유·관심"], ["긍정", "긍정"], ["부정", "부정"]], S.nb.only)}</div>
     <div class="nb-bar" title="긍정 · 중립 · 부정"><i style="flex:${c["긍정"] || 0};background:var(--up)"></i><i style="flex:${c["중립"] || 0};background:var(--dim)"></i><i style="flex:${c["부정"] || 0};background:var(--down)"></i></div>
     <div class="xs muted">긍정 ${c["긍정"] || 0} (${Math.round((c["긍정"] || 0) / tot * 100)}%) · 중립 ${c["중립"] || 0} · 부정 ${c["부정"] || 0} · 기사 ${num(d.n_articles)}건 ·
       ${d.extract?.llm_on ? `AI 구조화 켜짐 (${esc(d.extract.at || "-")})` : "AI 구조화 꺼짐 — 키워드+부정어 규칙 (LLM 키를 넣으면 기사마다 이벤트·방향·확신도·한 줄 요약)"}</div></div>
-  <div class="nb-grid">${(d.cards || []).map(cardHtml).join("") || card("", empty("이 기간 뉴스가 없습니다 — 뉴스 수집이 돌면 채워집니다"))}</div>
+  <div id="nb-sr"></div>
+  <div class="nb-grid">${(d.cards || []).map(cardHtml).join("") || card("", `<div class="empty-act"><b>이 기간에 모인 뉴스가 없습니다</b><div class="small muted">뉴스는 24시간 운영이 켜져 있을 때 모입니다 (장중 5분 · 장 밖 30분마다). 지금 바로 받으려면 터미널에서 <code>qa collect news</code></div><a class="btn-sm" href="#server">운영 상태 보기</a></div>`)}</div>
   <div class="xs dim">${esc(d.note)}</div>`;
   el.querySelectorAll("#nb-days button").forEach((b) => b.onclick = () => { S.nb.days = +b.dataset.k; render(); });
   el.querySelectorAll("#nb-only button").forEach((b) => b.onclick = () => { S.nb.only = b.dataset.k; render(); });
+  const doSearch = async () => {
+    const q = $("#nb-q").value.trim(); S.nb.q = q;
+    const box = $("#nb-sr");
+    if (!q) { box.innerHTML = ""; return; }
+    const r = await api(`/api/news-search?q=${encodeURIComponent(q)}&days=${Math.max(30, S.nb.days)}`).catch(() => ({ results: [] }));
+    box.innerHTML = card(`검색: "${esc(q)}" <span class="small dim">${r.results.length}건 · 최근 ${r.days || 30}일</span>`, r.results.length
+      ? r.results.map((a) => `<div class="nw-it"><a href="#" data-news="${a.id}" class="small b">${esc(a.level)} ${esc(a.title)}</a><div class="xs dim">${esc(a.source || "")} · ${esc(a.time)}</div></div>`).join("")
+      : empty("검색 결과 없음 — 단어를 줄이거나 기간을 늘려 보세요"));
+  };
+  $("#nb-q").onkeydown = (e) => { if (e.key === "Enter") doSearch(); };
+  if (S.nb.q) doSearch();
   $("#nb-ex").onclick = async (e) => {
     e.target.disabled = true; e.target.textContent = "분석 중…";
     const r = await post("/api/news-extract", {});
@@ -69,7 +82,7 @@ async function viewMarketMap(el) {
   const b = m.breadth;
   const tile = (t) => `<a class="mm-t" href="#analysis/${esc(t.symbol)}" style="flex-grow:${Math.max(1, Math.round(Math.sqrt(t.weight) * 300))};background:${mapColor(t.chg)}" title="${esc(t.name)} ${P(t.chg, 2)} · 5일 ${P(t.chg5, 1)}">
     <b>${esc(t.name)}</b><span class="num">${P(t.chg, 1)}</span></a>`;
-  const mover = (t) => `<a class="mv-it" href="#analysis/${esc(t.symbol)}"><b>${esc(t.name)}</b> <span class="num ${t.chg >= 0 ? "up" : "down"}">${P(t.chg, 1)}</span>
+  const mover = (t) => `<a class="mv-it" href="#analysis/${esc(t.symbol)}">${stockLogo(t.symbol, t.name, 18)} <b>${esc(t.name)}</b> <span class="num ${t.chg >= 0 ? "up" : "down"}">${P(t.chg, 1)}</span>
     ${t.news ? `<div class="xs muted">📰 ${esc(t.news.title)} <span class="dim">${esc(t.news.at)}</span></div>` : '<div class="xs dim">관련 뉴스 없음</div>'}</a>`;
   el.innerHTML = `
   <div class="card"><div class="card-h"><h3>증시 지도 <span class="small dim">${esc(m.date)} 마감 기준 · 타일 크기 = 거래대금 · 색 = 등락</span></h3></div>
@@ -171,7 +184,7 @@ async function viewReplay(el) {
   const d0 = S.param && /^\d{4}-\d{2}-\d{2}$/.test(S.param) ? S.param : (S.replayDate || "");
   const r = await api(`/api/replay?date=${encodeURIComponent(d0)}`);
   S.replayDate = r.date;
-  const mv = (x) => `<a class="mv-it" href="#analysis/${esc(x.symbol)}"><b>${esc(x.name)}</b> <span class="num ${x.chg >= 0 ? "up" : "down"}">${P(x.chg, 1)}</span></a>`;
+  const mv = (x) => `<a class="mv-it" href="#analysis/${esc(x.symbol)}">${stockLogo(x.symbol, x.name, 18)} <b>${esc(x.name)}</b> <span class="num ${x.chg >= 0 ? "up" : "down"}">${P(x.chg, 1)}</span></a>`;
   const b = r.breadth;
   const aiRow = (a) => `<tr><td><a href="#analysis/${esc(a.symbol)}"><b>${esc(a.name)}</b></a></td><td>${badge(a.action)}</td><td class="r num">${R(a.prob_up, 0)}</td><td class="r num">${a.confidence}</td>
     <td class="r num">${a.later ? `<span class="${a.later.ret >= 0 ? "up" : "down"}">${P(a.later.ret, 1)}</span> ${a.later.correct ? "✅" : "❌"}` : '<span class="dim">미확정</span>'}</td></tr>`;
@@ -213,14 +226,84 @@ async function weeklyCard(root, anchorSel) {
   if (anchor) anchor.after(box); else root.append(box);
 }
 
-// ------------------------------------------------------------ 홈 맨 위 한 줄 브리핑 (시장 · 일정 · 내 위험 · AI 신뢰)
-async function homeOneLine(root) {
-  if (!root) return;
-  let o;
-  try { o = await api(`/api/oneline?${typeof pfModeQ === "function" ? pfModeQ() : ""}`); } catch { return; }
-  const IC = { ok: "🟢", good: "🟢", warn: "🟡", bad: "🔴" };
-  const box = document.createElement("div");
-  box.className = `oneline lv-${o.level}`;
-  box.innerHTML = o.items.map((x) => `<a href="${esc(x.link)}" class="ol-it"><span class="xs muted">${IC[x.level] || "•"} ${esc(x.label)}</span> <b class="small">${esc(x.text)}</b></a>`).join("") + `<span class="xs dim ol-at">${esc(o.as_of)}</span>`;
-  root.prepend(box);
+// ------------------------------------------------------------ v18: 뉴스·공시 상세 (원문 → 번역 → 쉬운 설명 → 영향 → 관련 종목)
+const LV_COLOR = { "🔴": "var(--down)", "🟠": "#f97316", "🟡": "#eab308", "⚪": "var(--dim)" };
+async function openDetail(kind, id) {
+  document.querySelector(".dt-ov")?.remove();
+  const ov = document.createElement("div");
+  ov.className = "dt-ov";
+  ov.innerHTML = `<div class="dt" role="dialog" aria-modal="true"><button class="icon-btn dt-x" title="닫기">✕</button><div class="dt-body">${skeleton()}</div></div>`;
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  ov.querySelector(".dt-x").onclick = close;
+  const body = ov.querySelector(".dt-body");
+  let d;
+  try { d = await api(`/api/${kind === "news" ? "news" : "disclosure"}/${encodeURIComponent(id)}`); } catch (e) { body.innerHTML = `<div class="veto">${esc(e.message)}</div>`; return; }
+  if (d.error) { body.innerHTML = `<div class="veto">${esc(d.error)}</div>`; return; }
+  const ex = d.explain || {};
+  const lvc = LV_COLOR[d.level?.icon] || "var(--dim)";
+  const rel = (d.related || []).map((r) => `<tr><td>${stockLogo(r.symbol, r.name, 18)} <a href="#analysis/${esc(r.symbol)}" class="dt-go"><b>${esc(r.name)}</b></a></td>
+    <td class="r num ${r.before_5d >= 0 ? "up" : "down"}">${P(r.before_5d, 1)}</td>
+    <td class="r num ${(r.after_this?.["1d"] ?? 0) >= 0 ? "up" : "down"}">${P(r.after_this?.["1d"], 1)}</td>
+    <td class="r num ${(r.after_this?.["5d"] ?? 0) >= 0 ? "up" : "down"}">${P(r.after_this?.["5d"], 1)}</td>
+    <td class="r num">${r.similar_avg_1d == null ? '<span class="dim">표본 부족</span>' : `${P(r.similar_avg_1d, 1)} <span class="xs dim">${r.similar_n}회</span>`}</td>
+    <td class="small">${r.ai_change ? esc(r.ai_change.text) : '<span class="dim">AI 판단 없음</span>'}</td></tr>`).join("");
+  const imp = d.impact || {};
+  body.innerHTML = `
+    <div class="dt-top"><span class="dt-lv" style="color:${lvc}">${esc(d.level?.icon || "")} ${esc(d.level?.label || "")}</span>
+      ${d.kind === "news" ? `<span class="chip xs">${esc(d.event_ko || "")}</span><span class="chip xs" style="color:${TONE_COLOR[d.tone_ko] || "inherit"}">● ${esc(d.tone_ko || "")}</span>${d.rumor ? '<span class="chip xs warn">루머·관측</span>' : ""}` : `<span class="chip xs">${esc(d.source)} 공시</span>${d.important ? '<span class="chip xs warn">⚠ 중요 공시</span>' : ""}`}
+      <span class="xs muted">${esc(d.source || "")}${d.source_weight ? ` · 출처 신뢰도 ${Math.round(d.source_weight * 100)}%` : " · 1차 자료"}</span></div>
+    <h3 class="dt-title">${esc(d.title)}</h3>
+    ${ex.ko_title && d.lang !== "ko" ? `<div class="dt-ko">🇰🇷 ${esc(ex.ko_title)}</div>` : ""}
+    <div class="xs muted">🕒 ${esc(d.time?.text || "")}${d.time?.collected ? ` · 수집 ${esc(d.time.collected)}` : ""} ${d.lang && d.lang !== "ko" ? ` · 원문 언어 ${esc({ en: "영어", ja: "일본어", zh: "중국어" }[d.lang] || d.lang)}` : ""}</div>
+    <div style="margin:10px 0"><a class="btn-sm primary" href="${esc(d.url || "#")}" target="_blank" rel="noopener noreferrer">원문 보기 ↗</a>
+      <button class="btn-sm" id="dt-ai">${ex.by === "llm" ? "AI 설명 다시" : "AI 설명 (번역 · 쉬운 해설)"}</button></div>
+    ${soWhat(d.so_what)}
+    <div class="dt-grid">
+      <div class="dt-sec"><div class="dt-h">① 원문</div><div class="small dt-text">${esc(d.body || d.summary || "(본문 없음 — 원문 링크에서 확인)")}</div></div>
+      <div class="dt-sec"><div class="dt-h">② 한국어 번역</div><div class="small dt-text">${d.lang === "ko" ? '<span class="dim">한국어 기사</span>' : ex.translation ? esc(ex.translation) : `<span class="dim">${esc(ex.note || "AI 설명을 누르면 번역합니다")}</span>`}</div></div>
+    </div>
+    <div class="dt-sec dt-easy"><div class="dt-h">③ 쉽게 말하면</div><div>${esc(ex.easy || "-")}</div>
+      <div class="dt-h" style="margin-top:8px">④ 주가에 미칠 수 있는 영향</div><div class="small">${esc(ex.impact || (imp.similar ? "과거 비슷한 공시 뒤 평균 움직임 참고" : "-"))}</div>
+      ${imp.ai_change ? `<div class="small" style="margin-top:6px">🤖 ${esc(imp.ai_change.text)}</div>` : ""}</div>
+    ${(d.fin || []).length ? `<div class="dt-sec"><div class="dt-h">실적 숫자</div><div class="fin-cards">${d.fin.map((f) => `<div class="fin-c"><div class="xs muted">${esc(f.label)}</div>
+      <div class="fin-v num">${esc(f.value)}</div>${f.change ? `<div class="num small ${f.change.startsWith("-") ? "down" : "up"}">${esc(f.change)} <span class="xs dim">증감 (기사에 적힌 기준)</span></div>` : ""}</div>`).join("")}</div></div>` : ""}
+    ${(d.numbers || []).length ? `<div class="dt-sec"><div class="dt-h">중요한 숫자</div>${d.numbers.map((n) => `<span class="chip">${n.label ? `<span class="xs muted">${esc(n.label)}</span> ` : ""}<b>${esc(n.value)}</b></span>`).join(" ")}</div>` : ""}
+    ${(d.terms || []).length ? `<div class="dt-sec"><div class="dt-h">용어 풀이</div>${d.terms.map((t) => `<div class="small"><b>${esc(t.term)}</b> — ${esc(t.meaning)}</div>`).join("")}</div>` : ""}
+    ${(d.chain || []).length ? `<div class="dt-sec"><div class="dt-h">⑤ 영향 받을 수 있는 종목</div><div class="dt-chain">${d.chain.map((c) => `<a class="chip dt-go" href="#analysis/${esc(c.symbol)}" title="${esc(c.why)}">${stockLogo(c.symbol, c.name, 18)} ${esc(c.name)} ${esc(c.level)}</a>`).join(" → ")}</div>
+      <div class="xs dim">🔴 기사에 직접 · 🟠 같은 업종 · 🟡 자주 함께 언급·비슷하게 움직임</div></div>` : ""}
+    ${rel ? `<div class="dt-sec"><div class="dt-h">뉴스 전후 주가 · AI 판단 변화 <span class="xs dim">시장 대비</span></div><div class="scroll"><table class="tight"><thead><tr><th>종목</th><th class="r">뉴스 전 5일</th><th class="r">뉴스 후 1일</th><th class="r">5일</th><th class="r">과거 비슷한 뉴스 뒤</th><th>AI 판단</th></tr></thead><tbody>${rel}</tbody></table></div></div>` : ""}
+    ${(d.siblings || []).length ? `<div class="dt-sec"><div class="dt-h">같은 소식 — 다른 매체 ${d.siblings.length}곳</div>${d.siblings.map((a) => `<div class="xs"><a href="${esc(a.url || "#")}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a> <span class="dim">${esc(a.source || "")} · ${esc(a.at)}</span></div>`).join("")}</div>` : ""}
+    <div class="xs dim">${esc(d.note || "")}</div>`;
+  body.querySelectorAll(".dt-go").forEach((a) => a.addEventListener("click", close));
+  $("#dt-ai").onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = "AI 가 읽는 중…";
+    const r = await post(kind === "news" ? "/api/news-explain" : "/api/disclosure-explain", { id: +id }).catch((er) => ({ error: er.message }));
+    if (r.error) { e.target.disabled = false; e.target.textContent = "다시 시도"; toast({ title: "AI 설명", body: r.error, level: "warn" }); return; }
+    openDetail(kind, id);
+  };
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-news],[data-disc]");
+  if (!t || e.target.closest("a[target=_blank]")) return;
+  e.preventDefault();
+  openDetail(t.dataset.news ? "news" : "disclosure", t.dataset.news || t.dataset.disc);
+});
+
+// v23 So What — 뉴스를 읽고 끝나지 않게: 무슨 뜻 → 관련 기업 → 내 보유 영향 → AI 판단 변화 → 결론
+function soWhat(w) {
+  if (!w) return "";
+  const co = (w.companies || []).map((c) => `<a class="sw-co" href="#analysis/${esc(c.symbol)}" title="${esc(c.why || "")}">${stockLogo(c.symbol, c.name, 18)} ${esc(c.name)}${c.held ? ' <b class="xs">보유</b>' : ""}</a>`).join("");
+  const mine = (w.mine || []).length ? w.mine.map((m) => `${esc(m.name)} ${num(m.qty)}주`).join(" · ") : "내 보유 종목과 직접 관련 없음";
+  const ch = (w.ai_changes || []).length ? w.ai_changes.map((c) => `<div class="small">${esc(c.name)} <b class="num ${c.delta < 0 ? "down" : c.delta > 0 ? "up" : ""}">${esc(koText(c.text))}</b></div>`).join("")
+    : '<div class="small muted">뉴스 이후 새 AI 판단 없음 (다음 판단 때 반영)</div>';
+  return `<div class="sowhat sw-${esc(w.level || "ok")}">
+    <div class="sw-row"><span class="sw-k">무슨 뜻?</span><div>${esc(w.meaning || "")}</div></div>
+    ${co ? `<div class="sw-row"><span class="sw-k">관련 기업</span><div class="sw-cos">${co}</div></div>` : ""}
+    <div class="sw-row"><span class="sw-k">내 보유 영향</span><div>${esc(mine)}</div></div>
+    <div class="sw-row"><span class="sw-k">AI 판단</span><div>${ch}</div></div>
+    <div class="sw-row sw-end"><span class="sw-k">결론</span><div><b>${esc(w.conclusion || "")}</b><div class="xs dim">${esc(w.note || "")}</div></div></div></div>`;
 }

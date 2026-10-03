@@ -52,6 +52,28 @@ def technical_features(bars: pd.DataFrame) -> pd.DataFrame:
     return f.replace([np.inf, -np.inf], np.nan)
 
 
+def long_features(bars: pd.DataFrame) -> pd.DataFrame:
+    """v20 장기 팩터 — 16년 KRX 연구(docs/RESEARCH_QUANT_V2.md)에서 종목 선택력이 확인된 재료.
+    12-1·6-1·3-1개월 모멘텀(최근 1개월 제외) · 52주 고점 근접도 · 60·250일 변동성 · 비유동성 · 최근 20일 최대 상승(복권형)."""
+    c = bars["close"]
+    lr = np.log(c).diff()
+    f = pd.DataFrame(index=bars.index)
+    f["mom_12_1"] = c.shift(21) / c.shift(252) - 1
+    f["mom_6_1"] = c.shift(21) / c.shift(126) - 1
+    f["mom_3_1"] = c.shift(21) / c.shift(63) - 1
+    f["high_252"] = c / c.rolling(252, min_periods=120).max() - 1
+    f["vol_60"] = lr.rolling(60).std()
+    f["vol_250"] = lr.rolling(250, min_periods=120).std()
+    amount = bars["amount"] if "amount" in bars else c * bars["volume"]
+    f["illiq"] = (lr.abs() / amount.replace(0, np.nan)).rolling(60, min_periods=20).mean()
+    f["max_ret_20"] = lr.rolling(20).max()
+    return f.replace([np.inf, -np.inf], np.nan)
+
+
+RANK_SKIP = ("fwd_ret", "label", "regime_score", "n_cross")  # 날짜마다 모든 종목이 같은 값 → 순위에 의미 없음
+MIN_CROSS = 20  # 순위가 의미 있으려면 같은 날 비교할 종목이 이만큼은 있어야 한다
+
+
 def forward_return(bars: pd.DataFrame, horizon: int) -> pd.Series:
     """라벨: 다음 봉 시가에 진입해 horizon 봉 뒤 종가에 청산했을 때의 수익률.
 
@@ -82,14 +104,20 @@ def build_dataset(
     horizon: int = 5,
     regime: pd.Series | None = None,
     sentiment: pd.DataFrame | None = None,
+    target: str = "up",
 ) -> pd.DataFrame:
-    """전 종목 패널 데이터셋. index=(ts, symbol), 컬럼=피처 + fwd_ret + label.
+    """전 종목 패널 데이터셋. index=(ts, symbol), 컬럼=피처 + cs_피처(날짜별 순위) + fwd_ret + label.
 
+    target="up"     label = horizon 뒤 오르면 1 (시장 방향이 섞인다 — 예전 방식)
+    target="excess" label = 같은 날 전체 종목의 가운데(중앙값)보다 더 오르면 1 — '어떤 종목이 더 오를까' (v20)
+    cs_* 컬럼: 날짜마다 종목들 사이 순위(0~1) − 0.5. 시장 전체가 오르내리는 영향을 지우고 '상대 위치'만 남긴다.
     fwd_ret 이 NaN 인 마지막 horizon 개 행은 추론용으로 남겨둔다 (학습 시 dropna).
     """
+    if target not in ("up", "excess"):
+        raise ValueError("target 은 up / excess")
     frames = []
     for symbol, bars in bars_by_symbol.items():
-        f = technical_features(bars)
+        f = pd.concat([technical_features(bars), long_features(bars)], axis=1)
         if regime is not None:
             f["regime_score"] = regime.reindex(f.index, method="ffill")
         if sentiment is not None and symbol in getattr(sentiment, "columns", []):
@@ -100,9 +128,20 @@ def build_dataset(
         f["symbol"] = symbol
         frames.append(f)
     df = pd.concat(frames).set_index("symbol", append=True).sort_index()
-    df["label"] = (df["fwd_ret"] > 0).astype(float).where(df["fwd_ret"].notna())
+    raw = [c for c in df.columns if c not in RANK_SKIP and c != "symbol"]
+    ranks = df[raw].groupby(level=0).rank(pct=True) - 0.5
+    df[[f"cs_{c}" for c in raw]] = ranks.to_numpy()
+    df["n_cross"] = df.groupby(level=0)["fwd_ret"].transform("size").astype(float)  # 그날 비교한 종목 수
+    if target == "excess":
+        ex = df["fwd_ret"] - df["fwd_ret"].groupby(level=0).transform("median")
+        df["label"] = (ex > 0).astype(float).where(df["fwd_ret"].notna())
+    else:
+        df["label"] = (df["fwd_ret"] > 0).astype(float).where(df["fwd_ret"].notna())
     return df
 
 
-def feature_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in df.columns if c not in ("fwd_ret", "label")]
+def feature_columns(df: pd.DataFrame, target: str = "up") -> list[str]:
+    """모델이 쓰는 피처. excess(종목 선택) 모델은 날짜별 순위(cs_*)만 — 같은 날 모든 종목에 같은 값은 쓸모없다."""
+    if target == "excess":
+        return [c for c in df.columns if c.startswith("cs_")]
+    return [c for c in df.columns if c not in ("fwd_ret", "label", "n_cross") and not c.startswith("cs_")]

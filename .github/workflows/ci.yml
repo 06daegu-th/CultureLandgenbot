@@ -21,6 +21,19 @@ jobs:
       - name: 마이그레이션 (PostgreSQL)
         env: { DATABASE_URL: "postgresql://quant:quant@localhost:5432/quant" }
         run: alembic upgrade head && alembic check
-      - name: 전체 테스트 (PostgreSQL 통합 포함 · 건너뜀 0개 강제 · 문서의 테스트 수 일치 검사)
+      - name: 전체 테스트 (PostgreSQL 통합 포함 · 건너뜀 0개 강제 · 테스트 개수는 이 결과가 기준)
         env: { QUANT_TEST_DATABASE_URL: "postgresql://quant:quant@localhost:5432/quant", QUANT_NO_SKIP: "1" }
         run: pytest -q -rs
+
+  clean-install:
+    # v23: 문서대로 `pip install -e ".[dev]"` 하나만 했을 때도 핵심 의존성(pyarrow 등)이 다 깔리고 주요 테스트가 도는지
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e ".[dev]"
+      - run: python -c "import quant_ai, pyarrow, holidays, certifi, defusedxml; print('core deps ok', quant_ai.__version__)"
+      - name: 주요 E2E·로고·문서 테스트 (추가 옵션 없이)
+        env: { QUANT_TEST_NO_TEMP_PG: "1" }
+        run: pytest -q tests/test_v23.py tests/test_docs_counts.py tests/test_marcap.py

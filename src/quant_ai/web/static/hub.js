@@ -21,14 +21,14 @@ async function osHomeBrief(root) {
   const circ = ["①", "②", "③", "④", "⑤"];
   box.innerHTML = card(`오늘의 AI 브리핑 <span class="small dim">${esc(b.as_of)}</span>`, `<div class="grid g-2">
     <div>${(b.items || []).map((x, i) => `<a class="brief-it" href="${esc(x.link)}"><b>${circ[i]}</b> ${esc(x.text)}</a>`).join("") || '<div class="xs dim">큰 변화 없음</div>'}</div>
-    <div><div class="small muted" style="margin-bottom:4px">오늘 확인할 것</div>${(b.check3 || []).map((c) => `<a class="brief-it" href="#analysis/${esc(c.symbol)}"><b>${esc(c.name)}</b>${c.held ? ' <span class="chip xs">보유</span>' : ""} <span class="xs muted">${(c.why || []).map(esc).join(" · ")}</span></a>`).join("") || '<div class="xs dim">없음</div>'}</div></div>`,
+    <div><div class="small muted" style="margin-bottom:4px">오늘 확인할 것</div>${(b.check3 || []).map((c) => `<a class="brief-it" href="#analysis/${esc(c.symbol)}">${stockLogo(c.symbol, c.name, 18)} <b>${esc(c.name)}</b>${c.held ? ' <span class="chip xs">보유</span>' : ""} <span class="xs muted">${(c.why || []).map(esc).join(" · ")}</span></a>`).join("") || '<div class="xs dim">없음</div>'}</div></div>`,
   `<a class="link" href="#action">Action Center ${ICONS.arrow}</a>`);
 }
 
 // ------------------------------------------------------------ 오늘 · Action Center
 async function viewActionCenter(el) {
   const [a, b] = await Promise.all([api(`/api/action-center?${pfModeQ()}`), api(`/api/briefing?${pfModeQ()}`).catch(() => ({}))]);
-  const check = (a.check || []).map((c) => `<a class="ac-it" href="#analysis/${esc(c.symbol)}"><b>${esc(c.name)}</b>${c.held ? ' <span class="chip xs">보유</span>' : ""}<div class="xs muted">${(c.why || []).map(esc).join(" · ")}</div></a>`).join("");
+  const check = (a.check || []).map((c) => `<a class="ac-it" href="#analysis/${esc(c.symbol)}">${stockLogo(c.symbol, c.name, 18)} <b>${esc(c.name)}</b>${c.held ? ' <span class="chip xs">보유</span>' : ""}<div class="xs muted">${(c.why || []).map(esc).join(" · ")}</div></a>`).join("");
   const evs = (a.events || []).map((e) => `<a class="ac-it" href="${e.symbol ? `#analysis/${esc(e.symbol)}` : "#calendar"}"><b class="${e.d_day <= 1 ? "warn-t" : ""}">${esc(e.d_label)}</b> ${esc(e.title)}${e.held ? ' <span class="chip xs">보유</span>' : ""}${e.estimated ? ' <span class="xs dim">추정</span>' : ""}</a>`).join("");
   const sig = (a.signal_changes || []).map((c) => `<a class="ac-it" href="#analysis/${esc(c.symbol)}"><b>${esc(c.name)}</b> ${badge(c.from)} → ${badge(c.to)} <span class="xs dim">${esc(c.at || "")}</span></a>`).join("");
   const disc = (a.disclosures || []).map((d) => `<a class="ac-it" href="#analysis/${esc(d.symbol)}"><b>${esc(d.name)}</b> <span class="small">${esc(d.title)}</span> <span class="xs dim">${esc(d.date || "")}</span></a>`).join("");
@@ -54,18 +54,21 @@ async function viewWatch(el) {
   S.wlGroup = S.wlGroup || "전체"; S.wlType = S.wlType || "전체";
   const rows = (w.rows || []).filter((r) => (S.wlGroup === "전체" || r.group === S.wlGroup) && (S.wlType === "전체" || r.type === S.wlType));
   const tabs = (id, list, cur) => `<div class="tabs" id="${id}">${["전체", ...list].map((g) => `<button data-k="${esc(g)}" class="${cur === g ? "on" : ""}">${esc(g)}</button>`).join("")}</div>`;
-  const tr = rows.map((r) => `<tr><td><button class="star-btn on" data-unstar="${esc(r.symbol)}" title="관심 해제">★</button></td>
-    <td><a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name)}</b></a> <span class="xs dim">${esc(r.symbol)}</span>${r.held ? ' <span class="chip xs">보유</span>' : ""}</td>
+  const tr = rows.map((r) => `<tr class="${r.starred ? "" : "wl-recent"}"><td>${r.starred ? `<button class="star-btn on" data-unstar="${esc(r.symbol)}" title="관심 해제">★</button>`
+      : `<button class="star-btn" data-star="${esc(r.symbol)}" title="최근 본 종목 — 눌러서 관심종목에 담기">☆</button>`}</td>
+    <td>${coId(r.symbol, r.name, { size: 28, tail: r.held ? ' · <b class="held">보유</b>' : "" })}</td>
     <td class="small">${esc(r.type)}</td><td class="r num">${r.last != null ? num(r.last, r.last < 1000 ? 2 : 0) : "-"}</td>
     <td class="r ${r.chg_pct >= 0 ? "up" : "down"}">${P(r.chg_pct, 2)}</td><td>${badge(r.ai)} <span class="xs num">${R(r.prob_up, 0)}</span></td>
     <td class="small">${r.change ? `<span class="${r.change_dir > 0 ? "up" : r.change_dir < 0 ? "down" : ""}">${esc(r.change)}</span>` : '<span class="dim">-</span>'}</td>
-    <td><select data-grp="${esc(r.symbol)}" class="mini-sel">${[...new Set([...(w.groups || []), "기본"])].map((g) => `<option ${g === r.group ? "selected" : ""}>${esc(g)}</option>`).join("")}<option value="__new">+ 새 그룹</option></select></td></tr>`).join("");
-  el.innerHTML = card(`관심종목 <span class="small dim">★ ${w.n_star}개 · 최근 검색은 검색창(/)에서</span>`, `
+    <td>${r.starred ? `<select data-grp="${esc(r.symbol)}" class="mini-sel">${[...new Set([...(w.groups || []).filter((g) => g !== "최근 본 종목"), "기본"])].map((g) => `<option ${g === r.group ? "selected" : ""}>${esc(g)}</option>`).join("")}<option value="__new">+ 새 그룹</option></select>`
+      : '<span class="xs dim">최근 본 종목</span>'}</td></tr>`).join("");
+  el.innerHTML = card(`관심종목 <span class="small dim">★ ${w.n_star}개 · ☆ 는 최근 본 종목 (눌러서 담기)</span>`, `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">${tabs("wl-grp", w.groups || [], S.wlGroup)}${tabs("wl-type", w.types || [], S.wlType)}</div>
     ${tr ? `<div class="scroll"><table class="tight"><thead><tr><th></th><th>종목</th><th>구분</th><th class="r">현재가</th><th class="r">등락</th><th>AI</th><th>신호 변화</th><th>그룹</th></tr></thead><tbody>${tr}</tbody></table></div>` : empty("관심종목이 없습니다 — 종목 화면에서 ☆ 를 누르세요 (단축키 s)")}`);
   el.querySelectorAll("#wl-grp button").forEach((b) => b.onclick = () => { S.wlGroup = b.dataset.k; render(); });
   el.querySelectorAll("#wl-type button").forEach((b) => b.onclick = () => { S.wlType = b.dataset.k; render(); });
   el.querySelectorAll("[data-unstar]").forEach((b) => b.onclick = async () => { await post("/api/star", { symbol: b.dataset.unstar, on: false }); render(); });
+  el.querySelectorAll("[data-star]").forEach((b) => b.onclick = async () => { await post("/api/star", { symbol: b.dataset.star, on: true }); render(); });
   el.querySelectorAll("[data-grp]").forEach((s) => s.onchange = async () => {
     let g = s.value;
     if (g === "__new") { g = (prompt("새 그룹 이름 (20자 이내)") || "").trim(); if (!g) { render(); return; } }
@@ -111,14 +114,17 @@ async function viewScorecard(el) {
     <div class="grid g-2" style="margin-top:8px"><div>${calTable(pub.calibration)}</div>
       <div><div class="small muted">실패 사례 (크게 틀린 순)</div><table class="tight"><tbody>${(pub.failures || []).map((f) => `<tr><td class="xs">${esc(f.at)}</td><td><a href="#analysis/${esc(f.symbol)}">${esc(f.name)}</a></td><td>${badge(f.action)}</td><td class="r num">${R(f.prob_up, 0)}</td><td class="r ${f.realized >= 0 ? "up" : "down"}">${P(f.realized, 1)}</td></tr>`).join("")}</tbody></table></div></div>
     <div class="xs dim" style="margin-top:6px">${esc(pub.method)} · ${esc(pub.stability_msg || "")}</div>`) : "";
-  el.innerHTML = `
-  <div class="card"><div class="card-h"><h3>AI 성적표 ${sym ? `— <a href="#analysis/${esc(sym)}">${esc(sym)}</a>` : "— 전체"} <span class="small dim">결과가 확정된 판단만 · ${esc(c.horizon)} · 마지막 ${esc(c.last || "-")}</span></h3>
+  el.innerHTML = `<div id="sc-easy"></div><div id="sc-ctx"></div>
+  <div class="card"><div class="card-h"><h3>AI 성적표 (전문 지표) ${sym ? `— <a href="#analysis/${esc(sym)}">${esc(sym)}</a>` : "— 전체"} <span class="small dim">결과가 확정된 판단만 · ${esc(c.horizon)} · 마지막 ${esc(c.last || "-")}</span></h3>
     <div class="right"><input id="sc-sym" class="mini-in" placeholder="종목 코드" value="${esc(sym)}"><button class="btn-sm" id="sc-go">보기</button>${sym ? '<a class="btn-sm" href="#scorecard">전체</a>' : ""}</div></div>
     <div class="small">채점 ${num(c.n_scored)}건 / 전체 판단 ${num(c.n_total)}건</div>
     <div class="sc-grid" style="margin-top:10px">${col("50")}${col("100")}${col("300")}</div>
     ${card("확률 보정 (Calibration) — 최근 100회", calTable(c.main?.calibration), "", "flat")}
     <div class="xs dim">${esc(c.note)} · Brier Skill = 1 − Brier/기준 Brier (0 보다 작으면 '늘 평균 확률을 말하는 것'보다 못함) · AI Alpha = AI 가 고른 판단(P≥50%)의 평균 수익 − 전체 평균</div></div>
   ${pubCard}`;
+  plainScore($("#sc-easy"), sym);  // v19: 쉬운 말 성적표를 맨 위에 (easy.js)
+  if (!sym) contextScore($("#sc-ctx"));  // v23: 상황별 성적 (뉴스 유형 · 실적 전후 · 종목)
+  if (uiMode() === "easy") foldPro(el, "#sc-easy", "전문 지표 펼치기 (정확도 구간 · 확률 보정 · 기간별 성적)");
   const go = () => { const v = $("#sc-sym").value.trim(); location.hash = v ? `#scorecard/${encodeURIComponent(v)}` : "#scorecard"; };
   $("#sc-go").onclick = go;
   $("#sc-sym").onkeydown = (e) => { if (e.key === "Enter") go(); };
@@ -135,8 +141,8 @@ async function viewAILabV16(el) {
   ${card(`AI Lab <span class="small dim">여러 AI → 합의 → Risk Gate → 최종 판단 · ${esc(l.as_of)}</span>`, `
     <div class="lab-flow"><div class="lab-col">${(l.layers || []).map(node).join("")}</div><div class="lab-arrow">→</div>
       <div class="lab-col"><div class="lab-n st-${esc(l.ensemble.status)}"><div class="small b">${OS_ST[l.ensemble.status] || "⚪"} Ensemble (가중 합의)</div><div class="xs muted">30일 ${l.ensemble.n_30d}건 · ${Object.entries(l.ensemble.actions_30d || {}).map(([k, v]) => `${esc(k)} ${v}`).join(" · ")}</div><div class="xs">${esc(l.ensemble.detail)}</div></div></div>
-      <div class="lab-arrow">→</div><div class="lab-col"><div class="lab-n"><div class="small b">🛡 Risk Gate</div><div class="xs muted">${esc(l.risk_gate.detail)}</div><div class="xs dim">${Object.entries(l.risk_gate.codes || {}).map(([k, v]) => `${esc(k)} ${v}`).join(" · ")}</div></div></div>
-      <div class="lab-arrow">→</div><div class="lab-col"><div class="lab-n"><div class="small b">🎯 최종</div><div class="xs muted">${esc(l.final.detail)}</div></div></div></div>
+      <div class="lab-arrow">→</div><div class="lab-col"><div class="lab-n"><div class="small b">위험 점검</div><div class="xs muted">${esc(l.risk_gate.detail)}</div><div class="xs dim">${Object.entries(l.risk_gate.codes || {}).map(([k, v]) => `${esc(k)} ${v}`).join(" · ")}</div></div></div>
+      <div class="lab-arrow">→</div><div class="lab-col"><div class="lab-n"><div class="small b">최종</div><div class="xs muted">${esc(l.final.detail)}</div></div></div></div>
     <div class="xs dim" style="margin-top:8px">${esc(l.note)}</div>`)}
   <div class="grid g-2">
     ${card("모델 단계 <span class='small dim'>Research → Challenger → Shadow → Champion</span>", `<div class="xs muted" style="margin-bottom:6px">${(l.pipeline || []).map(esc).join(" → ")}</div>${models ? `<div class="scroll"><table class="tight"><tbody>${models}</tbody></table></div>` : empty("등록된 모델 없음")}
@@ -176,7 +182,7 @@ async function conflictCard(el) {
   el.appendChild(box);
   let c;
   try { c = await api("/api/conflicts"); } catch (e) { box.innerHTML = card("데이터 충돌", `<div class="veto">${esc(e.message)}</div>`); return; }
-  const IC = { bad: "🔴", warn: "🟡", info: "🔵" };
+  const IC = { bad: lvDot("bad"), warn: lvDot("warn"), info: lvDot("idle") };
   const KL = { price: "가격", earnings: "실적일", news: "뉴스 해석" };
   box.innerHTML = card(`데이터 충돌 <span class="small dim">${esc(c.headline)} · ${esc(c.as_of)}</span>`, c.rows.length
     ? `<div class="tr-rows">${c.rows.slice(0, 20).map((r) => `<div class="tr-row"><span class="tr-ic">${IC[r.level] || "•"}</span><div><div class="small b">${esc(KL[r.kind] || r.kind)}${r.symbol ? ` · <a href="#analysis/${esc(r.symbol)}">${esc(r.symbol)}</a>` : ""}</div><div class="xs muted">${esc(r.title)}</div></div></div>`).join("")}</div><div class="xs dim" style="margin-top:6px">${esc(c.note)}</div>`
@@ -188,7 +194,7 @@ async function netCard(el) {
   const box = document.createElement("div");
   el.appendChild(box);
   const draw = (r) => {
-    const IC = { ok: "🟢", missing: "⚪", format: "🟡", rate: "🟡", timeout: "🔴", blocked: "🔴", dns: "🔴", tls: "🔴", server: "🟠", key_or_net: "🔴", error: "🔴" };
+    const IC = new Proxy({ ok: "good", missing: "idle", format: "warn", rate: "warn" }, { get: (t, k) => lvDot(t[k] || "bad") });
     box.innerHTML = card(`외부 연결 점검 <span class="small dim">${esc(r.as_of || "")}</span>`, `${r.rows?.length ? `<div class="small b" style="margin-bottom:6px">${esc(r.headline)}</div>
       <table class="tight"><tbody>${r.rows.map((x) => `<tr><td>${IC[x.status] || "⚪"}</td><td class="small b">${esc(x.title)}</td><td class="xs">${esc(x.detail)}</td><td class="r xs dim num">${x.ms ?? "-"}ms</td></tr>`).join("")}</tbody></table>` : `<div class="xs dim">${esc(r.headline || "아직 점검 안 함")}</div>`}
       <div class="xs dim" style="margin-top:6px">네트워크가 되는 곳으로 옮긴 뒤 한 번 · 터미널: <code>./run.sh netcheck</code></div>`, '<button class="btn-sm" id="nc-run">연결 점검</button>');
@@ -203,7 +209,7 @@ async function keysCard(el) {
   el.appendChild(box);
   let k;
   try { k = await api("/api/keys"); } catch { box.remove(); return; }
-  const ST = { ok: "🟢", warn: "🟡", bad: "🔴", missing: "⚪" };
+  const ST = { ok: lvDot("good"), warn: lvDot("warn"), bad: lvDot("bad"), missing: lvDot("idle") };
   box.innerHTML = card(`API 키 진단 <span class="small dim">${esc(k.env_file || ".env 를 찾지 못함")}</span>`, `
     ${(k.issues || []).map((x) => `<div class="xs warn-t">⚠ ${esc(x)}</div>`).join("")}
     <div class="tr-rows">${k.keys.map((x) => `<div class="tr-row"><span class="tr-ic">${ST[x.status]}</span><div><div class="small b">${esc(x.title)} <span class="xs mono dim">${esc(x.key)}${x.masked ? " " + esc(x.masked) : ""}</span></div>
@@ -222,19 +228,37 @@ async function keysCard(el) {
 
 // ------------------------------------------------------------ Portfolio OS (위험 · 시뮬레이션)
 async function viewPortfolioOS(el) {
-  const [o, rs] = await Promise.all([api(`/api/portfolio-os?${pfModeQ()}`), api(`/api/risk-simple?${pfModeQ()}`).catch(() => ({}))]);
+  const [o, rs] = await Promise.all([api(`/api/portfolio-os?${pfModeQ()}&source=${S.posSource || "auto"}`), api(`/api/risk-simple?${pfModeQ()}`).catch(() => ({}))]);
   if (o.empty) { el.innerHTML = card("Portfolio OS", `<div class="lesson">${esc(o.headline)}</div>`, '<a class="link" href="#accounts">계좌 입력</a>'); return; }
   const lvCls = { LOW: "good", MEDIUM: "warn-t", HIGH: "bad-t" }[o.risk_level] || "";
-  const hold = (o.holdings || []).map((h) => `<tr><td><a href="#analysis/${esc(h.symbol)}"><b>${esc(h.name)}</b></a></td><td class="small">${esc(h.sector)}</td><td class="r num">₩${num(h.value)}</td><td style="min-width:120px">${hbar(h.weight, Math.max(0.3, o.top?.weight || 0.3))} <span class="xs num">${R(h.weight, 1)}</span></td></tr>`).join("");
+  // v19: 보유 종목마다 로고 · AI 상태 · 중요 뉴스 · 실적 D-day
+  const hold = (o.holdings || []).map((h) => `<tr><td>${coId(h.symbol, h.name, { size: 26 })}
+      ${h.ai ? ` <span class="chip xs" title="AI 마지막 판단 · ${esc(h.ai.at)}">${lvDot(ACT_LV[h.ai.action])}${esc(koAct(h.ai.action))}</span>` : ""}
+      ${h.news ? ` <span class="chip xs warn" data-news="${esc(h.news.top?.id)}" title="${esc(h.news.top?.title || "")}" role="button">중요 뉴스 ${h.news.n}</span>` : ""}
+      ${h.earn ? ` <span class="chip xs ${h.earn.d_day <= 3 ? "warn" : ""}">실적 ${esc(h.earn.d_label)}${h.earn.estimated ? " 추정" : ""}</span>` : ""}</td>
+    <td class="small">${esc(h.sector)}</td><td class="r num">₩${num(h.value)}</td><td style="min-width:120px">${hbar(h.weight, Math.max(0.3, o.top?.weight || 0.3))} <span class="xs num">${R(h.weight, 1)}</span></td></tr>`).join("");
+  const themes = (o.themes || []).map((t) => `<div class="th-row"><span class="small b">${esc(t.theme)}</span>${hbar(t.weight, 1)}<span class="num small ${t.level === "HIGH" ? "bad-t" : t.level === "MEDIUM" ? "warn-t" : ""}">${R(t.weight, 0)}</span>
+      <div class="xs muted">${esc(t.members.join(" · "))}${t.n >= 2 && t.level !== "LOW" ? " — 사실상 같은 베팅" : ""}</div></div>`).join("");
+  const soon = (o.earnings_soon || []).map((e) => `<a class="chip ${e.d_day <= 3 ? "warn" : ""}" href="#analysis/${esc(e.symbol)}">${stockLogo(e.symbol, e.name, 16)} ${esc(e.name)} 실적 ${esc(e.d_label)}${e.estimated ? " 추정" : ""}</a>`).join(" ");
+  const nws = (o.news_alerts || []).map((n) => `<div class="small" data-news="${esc(n.top?.id)}" role="button" style="cursor:pointer">${stockLogo(n.symbol, n.name, 16)} <b>${esc(n.name)}</b> ${esc(n.top?.title || "")} <span class="xs dim">${n.n}건</span></div>`).join("");
   el.innerHTML = `
-  <div class="card pos-hero"><div class="card-h"><h3>Portfolio OS <span class="small dim">${esc(o.source)} · ${esc(o.as_of)}</span></h3><div class="right"><a class="btn-sm" href="#accounts">계좌</a></div></div>
-    <div class="kv-grid">${kv("내 자산", "₩" + num(o.total))}${kv("주식", R(o.stock_pct, 0))}${kv("현금", R(o.cash_pct, 0))}${kv("종목 수", o.n)}${kv("업종 집중", esc(o.sector_level))}${kv("최대 비중", o.top ? `${esc(o.top.name)} ${R(o.top.weight, 0)}` : "-")}${kv("Risk", `<span class="${lvCls}">${esc(o.risk_level)}</span>`)}</div>
+  <div class="card pos-hero"><div class="card-h"><h3>내 자산 한눈에 <span class="small dim">${esc(o.source)} · ${esc(o.as_of)}</span></h3><div class="right">
+    ${o.n_accounts ? `<div class="tabs" id="pos-src"><button data-k="accounts" class="${o.source_key === "accounts" ? "on" : ""}">내가 입력한 계좌</button><button data-k="system" class="${o.source_key === "system" ? "on" : ""}">시스템 모의 장부</button></div>` : ""}
+    <a class="btn-sm" href="#accounts">계좌 입력</a></div></div>
+    <div class="kv-grid">${kv("내 자산", "₩" + num(o.total))}${kv("주식", R(o.stock_pct, 0))}${kv("현금", R(o.cash_pct, 0))}${kv("종목 수", o.n)}${kv("업종 집중", esc({ HIGH: "높음", MEDIUM: "보통", LOW: "낮음", UNKNOWN: "모름 (업종 정보 없음)" }[o.sector_level] || o.sector_level))}${kv("최대 비중", o.top ? `${esc(o.top.name)} ${R(o.top.weight, 0)}` : "-")}</div>
+    <div class="pos-risk"><span class="xs muted">포트폴리오 위험</span> <b class="pos-lv ${lvCls}">${esc(koRisk(o.risk_level))}</b></div>
     <div class="biggest"><div class="xs muted">지금 포트폴리오에서 가장 큰 위험은?</div><div class="b">${esc(o.biggest_risk)}</div>${(o.other_risks || []).length ? `<div class="xs muted">${o.other_risks.map(esc).join(" · ")}</div>` : ""}</div></div>
+  ${soon || nws ? card("보유 종목 — 지금 챙길 것", `${soon ? `<div class="xs muted b">실적 발표 (14일 안)</div><div style="margin:4px 0 8px">${soon}</div>` : ""}${nws ? `<div class="xs muted b">중요 뉴스 (3일)</div>${nws}` : ""}`) : ""}
+  ${(o.bets || []).length ? card("사실상 하나의 큰 베팅 <span class='small dim'>이름은 달라도 같이 오르내리는 묶음</span>", (o.bets || []).map((b) => `<div class="bet-row bet-${esc(b.level)}">
+      <div class="bet-h"><b>${esc(b.label)} 노출</b><b class="num bet-w">${R(b.weight, 0)}</b></div>
+      <div class="small">${esc(b.members.join(" · "))}</div><div class="xs muted">${esc(b.why)}${b.weight > 0.25 ? " → 한 종목처럼 움직일 수 있음 — 같은 악재에 같이 빠짐" : ""}</div></div>`).join("")) : ""}
+  ${themes ? card("테마 · 같은 베팅 집중도 <span class='small dim'>업종이 달라도 같은 재료에 함께 움직이는 묶음</span>", themes) : ""}
   <div class="grid g-2">
     ${card("보유 비중", hold ? `<table class="tight"><tbody>${hold}</tbody></table>` : empty(), "", "")}
-    ${card(`쉬운 위험 <span class="small dim">시스템 ${esc(rs.mode || "paper")} 장부 기준</span> <span class="small ${LV_CLS[rs.level] || ""}">${esc(rs.headline || "")}</span>`, (rs.cards || []).map((c) => `<div class="tr-row"><span class="tr-ic">${OS_ST[c.level] || "⚪"}</span><div><div class="small b">${esc(c.title)} <span class="num">${esc(c.value)}</span></div><div class="xs muted">${esc(c.plain)}</div></div></div>`).join("") || empty("시스템 장부 기준 위험 카드 없음"))}
+    ${card(`쉬운 위험 <span class="small dim">${esc({ paper: "모의투자", live: "실계좌", shadow: "그림자 매매" }[rs.mode || "paper"] || rs.mode)} 장부 기준</span> <span class="small ${LV_CLS[rs.level] || ""}">${esc(rs.headline || "")}</span>`, (rs.cards || []).map((c) => `<div class="tr-row"><span class="tr-ic">${OS_ST[c.level] || "⚪"}</span><div><div class="small b">${esc(c.title)} <span class="num">${esc(c.value)}</span></div><div class="xs muted">${esc(c.plain)}</div></div></div>`).join("") || empty("시스템 장부 기준 위험 카드 없음"))}
   </div>
   <div id="pos-sim">${card("실제 돈을 넣기 전에 — 시뮬레이션", '<div class="xs dim">계산 중…</div>')}</div>`;
+  el.querySelectorAll("#pos-src button").forEach((b) => b.onclick = () => { S.posSource = b.dataset.k; render(); });
   const sim = await api(`/api/simulate?${pfModeQ()}`).catch((e) => ({ error: e.message }));
   const box = $("#pos-sim");
   if (!box) return;
@@ -311,7 +335,7 @@ async function viewGovernance(el) {
 // ------------------------------------------------------------ 수동 모의 장부
 async function viewManual(el) {
   const b = await api("/api/ticket/book");
-  const rows = (b.positions || []).map((p) => `<tr><td><a href="#analysis/${esc(p.symbol)}"><b>${esc(p.symbol)}</b></a></td><td class="r num">${num(p.qty)}</td><td class="r num">${num(p.avg_price, 0)}</td><td class="r num">${num(p.price, 0)}</td><td class="r ${p.pnl_pct >= 0 ? "up" : "down"}">${P(p.pnl_pct)}</td></tr>`).join("");
+  const rows = (b.positions || []).map((p) => `<tr><td>${stockLogo(p.symbol, p.name || p.symbol, 18)} <a href="#analysis/${esc(p.symbol)}"><b>${esc(p.symbol)}</b></a></td><td class="r num">${num(p.qty)}</td><td class="r num">${num(p.avg_price, 0)}</td><td class="r num">${num(p.price, 0)}</td><td class="r ${p.pnl_pct >= 0 ? "up" : "down"}">${P(p.pnl_pct)}</td></tr>`).join("");
   el.innerHTML = card("수동 모의 장부 <span class='small dim'>종목 화면의 [모의 주문]으로 기록 · 실제 돈 아님 · 전략 장부와 분리</span>", `
     <div class="kv-grid">${kv("평가", "₩" + num(b.equity))}${kv("현금", "₩" + num(b.cash))}${kv("수익률", P(b.return))}</div>
     ${rows ? `<div class="scroll" style="margin-top:8px"><table class="tight"><thead><tr><th>종목</th><th class="r">수량</th><th class="r">평단</th><th class="r">현재가</th><th class="r">손익</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty("아직 모의 주문이 없습니다 — 종목 검색(/) → 종목 → [모의 주문]")}`,
@@ -376,4 +400,46 @@ function segTable(rows) {
   return `<div class="small b" style="margin-top:10px">상황별 슬리피지 <span class="xs dim">${esc(r.mode)} 장부${r.measured ? " · 실측" : " · 모델 체결이라 참고"}</span></div>
     <table class="tight"><thead><tr><th>상황</th><th class="r">건수</th><th class="r">평균</th><th class="r">p90</th></tr></thead><tbody>${r.segments.map((g) =>
       `<tr><td class="small">${esc(g.label)}${g.enough ? "" : ' <span class="xs dim">표본 적음</span>'}</td><td class="r num">${g.n}</td><td class="r num ${g.mean_bps > 20 ? "warn-t" : ""}">${g.mean_bps}bp</td><td class="r num">${g.p90_bps ?? "-"}bp</td></tr>`).join("")}</tbody></table>`;
+}
+
+// v23 상황별 AI 성적 — 어떤 상황에서 맞고 어떤 상황에서 틀리는지 (실제 전진 기록만)
+async function contextScore(box) {
+  if (!box) return;
+  let r;
+  try { r = await api("/api/ai-context"); } catch { return; }
+  if (!r.n) { box.innerHTML = ""; return; }
+  const tb = (title, rows) => `<div><div class="small b" style="margin-bottom:4px">${esc(title)}</div><table class="tight"><tbody>${rows.map((x) => `<tr class="${x.enough ? "" : "dim"}">
+    <td class="small">${esc(x.key)}</td><td class="r num"><b>${Math.round(x.hit * 100)}%</b></td><td class="r xs dim">${x.n}건${x.enough ? "" : " · 표본 부족"}</td></tr>`).join("")}</tbody></table></div>`;
+  box.innerHTML = card("상황별 성적 <span class='small dim'>어떤 상황에서 맞고 틀리나 — 방향 적중률</span>",
+    `<div class="grid g-3">${tb("뉴스 유형별", r.news)}${tb("실적 발표 전후", r.earnings)}${tb("종목별", r.symbol)}</div><div class="xs dim" style="margin-top:6px">${esc(r.note)}</div>`);
+}
+
+// v24 AI 신뢰 센터 — "지금 AI 를 믿어도 되나?" 를 한 화면에서: 판정 → 근거(전진 기록·독립 평가·봉인) → 약점 → 단계
+async function viewAITrust(el) {
+  const t = await api("/api/ai-trust");
+  const st = t.state || {}, ez = st.easy || {}, lad = t.ladder || {}, ev = t.evaluation, led = t.ledger || {}, fl = t.failures, cx = t.context || {};
+  const KEY = { verified: "good", checking: "warn", banned: "bad" };
+  const STAGE = { BACKTEST: "과거 시험만", SHADOW: "그림자 기록 (주문 없음)", PAPER: "모의투자에서 사용", LIVE: "소액 실전" };
+  const stage = String(lad.stage || "backtest").toUpperCase();
+  const row = (k, v, sub) => `<div class="tc-row"><span class="tc-k">${esc(k)}</span><span class="tc-v">${v}</span>${sub ? `<span class="xs dim tc-s">${esc(sub)}</span>` : ""}</div>`;
+  const pct = (x) => x == null ? "-" : `${Math.round(x * 100)}%`;
+  const verdict = `<div class="tc-hero tc-${esc(KEY[st.key] || "idle")}"><div class="xs muted">지금 AI 판단을</div>
+    <div class="tc-big">${lvDot(KEY[st.key] || "idle")}${esc(st.label || "-")}</div><div class="small">${esc(st.why || "")}</div>
+    <div class="tc-stage"><span class="stage-tag">${esc(stage)}</span> ${esc(STAGE[stage] || "")}</div></div>`;
+  const record = card("실제 기록 — 미래를 맞혔나 (전진 기록만)", [
+    row("방향 적중", ez.n ? `<b class="num">${ez.hits}/${ez.n}</b>` : "아직 부족", ez.n ? `'항상 오른다'고 했어도 ${ez.base_hits}` : "판단 뒤 5거래일이 지나야 채점"),
+    row("비용 뺀 뒤 지수 대비", ez.excess == null ? "-" : `<b class="num ${ez.excess >= 0 ? "up" : "down"}">${ez.excess >= 0 ? "+" : ""}${(ez.excess * 100).toFixed(1)}%p</b>`, "AI 가 '산다' 한 것만 샀다면"),
+    row("시장 대비 적중", ez.alpha ? `<b class="num">${pct(ez.alpha.hit)}</b>` : "-", ez.alpha ? `기준 ${pct(Math.max(0.5, ez.alpha.base))} · ${ez.alpha.verdict}` : "시장이 다 같이 오를 때의 '공짜 적중'을 빼고 채점"),
+  ].join(""));
+  const proof = card("증명 — 사후에 고칠 수 없게", [
+    row("독립 평가 결론", ev ? `<b>${esc(ev.verdict || "-")}</b>` : "아직 없음", ev ? `${ev.n ?? "-"}건 · 적중 ${pct(ev.hit_rate)} vs 기준선 ${pct(ev.best_baseline)}${ev.p_value != null && ev.hit_rate > ev.best_baseline ? ` · 우연일 확률 ${(ev.p_value * 100).toFixed(1)}%` : ""}` : "매일 밤 자동으로 채점"),
+    row("예측 장부 봉인", led.error ? "확인 실패" : led.ok ? `<b class="good">이상 없음</b>` : `<b class="bad-t">문제 발견</b>`, led.sealed != null ? `봉인 ${num(led.sealed)}건 · 봉인 전 기록 ${num(led.legacy || 0)}건` : ""),
+    row("자동 강등", st.demoted ? '<b class="bad-t">강등됨 — 주문에 쓰지 않음</b>' : "없음", "성적이 기준 아래로 떨어지면 사람 없이 자동으로 내린다"),
+  ].join(""));
+  const weak = fl && (fl.findings || []).length ? card("약점 — 어디서 자주 틀리나", fl.findings.map((f) => `<div class="tc-f"><div class="small">${esc(f.text)}</div>${f.action ? `<div class="xs muted">대응: ${esc(typeof f.action === "string" ? f.action : "")}</div>` : ""}</div>`).join("")
+    + '<a class="xs" href="#ailab">틀린 이유 연구 전체 →</a>') : card("약점 — 어디서 자주 틀리나", `<div class="small muted">${esc(fl?.message || "채점된 기록이 쌓이면 자동으로 찾습니다")}</div>`);
+  const ctx = (cx.news || []).length ? card("상황별 성적", `<div class="grid g-3">${[["뉴스 유형별", cx.news], ["실적 발표 전후", cx.earnings], ["종목별", cx.symbol]].map(([h, rows]) => `<div><div class="small b">${esc(h)}</div>${(rows || []).slice(0, 5).map((x) => `<div class="tc-row ${x.enough ? "" : "dim"}"><span class="tc-k">${esc(x.key)}</span><span class="tc-v num">${pct(x.hit)}</span><span class="xs dim tc-s">${x.n}건</span></div>`).join("")}</div>`).join("")}</div>`) : "";
+  const nextStep = (lad.reasons || []).length ? card("다음 단계로 가려면", `<ul class="plain small">${lad.reasons.slice(0, 5).map((r) => `<li>· ${esc(typeof r === "string" ? r : r.text || JSON.stringify(r))}</li>`).join("")}</ul>`) : "";
+  el.innerHTML = `${verdict}<div class="grid g-2">${record}${proof}</div>${weak}${ctx}${nextStep}
+    <div class="xs dim" style="margin:8px 2px">성적은 결과가 확정된 실제 판단만으로 계산합니다 (과거 시험 결과는 섞지 않음) · 자세한 지표: <a href="#scorecard">AI 성적표</a> · <a href="#verify">예측 기록장</a> · <a href="#aihealth">AI 상태 점검</a></div>`;
 }

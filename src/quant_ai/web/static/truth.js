@@ -30,9 +30,13 @@ function tickMarketClock() {
     if (left <= 0) refetch = true;
     const state = m.trading_day ? m.session_label || PHASE_KO[m.phase] || m.phase : `휴장${m.holiday && m.holiday !== "주말" ? "·" + m.holiday : ""}`;
     const cls = m.phase === "open" ? "open" : m.trading_day ? (["pre_market", "after_hours", "pre_auction"].includes(m.session_code) ? "ext" : "") : "holiday";
-    const tip = `${m.name} · 현지 ${m.local_time} · 다음 개장 ${m.next_open_kst} · 다음 폐장 ${m.next_close_kst}${m.session?.note ? " · " + m.session.note : ""}`;
-    return `<a class="pill mktc ${cls}" href="#truth" title="${esc(tip)}">${m.flag || ""} <b>${esc(m.short || k)}</b> ${esc(state)} <span class="mono xs">${esc(m.next_event)} ${dur(left)}</span></a>`;
+    const tip = `${m.name} · 현지 ${m.local_time} · 다음 개장 ${m.next_open_kst} · 다음 폐장 ${m.next_close_kst}${m.session?.note ? " · " + m.session.note : ""}${m.dst == null ? "" : m.dst ? " · 서머타임 (정규장 22:30~05:00 한국시간)" : " · 표준시 (정규장 23:30~06:00 한국시간)"}`;
+    const word = m.phase === "open" ? "장중" : m.trading_day ? (m.session_label || "장마감") : "휴장";
+    return `<a class="pill mktc ${cls}" href="#truth" title="${esc(tip)}"><b>${esc(m.short || k)}</b> ${m.light || ""} ${esc(word === state ? word : state)} <span class="mono xs">· ${m.next_event === "폐장" ? "마감까지" : "개장까지"} ${dur(left)}</span></a>`;
   }).join(" ");
+  const notes = Object.values(d.markets).map((m) => m.notice).filter(Boolean);
+  const nb = $("#market-notice");
+  if (nb) nb.innerHTML = notes.length ? notes.map((n) => `<div class="mkt-notice">🛑 ${esc(n)}</div>`).join("") : "";
   if (refetch && Date.now() - MKT.fetchedAt > 20e3) loadClock();
 }
 
@@ -144,15 +148,14 @@ async function chartPlanLines(sym, plan) {
   for (let i = 0; i < 30; i++) {  // 차트가 아직 그려지는 중이면 잠깐 기다림
     const el = $("#an-chart");
     if (!el || el.dataset.sym !== sym) { await new Promise((r) => setTimeout(r, 150)); continue; }
-    const s = el._series;
-    if (!s) { await new Promise((r) => setTimeout(r, 150)); continue; }
+    if (!el._series) { await new Promise((r) => setTimeout(r, 150)); continue; }
     const en = plan.entry || {};
-    const L = (price, color, title, style = 2) => price && s.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title });
-    L(plan.stop, "#ef4444", "손절(무효화)", 0);
-    L(en.low, "#3b82f6", "진입 하단");
-    L(en.high, "#3b82f6", "진입 상단");
-    L(en.no_chase_above, "#f59e0b", "추격 금지");
-    L(plan.target, "#22c55e", "목표");
+    const L = (price, color, title, style, pri) => chartLine(el, { price, color, title, style, pri });
+    L(plan.stop, "#ef4444", "손절", 0, 10);
+    L(en.low, "#3b82f6", "진입 하단", 2, 8);
+    L(en.high, "#3b82f6", "진입 상단", 2, 7.5);
+    L(en.no_chase_above, "#f59e0b", "추격 금지", 2, 6);
+    L(plan.target, "#22c55e", "목표", 2, 7);
     const leg = document.createElement("div");
     leg.className = "chart-legend xs";
     leg.innerHTML = `<span style="color:#3b82f6">━ AI 진입 구간</span> <span style="color:#ef4444">━ 손절</span> <span style="color:#22c55e">┅ 목표</span> <span style="color:#f59e0b">┅ 추격 금지</span> <span class="dim">▲▼ 과거 AI BUY/SELL</span>${plan.action && plan.action !== "BUY" ? ` <span class="warn-t">· 지금 신호 ${esc(plan.action)} — 구간은 '산다면' 참고용</span>` : ""}`;
@@ -235,7 +238,7 @@ function initRecentSearch() {
     if (input.value.trim()) return;
     const list = recentSearches();
     if (!list.length) return;
-    box.innerHTML = `<div class="xs muted" style="padding:6px 10px">최근 본 종목 <a id="recent-clear" class="xs" style="float:right">지우기</a></div>` + list.map((w) => `<a data-sym="${esc(w.symbol)}"><span>🕘 ${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span></a>`).join("");
+    box.innerHTML = `<div class="xs muted" style="padding:6px 10px">최근 본 종목 <a id="recent-clear" class="xs" style="float:right">지우기</a></div>` + list.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${stockLogo(w.symbol, w.name, 22)} 🕘 ${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span></a>`).join("");
     box.classList.add("open");
     box.querySelectorAll("a[data-sym]").forEach((a) => a.onclick = () => { box.classList.remove("open"); location.hash = `#analysis/${a.dataset.sym}`; });
     $("#recent-clear").onclick = (e) => { e.stopPropagation(); safeSet("qa_recent", "[]"); box.classList.remove("open"); };

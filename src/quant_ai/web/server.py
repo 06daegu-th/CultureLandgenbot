@@ -22,7 +22,7 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 log = logging.getLogger("quant_ai.web")
 
 
-CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; "
+CSP = ("default-src 'self'; script-src 'self'; "
        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
        "font-src https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data:; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
@@ -68,15 +68,15 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
             return host in allowed_hosts
 
-        def _send(self, code: int, body: bytes, ctype: str) -> None:
+        def _send(self, code: int, body: bytes, ctype: str, cache: str = "no-store", csp: str | None = None) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", CSP)
+            self.send_header("Content-Security-Policy", csp or CSP)
             self.end_headers()
             self.wfile.write(body)
 
@@ -103,7 +103,19 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 return self._json(auth.info() | {"role": self._role(qs)})
             if url.path == "/api/health":  # 인증 없이 최소 정보 (로드밸런서/모니터링용)
                 h = api.health()
+                if (self.client_address[0] if self.client_address else "") in ("127.0.0.1", "::1"):
+                    h |= api.instance()  # 같은 PC 에서만: 버전·폴더·PID (run.sh 가 옛 서버를 알아보게)
                 return self._json(h, 200 if h["ok"] else 503)
+            if url.path.startswith("/api/logo/"):  # 종목 로고 (공개 정보 · <img> 로 불러서 토큰 없이)
+                from ..logos import get as logo_get
+                try:
+                    data, ctype, src = logo_get(api.app, url.path.rsplit("/", 1)[-1], (qs.get("n") or [None])[0], block=False)
+                except ValueError:
+                    return self._json({"error": "bad symbol"}, 400)
+                # 진짜 로고는 하루 · 이니셜은 금방 다시 물어본다 (뒤에서 받는 중이면 1분, 없다고 확인됐으면 1시간)
+                cc = {"monogram": "public, max-age=3600", "default": "public, max-age=3600", "pending": "no-cache, max-age=60"}.get(src, "public, max-age=86400")
+                # v24: 로고는 그림일 뿐 — 바로 열어도 스크립트가 절대 돌지 않게 (외부 SVG 를 정화한 뒤에도 한 번 더)
+                return self._send(200, data, ctype, cc, csp="default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox")
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):
                     return self._json({"error": "unauthorized"}, 401)
@@ -145,6 +157,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.analytics(url.path.rsplit("/", 1)[-1], arg("mode")))
                     if url.path == "/api/search":
                         return self._json(api.search(arg("q", "")[:60]))
+                    if url.path == "/api/company":  # v23: 기업 신분증 (로고·이름·티커·거래소·업종·ISIN)
+                        return self._json(api.company(arg("symbol", "")[:16]))
                     if url.path == "/api/verify":
                         return self._json(api.verify())
                     if url.path == "/api/ledger":
@@ -191,8 +205,32 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.replay(arg("date", "")[:10]))
                     if url.path == "/api/weekly":
                         return self._json(api.weekly())
+                    if url.path.startswith("/api/news/") and url.path.rsplit("/", 1)[-1].isdigit():
+                        return self._json(api.news_detail(url.path.rsplit("/", 1)[-1]))
+                    if url.path.startswith("/api/disclosure/") and url.path.rsplit("/", 1)[-1].isdigit():
+                        return self._json(api.disclosure_detail(url.path.rsplit("/", 1)[-1]))
+                    if url.path == "/api/news-search":
+                        return self._json(api.news_search(arg("q", ""), arg("days", "30")))
                     if url.path == "/api/conflicts":
                         return self._json(api.conflicts())
+                    if url.path == "/api/home5":
+                        return self._json(api.home5(arg("mode", "") or None))
+                    if url.path == "/api/start-guide":
+                        return self._json(api.start_guide())
+                    if url.path == "/api/goal":
+                        return self._json(api.goal({k: arg(k) for k in ("principal", "monthly", "goal", "target_years", "strategy", "raise_pct")}))
+                    if url.path == "/api/ops-status":
+                        return self._json(api.ops_status())
+                    if url.path == "/api/baseline":
+                        return self._json(api.baseline(arg("mode", "paper")))
+                    if url.path == "/api/ai-trust":  # v24: AI 신뢰 센터 (한 화면)
+                        return self._json(api.ai_trust())
+                    if url.path == "/api/ai-context":  # v23: 상황별 AI 성적 (뉴스 유형 · 실적 전후 · 종목)
+                        return self._json(api.ai_context())
+                    if url.path == "/api/ai-plain":
+                        return self._json(api.ai_plain(arg("symbol", "")))
+                    if url.path == "/api/verdict":
+                        return self._json(api.verdict(qs["symbol"][0]))
                     if url.path == "/api/oneline":
                         return self._json(api.oneline(arg("mode", "") or None))
                     if url.path == "/api/budget":
@@ -284,7 +322,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     if url.path == "/api/ai-lab":
                         return self._json(api.ai_lab())
                     if url.path == "/api/portfolio-os":
-                        return self._json(api.portfolio_os(arg("mode")))
+                        return self._json(api.portfolio_os(arg("mode"), arg("source", "auto")))
                     if url.path == "/api/briefing":
                         return self._json(api.briefing(arg("mode")))
                     if url.path == "/api/simulate":
@@ -392,10 +430,16 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json(api.netcheck(run=True))
                 if url.path == "/api/news-extract":
                     return self._json(api.news_extract())
+                if url.path == "/api/news-explain":
+                    return self._json(api.news_explain(body))
+                if url.path == "/api/disclosure-explain":
+                    return self._json(api.disclosure_explain(body))
                 if url.path == "/api/us-sheet":
                     return self._json(api.us_sheet(body))
                 if url.path == "/api/budget":
                     return self._json(api.budget_write(body))
+                if url.path == "/api/goal":
+                    return self._json(api.goal_save(body))
                 if url.path == "/api/keys/reload":
                     return self._json(api.keys_reload())
                 if url.path == "/api/keys/probe":

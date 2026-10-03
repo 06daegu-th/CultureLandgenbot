@@ -113,7 +113,7 @@
 리밸런싱은 **약 20거래일(한 달)에 한 번**. 중간에는 아무것도 하지 않는 것이 규칙이다.
 
 1. **데이터 갱신 (장 마감 후, 전날 저녁):**
-   `quant-ai collect krx --marcap-dir /data/marcap/data --years 3`
+   `quant-ai collect krx --marcap-dir /data/marcap/data --years 5`
    (`quant-ai run` 스케줄러가 켜져 있으면 자동)
 2. **보유 종목 파일 만들기** — 증권사 앱의 잔고를 보고 `holdings.csv`:
    ```

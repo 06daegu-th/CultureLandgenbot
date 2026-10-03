@@ -10,8 +10,10 @@ Action Center 다섯 칸 (모두 저장된 기록에서 — 아침에 열면 바
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime, timedelta
 
+import pandas as pd
 from sqlalchemy import select
 
 from . import ops
@@ -243,6 +245,50 @@ def weekly_schedule(app, now: datetime | None = None, days: int = 7) -> dict:
     return {"rows": rows, "n": len(rows), "as_of": label(now)}
 
 
+def upcoming(app, now: datetime | None = None, days: int = 21, n: int = 8) -> dict:
+    """홈 '다가오는 일정' 띠 — 시장 큰 일정(FOMC·CPI·고용·금통위·만기·휴장)은 관심종목이 없어도 항상,
+    여기에 내 보유·관심 종목의 실적·배당 일정을 더해 가까운 순으로 (토스처럼 D-day 하나로 읽히게)."""
+    from zoneinfo import ZoneInfo
+
+    from .engines import events as E
+    from .stock import ALWAYS_KINDS
+    now = now or datetime.now(UTC)
+    today = now.astimezone(ZoneInfo("Asia/Seoul")).date()
+    cal = ops.get_state(app.engine, "event_calendar")
+    evs = [e for e in cal.get("events") or [] if not e.get("symbol")]
+    try:
+        evs += E.market_events(today, today + timedelta(days=days)) + \
+            E.econ_events(today, today + timedelta(days=days), ops.get_state(app.engine, "fred_releases").get("dates"))
+    except Exception:  # noqa: BLE001, S110 - 규칙 일정 생성 실패 → 저장된 일정만
+        pass
+    rows, seen = [], set()
+    for e in evs:
+        try:
+            d = date.fromisoformat(str(e["date"])[:10])
+        except (KeyError, ValueError):
+            continue
+        dd = (d - today).days
+        if not 0 <= dd <= days or not (e.get("kind") in ALWAYS_KINDS | {"holiday", "half_day"} or (e.get("importance") or 0) >= 0.8):
+            continue
+        key = (e.get("title"), d)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"d_day": dd, "date": d.isoformat(), "kind": e.get("kind"), "title": e.get("title"), "market": e.get("market"),
+                     "scope": "시장", "symbol": None, "estimated": bool(e.get("estimated"))})
+    try:
+        for e in weekly_schedule(app, now, days=days)["rows"]:
+            if e.get("scope") == "종목" and e.get("kind") in ("earnings", "ex_div", "div_pay") and e["d_day"] >= 0:
+                rows.append({"d_day": e["d_day"], "date": e["date"], "kind": e["kind"], "title": e["title"], "market": None,
+                             "scope": "종목", "symbol": e.get("symbol"), "estimated": bool(e.get("estimated"))})
+    except Exception:  # noqa: BLE001, S110
+        pass
+    rows.sort(key=lambda x: (x["d_day"], x["scope"] != "종목"))
+    for r in rows:
+        r["d_label"] = "오늘" if r["d_day"] == 0 else "내일" if r["d_day"] == 1 else f"D-{r['d_day']}"
+    return {"rows": rows[:n], "more": max(0, len(rows) - n), "as_of": label(now)}
+
+
 def weekly_alert(app, now: datetime | None = None) -> int:
     """월요일(한국 시간)에 한 번: 이번 주 보유 종목 일정을 알림으로."""
     from zoneinfo import ZoneInfo
@@ -297,3 +343,445 @@ def oneline(app, mode: str = "paper", now: datetime | None = None) -> dict:
                 "level": "bad" if dem or lv == "UNTRUSTED" else "ok" if lv == "CANDIDATE" else "warn", "link": "#scorecard"})
     worst = max((["ok", "good", "warn", "bad"].index(x["level"]) for x in out), default=0)
     return {"items": out, "level": ["ok", "ok", "warn", "bad"][worst], "as_of": label(now)}
+
+
+AI_STATE = {"verified": ("🟢", "실전 가능", "기준을 넘은 상태가 이어짐 — 그래도 소액 위성에서만"),
+            "checking": ("🟡", "검증 중", "아직 기록이 부족하거나 기준 근처 — 참고만"),
+            "banned": ("🔴", "사용 금지", "성적이 기준 미달 — 주문에 쓰지 않음")}
+
+
+def ai_state(app) -> dict:
+    """홈·종목 공통 AI 상태 한 줄: 🟢 검증됨 / 🟡 검증 중 / 🔴 사용 금지."""
+    from . import aitrack
+    t = aitrack.report(app)
+    lv = t["trust"].get("level", "NO_DATA")
+    dem = bool((t.get("demotion") or {}).get("on"))
+    key = "banned" if dem or lv == "UNTRUSTED" else "verified" if lv == "CANDIDATE" else "checking"
+    icon, name, why = AI_STATE[key]
+    last = t.get("last") or {}
+    from .scorecard import plain
+    try:
+        pl = plain(app, 100)
+    except Exception as e:  # noqa: BLE001 - 성적표 실패가 홈을 막지 않게
+        pl = {"n": 0, "headline": f"성적 계산 실패: {type(e).__name__}"}
+    easy = {"headline": pl.get("headline"), "money": (pl.get("money") or {}).get("text"), "earned": (pl.get("money") or {}).get("earned"),
+            "beat_base": pl.get("beat_base"), "strong": pl.get("strong"), "weak": pl.get("weak"), "n": pl.get("n", 0),
+            "hits": pl.get("hits"), "base_hits": pl.get("base_hits"), "excess": (pl.get("money") or {}).get("excess")}
+    # v20 알파 채점: 시장이 다 같이 오를 때 '오른다' 고 한 적중은 실력이 아니다 → 시장 대비로 다시 채점
+    try:
+        from .alphascore import alpha_card
+        ac = alpha_card(app)
+    except Exception:  # noqa: BLE001 - 보조 지표
+        ac = {"n": 0}
+    if ac.get("n"):
+        easy["alpha"] = {"n": ac["n"], "hit": ac["hit_excess"], "base": ac["base_excess"], "market_share": ac["market_share"],
+                         "verdict": ac["verdict"], "worse": "낮음" in ac["verdict"], "proven": "있음" in ac["verdict"],
+                         "text": f"시장 대비로 채점하면 {ac['hit_excess']:.0%} (기준 {max(0.5, ac['base_excess']):.0%}) — {ac['verdict']}"}
+        if key == "verified" and not easy["alpha"]["proven"]:
+            key = "checking"  # 방향 적중은 넘었어도 종목 선택력이 증명되지 않았으면 🟢 를 주지 않는다
+            icon, name, why = AI_STATE[key]
+            why = "방향 적중은 기준을 넘었지만 시장 대비로는 아직 증명 안 됨 — 참고만"
+    return {"key": key, "icon": icon, "label": name, "why": why, "level": lv, "demoted": dem, "easy": easy,
+            "accuracy": last.get("accuracy"), "base": last.get("base"), "n": last.get("n"), "reasons": t["trust"].get("reasons") or []}
+
+
+def _equity_spark(app, mode: str, now_eq: float, n: int = 90) -> list[list]:
+    """홈 '내 자산' 미니 차트: 최근 n 개 평가일의 [날짜, 평가금액] (하루 마지막 값) + 지금 값."""
+    from .data.db import session_scope
+    from .data.models import PortfolioSnapshot
+    with session_scope(app.engine) as s:
+        rows = s.execute(select(PortfolioSnapshot.ts, PortfolioSnapshot.equity).where(PortfolioSnapshot.mode == mode)
+                         .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()).limit(n * 8)).all()
+    by_day: dict[str, float] = {}
+    for ts, e in rows:
+        by_day.setdefault(str(ts.date()), float(e))  # 내림차순이라 처음 본 것이 그날 마지막 값
+    out = [[d, round(v)] for d, v in sorted(by_day.items())][-n:]
+    if out and abs(out[-1][1] - now_eq) > 0.5:
+        out.append(["now", round(now_eq)])
+    return out
+
+
+def _d_word(dd: int) -> str:
+    return "오늘" if dd == 0 else "내일" if dd == 1 else f"D-{dd}"
+
+
+def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3, include_ops: bool = True) -> dict:
+    """홈 맨 위 '오늘 내가 할 일' — 가장 중요한 3개만 (나머지는 '더 보기').
+
+    우선순위: 자동 정지 > 투자 논리 깨짐 > 보유 종목 실적·일정 임박 > AI 신호 변경 > 보유 종목 중요 공시 >
+              시장 큰 일정(CPI·FOMC·고용) > 큰 움직임 > (아무것도 없으면) 시작 안내.
+    """
+    from .thesis import breaches
+    now = now or datetime.now(UTC)
+    items: list[dict] = []
+
+    def add(pri, icon, text, link, why="", symbol=None, kind="", name=None):
+        items.append({"pri": pri, "icon": icon, "text": text, "link": link, "why": why, "symbol": symbol, "kind": kind, "name": name})
+    if ops.halted(app.engine):
+        add(100, "⛔", "자동 정지 중 — 이유를 확인하세요", "#safety", "안전장치가 모든 신규 매수를 막았습니다", kind="halt")
+    elif ops.kill_switch_on(app.engine):
+        add(90, "⏸️", "긴급 정지(수동) 켜져 있음 — 계속 둘지 확인", "#safety", "신규 매수가 멈춰 있습니다", kind="kill")
+    try:
+        for it in (ops_status(app, now)["issues"] if include_ops else []):  # v23: 홈은 시스템 점검을 따로 한 줄로
+            if it["level"] == "bad":
+                add(95 if it["key"] == "scheduler" else 92, "🔌" if it["key"] == "scheduler" else "🗓️", it["text"], "#server", it["fix"], kind="ops_" + it["key"])
+    except Exception:  # noqa: BLE001, S110 - 상태 확인 실패가 할 일을 막지 않게
+        pass
+    a = action_center(app, mode, now)
+    br = breaches(app)[:2]
+    if br:
+        from .data.db import session_scope
+        from .data.models import Instrument
+        with session_scope(app.engine) as s:
+            nm = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_([b["symbol"] for b in br])))}
+    for b in br:
+        add(80, "⚠️", f"{nm.get(b['symbol'], b['symbol'])} 투자 논리 점검 — {b['message']}", f"#analysis/{b['symbol']}", "산 이유가 깨졌을 수 있습니다",
+            b["symbol"], "thesis", nm.get(b["symbol"]))
+    for e in a.get("events_all") or []:
+        word = _d_word(e["d_day"])
+        if e.get("symbol"):
+            add(70 if e["held"] else 55, "📊" if "실적" in e["title"] else "📅", f"{e['title']} {word}" + (" (추정일)" if e.get("estimated") else ""),
+                f"#analysis/{e['symbol']}", "보유 종목" if e["held"] else "관심 종목", e["symbol"], "event")
+
+    try:  # 시장 큰 일정 (CPI·FOMC·고용 등) — 이벤트 캘린더가 아직 없어도 규칙 일정으로
+        for e in weekly_schedule(app, now, days=2)["rows"]:
+            if e.get("scope") == "시장" and e["d_day"] <= 1:
+                add(50, "🏛️", f"{e['title']} {_d_word(e['d_day'])}", "#calendar", "시장 전체가 크게 움직일 수 있는 일정", kind="macro")
+    except Exception:  # noqa: BLE001, S110 - 일정 계산 실패가 할 일 전체를 막지 않게
+        pass
+    for c in a.get("signal_changes") or []:
+        to = "NO TRADE" if c["to"] == "NO_TRADE" else c["to"]
+        fr = "NO TRADE" if c["from"] == "NO_TRADE" else c["from"]
+        add(65 if c["held"] else 45, "🤖", f"{c['name']} AI 신호 변경 {fr} → {to}", f"#analysis/{c['symbol']}",
+            "보유 종목" if c["held"] else "관심 종목", c["symbol"], "signal", c["name"])
+    for d in a.get("disclosures") or []:
+        add(60 if d["held"] else 40, "📑", f"{d['name']} 중요 공시 — {d['title'][:30]}", f"#analysis/{d['symbol']}",
+            "보유 종목" if d["held"] else "관심 종목", d["symbol"], "disclosure", d["name"])
+    from zoneinfo import ZoneInfo
+    bars_all, _ = app._all_bars()
+    today_kst = now.astimezone(ZoneInfo("Asia/Seoul")).date()
+    for c in a.get("check") or []:
+        if any("움직임" in w for w in c.get("why") or []):
+            mv = next(w for w in c["why"] if "움직임" in w)
+            b = bars_all.get(c["symbol"])
+            if b is not None and len(b):  # 오늘 움직임이 아니면 날짜를 붙인다 (오래된 데이터를 오늘 일처럼 보이지 않게)
+                d = pd.Timestamp(b.index[-1]).tz_localize("UTC") if pd.Timestamp(b.index[-1]).tzinfo is None else pd.Timestamp(b.index[-1])
+                d = d.tz_convert("Asia/Seoul").date()
+                if (today_kst - d).days >= 1 and c["symbol"][:1].isdigit():
+                    mv = f"{mv} ({d.month}/{d.day} 종가 기준)"
+            add(35 if c["held"] else 25, "📈" if "+" in mv else "📉", f"{c['name']} {mv}", f"#analysis/{c['symbol']}",
+                "보유 종목" if c["held"] else "관심 종목", c["symbol"], "move", c["name"])
+    seen, out = set(), []
+    for it in sorted(items, key=lambda x: -x["pri"]):
+        k = (it["symbol"], it["kind"]) if it["symbol"] else it["text"]
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(it)
+    empty_hint = a.get("empty_hint")
+    return {"items": out[:n], "more": max(0, len(out) - n), "total": len(out), "empty_hint": empty_hint,
+            "calm": "오늘 꼭 할 일은 없습니다 — 기다리는 것도 투자입니다" if not out and not empty_hint else None, "as_of": label(now)}
+
+
+def ops_status(app, now: datetime | None = None) -> dict:
+    """'지금 제대로 돌고 있나' — 24시간 운영(심장박동) · 주가 데이터 날짜 · 오늘 뉴스 · 최근 작업 실패."""
+    from sqlalchemy import func
+
+    from .asof import stamp
+    from .data.db import session_scope
+    from .data.models import JobRun, NewsArticle, PriceBar
+    from .watchdog import heartbeat_age
+    now = now or datetime.now(UTC)
+    hb = heartbeat_age(app.engine, now)
+    with session_scope(app.engine) as s:
+        last_bar = s.scalar(select(func.max(PriceBar.ts)).where(PriceBar.symbol.like("0%") | PriceBar.symbol.like("1%")
+                                                                  | PriceBar.symbol.like("2%") | PriceBar.symbol.like("3%")))
+        news24 = s.scalar(select(func.count()).select_from(NewsArticle).where(NewsArticle.published_at >= now - timedelta(days=1))) or 0
+        fails = s.scalar(select(func.count()).select_from(JobRun).where(JobRun.ok.is_(False), JobRun.started_at >= now - timedelta(days=1))) or 0
+        kr_syms = set(s.scalars(select(PriceBar.symbol).where(PriceBar.ts >= last_bar - timedelta(days=10)).distinct())) if last_bar else set()
+    kr_syms = {x for x in kr_syms if x[:1].isdigit()}
+    from .engines.sector import sector_map
+    mapped = sum(1 for x in kr_syms if x in sector_map(app.engine))
+    sector_cov = mapped / len(kr_syms) if kr_syms else None
+    bar = stamp(last_bar, "bar_kr", now) if last_bar else {"status": "none", "lag_days": None, "label": None}
+    running = hb is not None and hb < 15 * 60
+    issues = []
+    if not running:
+        issues.append({"key": "scheduler", "level": "bad", "text": "24시간 운영이 꺼져 있습니다" + (f" (마지막 신호 {hb / 3600:.0f}시간 전)" if hb else " (한 번도 안 켜짐)"),
+                       "fix": "터미널에서 ./run.sh — PC 를 켤 때 자동으로: ./run.sh install-service"})
+    if bar.get("lag_days") and bar["lag_days"] >= 2:
+        issues.append({"key": "data", "level": "bad", "text": f"주가 데이터가 {bar['lag_days']}거래일 밀렸습니다 ({bar['label']})",
+                       "fix": "24시간 운영을 켜면 장 마감 뒤 자동으로 받습니다 — 지금 바로: ./run.sh data"})
+    if running and news24 == 0:
+        issues.append({"key": "news", "level": "warn", "text": "최근 하루 저장된 뉴스 0건 — 뉴스 AI 가 빈손으로 판단합니다",
+                       "fix": "./run.sh doctor 로 뉴스 소스 연결 확인 (회사망·방화벽이면 RSS 주소가 막힐 수 있음) · 지금 바로: qa collect news"})
+    if sector_cov is not None and len(kr_syms) >= 10 and sector_cov < 0.5:
+        issues.append({"key": "sector", "level": "warn", "text": f"업종 분류가 {1 - sector_cov:.0%} 비어 있습니다 ({len(kr_syms) - mapped}/{len(kr_syms)}종목)",
+                       "fix": "업종 집중 위험·섹터 비교가 부정확합니다 — 지금 바로: qa collect sectors (24시간 운영 중이면 장 마감 뒤 자동)"})
+    if fails >= 3:
+        issues.append({"key": "jobs", "level": "warn", "text": f"최근 하루 작업 실패 {fails}건", "fix": "서버 · DB 화면에서 실패한 작업 확인"})
+    return {"running": running, "heartbeat_age_s": hb, "bar": {k: bar.get(k) for k in ("label", "status", "lag_days")},
+            "news_24h": news24, "job_failures_24h": fails, "sector_coverage": None if sector_cov is None else round(sector_cov, 3), "issues": issues, "ok": not issues, "as_of": label(now)}
+
+
+def start_guide(app) -> dict:
+    """처음 쓰는 사람을 위한 순서: ① 데이터 ② 투자 한도 ③ 관심종목 3개 ④ 오늘 할 일. 다 하면 사라진다."""
+    from sqlalchemy import func
+
+    from .budget import get as budget_get
+    from .data.db import session_scope
+    from .data.models import PriceBar
+    from .ux import starred
+    with session_scope(app.engine) as s:
+        has_bars = (s.scalar(select(func.count()).select_from(select(PriceBar.id).limit(1).subquery())) or 0) > 0
+    b = budget_get(app)
+    n_star = len(starred(app))
+    held = 0
+    try:
+        held = sum(1 for p in app.load_portfolio("paper").positions.values() if p.qty)
+    except Exception:  # noqa: BLE001
+        held = 0
+    steps = [
+        {"key": "data", "n": 1, "title": "주가 데이터 받기", "done": has_bars,
+         "how": "터미널에서 ./run.sh 를 실행하면 처음 한 번 자동으로 받습니다 (1~3분)", "link": None,
+         "detail": "받았음" if has_bars else "아직 없음 — 대부분의 화면이 비어 보이는 이유"},
+        {"key": "budget", "n": 2, "title": "투자 한도 정하기", "done": bool(b.get("principal")),
+         "how": "넣을 돈(원금)과 최대로 잃어도 되는 돈만 정하면 나머지 한도는 자동", "link": "#budget",
+         "detail": f"원금 {b['principal']:,}원 · 최대 손실 {b['max_loss']:,}원" if b.get("principal") else "아직 안 정함"},
+        {"key": "watch", "n": 3, "title": "관심종목 3개 담기", "done": n_star >= 3,
+         "how": "위 검색창(단축키 /)에서 종목을 찾아 ★ 를 누르세요 — 매일 AI 판단·뉴스·일정을 챙겨 드립니다", "link": "search",
+         "detail": f"{n_star}/3개" + (f" · 보유 {held}종목" if held else "")},
+        {"key": "today", "n": 4, "title": "'오늘 할 일' 확인하기", "done": False,
+         "how": "매일 홈 맨 위 3줄만 보면 됩니다. 나머지 메뉴는 '고급'에 접혀 있습니다", "link": "#action", "detail": ""},
+    ]
+    need = [x for x in steps[:3] if not x["done"]]
+    nxt = need[0] if need else steps[3]
+    return {"steps": steps, "done": not need, "next": nxt["key"], "progress": sum(1 for x in steps[:3] if x["done"]),
+            "optional": [{"title": "AI 키 넣기 (선택)", "done": bool(app.settings.has_llm),
+                          "how": "없어도 규칙 AI 로 동작합니다. 무료 Gemini 키를 .env 에 넣으면 뉴스 번역·쉬운 설명이 켜집니다", "link": "#settings"}]}
+
+
+# ------------------------------------------------------------------ v23 홈: 주의할 것 · 시장 핵심 · 관심종목 판단 · 오늘의 결론
+def caution3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) -> list[dict]:
+    """오늘 '하지 말아야 할 것·조심할 것' 3개 — 할 일(today3)과 반대편. 근거가 있는 것만."""
+    now = now or datetime.now(UTC)
+    out: list[dict] = []
+
+    def add(pri, text, why, level="warn", link="#dashboard"):
+        out.append({"pri": pri, "text": text, "why": why, "level": level, "link": link})
+    try:
+        st = ai_state(app)
+        if st["key"] == "banned":
+            add(90, "AI 판단은 참고만 하세요", st.get("why") or "최근 성적이 기준 미달", "bad", "#scorecard")
+        elif st["key"] == "checking":
+            add(40, "AI 판단은 아직 검증 중", "기록이 쌓일 때까지 큰 금액을 걸지 마세요", "warn", "#scorecard")
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        rk = risk_simple(app, mode)
+        for c in rk.get("cards") or []:
+            if c.get("level") == "bad":
+                add(80, f"{c['title']}: {c['value']}", c.get("plain") or "", "bad", "#risk")
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        for e in weekly_schedule(app, now, days=2)["rows"]:
+            if e.get("scope") == "시장" and e["d_day"] <= 1:
+                add(70, f"{e['title']} {_d_word(e['d_day'])} — 발표 전후 큰 변동", "발표 직전 신규 매수는 서두르지 않기", "warn", "#calendar")
+                break
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        a = action_center(app, mode, now)
+        for e in a.get("events_all") or []:
+            if e.get("held") and "실적" in e.get("title", "") and e["d_day"] <= 3:
+                add(75, f"{e['title']} {_d_word(e['d_day'])} — 보유 종목", "실적 발표 전후로 크게 움직일 수 있음 (AI 는 발표 직전 신규 매수를 쉬어감)", "warn",
+                    f"#analysis/{e['symbol']}")
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        o = ops_status(app, now)
+        if (o.get("bar") or {}).get("lag_days", 0) >= 2:
+            add(85, f"주가 데이터가 {o['bar']['lag_days']}거래일 밀림", "오래된 가격으로 판단하지 않도록 신규 매수는 막혀 있습니다", "bad", "#datahealth")
+    except Exception:  # noqa: BLE001, S110
+        pass
+    out.sort(key=lambda x: -x["pri"])
+    seen, res = set(), []
+    for x in out:
+        if x["text"] not in seen:
+            seen.add(x["text"])
+            res.append(x)
+    return res[:n]
+
+
+def market_core(app, now: datetime | None = None) -> dict:
+    """시장 핵심 3줄 — 금리 · 달러 · 업종 흐름 (최근 5거래일). 데이터가 없으면 이유를 말한다."""
+    from .data.db import session_scope
+    from .engines.market_intel import load_macro
+    now = now or datetime.now(UTC)
+    lines: list[dict] = []
+    with session_scope(app.engine) as s:
+        mac = load_macro(s, ["DGS10", "DEXKOUS", "DTWEXBGS", "VIXCLS", "DCOILWTICO"], days=40, as_of=now)
+    asof = None
+
+    def tail(sid, k=5):
+        x = mac.get(sid)
+        if x is None or len(x.dropna()) <= k:
+            return None
+        x = x.dropna()
+        return x.iloc[-1], x.iloc[-1 - k], x.index[-1]
+    t = tail("DGS10")
+    if t:
+        d = float(t[0] - t[1])
+        asof = t[2]
+        if abs(d) >= 0.08:
+            lines.append({"key": "rate", "text": f"금리 {'상승' if d > 0 else '하락'}", "detail": f"미국채 10년 {t[0]:.2f}% ({d:+.2f}%p · 5일)",
+                          "dir": 1 if d > 0 else -1, "tone": "warn" if d > 0 else "ok"})
+    fx = tail("DEXKOUS") or tail("DTWEXBGS")
+    if fx:
+        r = float(fx[0] / fx[1] - 1)
+        asof = asof or fx[2]
+        if abs(r) >= 0.005:
+            lines.append({"key": "usd", "text": f"달러 {'강세' if r > 0 else '약세'}", "detail": (f"원/달러 {fx[0]:,.0f}원 ({r:+.1%} · 5일)" if mac.get("DEXKOUS") is not None
+                                                                                               else f"달러지수 {r:+.1%} · 5일"),
+                          "dir": 1 if r > 0 else -1, "tone": "warn" if r > 0 else "ok"})
+    v = tail("VIXCLS", 1)
+    if v and float(v[0]) >= 22:
+        lines.append({"key": "vix", "text": "변동성 높음", "detail": f"VIX {float(v[0]):.1f} (20 이상이면 불안한 장)", "dir": 1, "tone": "bad" if v[0] >= 30 else "warn"})
+    try:
+        from .data.db import session_scope as _ss
+        from .data.models import Instrument
+        from .engines.sector import sector_map, sector_stats
+        bars, bench = app._all_bars()
+        mp = sector_map(app.engine)
+        with _ss(app.engine) as s:
+            names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_(list(mp) or [""])))}
+        st = [r for r in sector_stats(bars, mp, bench, names) if r["n"] >= 2 and r["sector"] != "미분류"]
+        if st:
+            best = max(st, key=lambda r: r["ret_5"])
+            worst = min(st, key=lambda r: r["ret_5"])
+            if best["ret_5"] >= 0.015:
+                lines.append({"key": "sector_up", "text": f"{best['sector']} 강세", "detail": f"5일 {best['ret_5']:+.1%} · {', '.join(m['name'] for m in best['leaders'][:2])}",
+                              "dir": 1, "tone": "ok"})
+            if worst["ret_5"] <= -0.015 and worst is not best:
+                lines.append({"key": "sector_dn", "text": f"{worst['sector']} 약세", "detail": f"5일 {worst['ret_5']:+.1%}", "dir": -1, "tone": "warn"})
+    except Exception:  # noqa: BLE001, S110 - 업종 자료가 없어도 나머지는 보인다
+        pass
+    order = {"rate": 0, "usd": 1, "vix": 2, "sector_up": 3, "sector_dn": 4}
+    lines.sort(key=lambda x: order.get(x["key"], 9))
+    hint = None if lines else ("경제지표(금리·환율)가 아직 없습니다 — .env 에 FRED_API_KEY 를 넣고 24시간 운영을 켜면 매일 채워집니다"
+                               if not mac else "최근 5일 금리·환율·업종에 큰 변화 없음")
+    return {"lines": lines[:3], "hint": hint, "as_of": str(asof.date()) if asof is not None else None}
+
+
+def watch_verdicts(app, n: int = 6) -> list[dict]:
+    """홈 관심종목 — ★ 종목의 AI 판단 하나씩 (로고 · 판단 · 상승 확률 · 등락)."""
+    w = watchlist(app)
+    rows = [r for r in w["rows"] if r["starred"]] or w["rows"]
+    return [{"symbol": r["symbol"], "name": r["name"], "ai": r["ai"], "prob_up": r["prob_up"], "chg_pct": r["chg_pct"], "held": r["held"],
+             "change": r["change"], "last": r["last"]} for r in rows[:n]]
+
+
+def conclusion(h: dict) -> dict:
+    """오늘의 결론 한 문단 — 홈의 다른 칸에서 이미 계산한 사실만으로 만든다 (새 판단을 만들지 않는다)."""
+    caution = h.get("caution") if isinstance(h.get("caution"), list) else []
+    todo = (h.get("todo") or {}).get("items") or [] if isinstance(h.get("todo"), dict) else []
+    ai = h.get("ai") or {}
+    core = (h.get("core") or {}).get("lines") or [] if isinstance(h.get("core"), dict) else []
+    bad = [c for c in caution if c.get("level") == "bad"]
+    vol = any(x["key"] == "vix" for x in core)
+    if any("데이터" in c["text"] for c in bad):
+        text, level = "데이터가 최신이 아닙니다. 오늘은 새로 사지 말고 데이터부터 최신으로 맞추세요.", "bad"
+    elif vol or len(bad) >= 2:
+        text, level = "시장 변동성이 커졌습니다. 새 포지션보다 지금 가진 종목의 위험 관리가 먼저입니다.", "warn"
+    elif bad:
+        text, level = f"{bad[0]['text']} — 이것부터 확인하세요. 나머지는 평소대로입니다.", "warn"
+    elif todo:
+        text, level = f"확인할 것 {len(todo)}가지만 보면 됩니다. 급하게 사고팔 이유는 없습니다.", "ok"
+    else:
+        text, level = "오늘은 아무것도 하지 않아도 됩니다. 기다리는 것도 투자입니다.", "ok"
+    if ai.get("key") == "banned" and level == "ok":
+        text += " AI 판단은 아직 참고만 하세요."
+    return {"text": text, "level": level, "do_nothing": level == "ok" and not todo}
+
+
+def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
+    """홈 첫 화면 5칸: 오늘 시장 · 내 자산 · AI 상태 · 중요한 뉴스 · 오늘 할 일 (각 칸 실패해도 나머지는 보인다)."""
+    from .clock import clock_status
+    now = now or datetime.now(UTC)
+    out: dict = {"as_of": label(now)}
+
+    def safe(key, fn):
+        try:
+            out[key] = fn()
+        except Exception as e:  # noqa: BLE001
+            out[key] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+
+    def market():
+        ol = oneline(app, mode, now)
+        clk = clock_status(now)["markets"]
+        bars, bench, _ = app.market_data()
+        idx = None
+        if bench is not None and len(bench) > 1:
+            c = bench["close"].astype(float)
+            idx = {"name": "코스피(대용)", "last": round(float(c.iloc[-1]), 2), "chg": round(float(c.iloc[-1] / c.iloc[-2] - 1), 4),
+                   "date": str(c.index[-1].date())}
+        return {"mood": next((x for x in ol["items"] if x["key"] == "market"), None),
+                "event": next((x for x in ol["items"] if x["key"] == "event"), None), "index": idx,
+                "markets": [{"flag": m["flag"], "name": m["short"], "light": m.get("light"),
+                             "state": "장중" if m["phase"] == "open" else (m["session_label"] if m["trading_day"] else "휴장"),
+                             "notice": m.get("notice"), "local_time": m.get("local_time"), "dst": m.get("dst"),
+                             # v23: 휴장 이유(우리말) · 다음 개장/마감 시각과 남은 초 (화면이 1초마다 줄여 보여 준다)
+                             "holiday": (re.search(r"휴장입니다 \(([^)]+)\)", m.get("notice") or "") or [None, m.get("holiday")])[1] if not m["trading_day"] else None,
+                             "next_event": m.get("next_event"), "next_kst": m.get("next_open_kst") if m.get("next_event") == "개장" else m.get("next_close_kst"),
+                             "seconds_to_next": m.get("seconds_to_next")} for m in clk.values()]}
+
+    def assets():
+        pf = app.load_portfolio(mode)
+        bars, _ = app._all_bars()
+        px = {s_: float(bars[s_]["close"].iloc[-1]) for s_ in pf.positions if s_ in bars and len(bars[s_])}
+        eq = pf.equity(px) if px or pf.cash else pf.cash
+        rk = risk_simple(app, mode)
+        flows = app.cashflows(mode)
+        paid = sum(float(x["amount"]) for x in flows)
+        base = app.settings.initial_cash + paid  # 월 적립 등 입금은 수익이 아니다 → 원금에 더한다
+        return {"mode": mode, "equity": round(eq), "cash": round(pf.cash), "n": len(pf.positions), "pnl_pct": round(eq / base - 1, 4) if base else None,
+                "pnl": round(eq - base), "paid_in": round(paid), "spark": _equity_spark(app, mode, eq),
+                "risk": {"level": rk.get("level"), "headline": rk.get("headline")}}
+
+    def news():
+        from .board import news_board
+        b = news_board(app, days=2, limit=12, now=now)
+        top = sorted(b["cards"], key=lambda c: -(c.get("level") or {}).get("score", 0))[:3]
+        return {"items": [{"id": c["id"], "title": c["title"], "level": c["level"], "tone": c["tone"],
+                           "symbols": [{"symbol": x["symbol"], "name": x["name"]} for x in c["symbols"][:2]], "first": c["first"]} for c in top],
+                "n": len(b["cards"])}
+
+    safe("market", market)
+    safe("assets", assets)
+    safe("ai", lambda: {**ai_state(app), "stage": (ops.get_state(app.engine, "ladder").get("stage") or "backtest").upper()})
+    safe("news", news)
+    safe("todo", lambda: today3(app, mode, now, include_ops=False))
+    safe("system", lambda: [{"text": it["text"], "fix": it["fix"], "level": it["level"]} for it in ops_status(app, now)["issues"]])
+    safe("caution", lambda: caution3(app, mode, now))
+    safe("core", lambda: market_core(app, now))
+    safe("watch", lambda: watch_verdicts(app))
+    safe("upcoming", lambda: upcoming(app, now))
+
+    def data_():  # v23: 데이터 상태 한 줄 (점수 + 종류별 정상/지연/문제)
+        from . import datahealth
+        st = ops.get_state(app.engine, "data_health")
+        fresh = st.get("at") and (now - datetime.fromisoformat(st["at"])).total_seconds() < 600
+        d = st if fresh else datahealth.report(app, now)
+        ko = {"ok": "정상", "warn": "지연", "bad": "문제", "na": "키 없음"}
+        return {"overall": d.get("overall"), "trading": d.get("trading"),
+                "items": [{"name": r["name"], "status": r["status"], "label": ko.get(r["status"], r["status"])} for r in d.get("rows") or []]}
+    safe("data", data_)
+    out["conclusion"] = conclusion(out)
+
+    def goal_():
+        from .goal import progress
+        return progress(app, now)
+    safe("goal", goal_)
+    return out
+
