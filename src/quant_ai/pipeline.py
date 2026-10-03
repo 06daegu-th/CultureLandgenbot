@@ -950,6 +950,12 @@ class QuantAI:
         if fills and mode is not Mode.PAPER:
             self.notifier.send(f"[{mode.value}] 체결 {len(fills)}건: " + ", ".join(
                 f"{f.order.symbol} {'매수' if f.order.side.value == 'buy' else '매도'} {f.qty}@{f.price:,.0f}" for f in fills[:8]))
+        if engine.unknown and mode is Mode.LIVE:
+            # v23: 통신이 끊겨 접수 여부를 모름 → 재시작 복구와 같은 규칙 (신규 매수 중단 + 사람 확인).
+            # 다음 사이클은 증권사 잔고로 장부를 맞춘 뒤 판단하므로 같은 주문이 두 번 나가지 않는다.
+            self.set_kill_switch(True, "통신 끊김 — 주문 접수 여부 불명 (증권사 앱에서 확인 필요)", by="network")
+            self.notifier.send(f"[{mode.value}] 통신 끊김으로 주문 {len(engine.unknown)}건 접수 여부 불명 → 신규 매수 중단(킬스위치). "
+                               f"증권사 앱에서 체결·미체결을 확인한 뒤 킬스위치를 끄세요: {', '.join(engine.unknown[:5])}", "critical")
         if engine.errors:
             self.notifier.send(f"[{mode.value}] 주문 오류 {len(engine.errors)}건: {'; '.join(engine.errors[:3])}", "critical")
         return fills

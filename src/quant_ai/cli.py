@@ -611,11 +611,12 @@ def cmd_logos(args):
     print(f"로고 {len(dict.fromkeys(syms))}종목 받는 중… (실패 기억 무시: {'예' if args.retry else '아니오'})")
     r = logos.prefetch(app, syms, force=args.retry)
     names = {"custom": "직접 넣은 파일", "toss": "토스증권 아이콘", "alpha": "알파스퀘어 아이콘", "fmp": "FMP(미국)", "favicon": "홈페이지 아이콘",
-             "cache": "이전에 받은 것", "monogram": "이니셜 (못 받음)"}
+             "cache": "이전에 받은 것", "bundled": "내장 로고 (프로젝트에 포함)", "logodev": "logo.dev",
+             "default": "기본 기업 아이콘 (못 받음)", "monogram": "이니셜 (못 받음)"}
     for k, v in sorted(r["by_source"].items(), key=lambda x: -x[1]):
         print(f"  {names.get(k, k)}: {v}")
     if r["missing"]:
-        print(f"  이니셜로 남은 종목: {', '.join(r['missing'][:20])}{' …' if len(r['missing']) > 20 else ''}")
+        print(f"  기본 아이콘으로 남은 종목: {', '.join(r['missing'][:20])}{' …' if len(r['missing']) > 20 else ''}")
         print("  → 인터넷 연결 확인 후 ./run.sh logos --retry · 원하는 그림은 artifacts/logos/custom/<종목코드>.png 로 직접 넣기")
 
 

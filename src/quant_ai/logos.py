@@ -2,10 +2,12 @@
 
 순서 (처음 성공한 것을 artifacts/logos 에 저장해 다음부터 바로):
   1. 직접 넣은 파일   artifacts/logos/custom/<종목>.png|.svg|.jpg  (대소문자 무관 — 원하는 로고로 바꾸고 싶을 때)
+  1b. 내장 로고 (v23) 프로젝트에 들어 있는 주요 종목 로고 (assets/logos — 삼성전자·SK하이닉스·엔비디아·애플 등 53개)
+                     네트워크가 막혀도 항상 같은 진짜 로고. 목록·출처는 assets/logos/NOTICE.md
   2. 국내 종목        토스증권 공개 아이콘 → 알파스퀘어 공개 아이콘 (실제 회사 로고 · 키 없음)
      미국 종목        Financial Modeling Prep 공개 로고 이미지 (키 없음)
   3. 회사 홈페이지     종목 정보(프로필)의 website 또는 아래 국내 주요 기업 도메인 → 파비콘(구글 s2, 128px)
-  4. 이니셜 아이콘     회사 이름 첫 글자 + 종목별 고정 색 (네트워크가 막혀도 항상 무언가 보인다)
+  4. 기본 기업 아이콘 (v23) 건물 모양 + 업종 색 (ETF 는 'ETF') — 못 받았거나 받는 중일 때 (이니셜 대신)
 실패 기억: 네트워크 오류·차단(401/403/429)은 1시간 뒤, '그 종목 로고가 없음'(404)은 7일 뒤 다시 시도 (화면이 느려지지 않게).
 v21: 화면은 기다리지 않는다 — 처음 보는 종목은 이니셜을 바로 보내고 진짜 로고는 뒤에서 받아 둔다 (다음 화면부터 로고).
      브라우저와 같은 User-Agent 로 받는다 (프로그램 이름이면 막는 CDN 이 있다) · 예전 버전의 실패 기록은 무시하고 다시 받는다.
@@ -98,7 +100,9 @@ def domain_for(app, sym: str) -> str | None:
     if web:
         host = urlparse(web if "://" in web else f"https://{web}").hostname or ""
         return host.removeprefix("www.") or None
-    return KR_DOMAINS.get(sym)
+    from .companies import master
+    c = master().get(sym)
+    return (c.website if c else None) or KR_DOMAINS.get(sym)
 
 
 def _sources() -> tuple[str, ...]:
@@ -159,6 +163,29 @@ def monogram(sym: str, name: str | None = None) -> bytes:
             f'font-size="{size}" font-weight="700" fill="#fff">{esc}</text></svg>').encode()
 
 
+SECTOR_TINT = {"IT": "#3b5b8c", "반도체": "#3b5b8c", "커뮤니케이션": "#5b4b8a", "경기소비재": "#8a5a3b", "필수소비재": "#5a7a3b",
+               "헬스케어": "#2f7a6d", "금융": "#3b6b8a", "산업재": "#6b6b6b", "소재": "#7a6a3b", "에너지": "#8a4b3b",
+               "유틸리티": "#4b6b7a", "부동산": "#6b5b4b", "ETF": "#475569"}
+BUILDING = ("M20 46V22l12-6 12 6v24h-6V38h-12v12h-6z M25 26h4v4h-4z M35 26h4v4h-4z M25 32h4v3h-4z M35 32h4v3h-4z")
+
+
+def default_icon(app, sym: str, name: str | None = None) -> bytes:
+    """기본 기업 아이콘 (SVG) — 진짜 로고가 없을 때. 건물 모양 + 업종 색 (회색 계열로 차분하게) · ETF 는 'ETF' 글자."""
+    sector, etf = None, False
+    try:
+        from .companies import identity
+        idt = identity(app, sym, name)
+        sector, etf = idt.get("sector"), idt.get("etf")
+    except Exception:  # noqa: BLE001, S110 - 업종을 몰라도 회색으로
+        pass
+    color = SECTOR_TINT.get(sector or "", "#64748b")
+    inner = ('<text x="32" y="33" dy=".35em" text-anchor="middle" font-family="Pretendard,Apple SD Gothic Neo,sans-serif" '
+             'font-size="17" font-weight="700" fill="#fff" letter-spacing=".5">ETF</text>') if etf else \
+        f'<path fill="#fff" fill-opacity=".92" d="{BUILDING}"/><rect x="18" y="46" width="28" height="2.5" rx="1" fill="#fff" fill-opacity=".92"/>'
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
+            f'<circle cx="32" cy="32" r="32" fill="{color}"/>{inner}</svg>').encode()
+
+
 def _name(app, sym: str) -> str | None:
     """이름 없이 불렀을 때 (홈·알림 등) 종목 이름을 찾아 이니셜에 쓴다."""
     from sqlalchemy import select
@@ -194,6 +221,10 @@ def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = 
             t = kind_of(data)
             if t:
                 return data, t[1], "custom"
+    from .companies import bundled_logo
+    data = bundled_logo(sym)
+    if data:
+        return data, "image/svg+xml", "bundled"
     meta_p = d / f"{sym}.json"
     meta = json.loads(meta_p.read_text()) if meta_p.exists() else {}
     if meta.get("file") and (d / meta["file"]).exists() and not force:
@@ -205,7 +236,7 @@ def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = 
     due = not off and (force or now - float(meta.get("failed_at") or 0) > wait)
     if due and not block:
         _background(app, sym, name, fetch)  # 화면은 기다리지 않는다 — 이니셜을 먼저, 진짜 로고는 다음 화면부터
-        return monogram(sym, name or _name(app, sym)), "image/svg+xml", "pending"
+        return default_icon(app, sym, name), "image/svg+xml", "pending"
     if due:
         net_only = True
         tried = []
@@ -230,7 +261,7 @@ def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = 
                 log.debug("로고 %s %s 실패: %s", sym, src, e)
         if tried:
             meta_p.write_text(json.dumps({"failed_at": now, "net": net_only, "tried": tried, "v": META_V}))
-    return monogram(sym, name or _name(app, sym)), "image/svg+xml", "monogram"
+    return default_icon(app, sym, name), "image/svg+xml", "default"
 
 
 _inflight: set[str] = set()
@@ -262,9 +293,9 @@ def prefetch(app, symbols: list[str], force: bool = False, fetch=None) -> dict:
         except ValueError:
             continue
         out[src] = out.get(src, 0) + 1
-        if src == "monogram":
+        if src in ("monogram", "default"):
             missing.append(sym)
     return {"by_source": out, "missing": missing[:50], "n": sum(out.values())}
 
 
-__all__ = ["get", "prefetch", "monogram", "candidates", "domain_for", "kind_of", "KR_DOMAINS"]
+__all__ = ["get", "prefetch", "monogram", "default_icon", "candidates", "domain_for", "kind_of", "KR_DOMAINS"]

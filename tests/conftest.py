@@ -65,7 +65,21 @@ def _start_temp_postgres() -> str | None:
     return f"postgresql://postgres@127.0.0.1:{port}/postgres"
 
 
+CORE_DEPS = ("numpy", "pandas", "sqlalchemy", "sklearn", "defusedxml", "pyarrow", "holidays", "certifi")
+
+
+def _missing_core() -> list[str]:
+    import importlib.util
+    return [m for m in CORE_DEPS if importlib.util.find_spec(m) is None]
+
+
 def pytest_configure(config):
+    # v23: 의존성이 빠진 환경(예: pip install -e . 없이 pytest 만 설치)에서는 수백 개가 알 수 없는 오류로 깨지는 대신
+    # 처음에 한 줄로 이유를 말하고 멈춘다
+    miss = _missing_core()
+    if miss:
+        raise pytest.UsageError(f"필수 패키지 없음: {', '.join(miss)} — 먼저 `pip install -e \".[dev]\"` 를 실행하세요 "
+                                "(pyproject.toml 의 dependencies 를 설치합니다)")
     if not os.environ.get("QUANT_TEST_DATABASE_URL") and os.environ.get("QUANT_TEST_NO_TEMP_PG") != "1":
         url = _start_temp_postgres()
         if url:

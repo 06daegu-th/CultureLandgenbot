@@ -289,4 +289,36 @@ def plain(app, n: int = 100, symbol: str | None = None) -> dict:
             "note": "방향 = 상승 확률 50% 이상이면 '오른다' · 비용 = 수수료·미끄러짐·세금 왕복 · 지수 = 같은 기간 시장 (코스피 대용 / 미국 지수)"}
 
 
-__all__ = ["scorecard", "verify_now", "public_report", "plain", "WINDOWS"]
+
+def by_context(app, n: int = 500, min_n: int = 10) -> dict:
+    """상황별 AI 성적 — 뉴스 유형별 · 실적 발표 전후 · 종목별 (채점 끝난 실제 전진 기록만, 표본 min_n 미만은 '표본 부족').
+    근거는 판단 당시 저장된 증거(payload.evidence) — 지금 다시 계산하지 않는다 (사후 끼워 맞추기 방지)."""
+    from collections import defaultdict
+
+    from .data.db import session_scope
+    from .data.models import ConsensusRecord, Instrument
+    from .news_llm import EVENT_KO
+    with session_scope(app.engine) as s:
+        rows = s.execute(select(ConsensusRecord.symbol, ConsensusRecord.correct, ConsensusRecord.realized_return, ConsensusRecord.payload)
+                         .where(ConsensusRecord.correct.is_not(None)).order_by(ConsensusRecord.as_of.desc()).limit(n)).all()
+        names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_({r.symbol for r in rows} or {""})))}
+    groups: dict[str, dict[str, list]] = {"news": defaultdict(list), "earnings": defaultdict(list), "symbol": defaultdict(list)}
+    for r in rows:
+        ev = (r.payload or {}).get("evidence") or {}
+        cats = [e for it in ev.get("news") or [] for e in (it.get("events") or []) if e != "other"]
+        top = max(set(cats), key=cats.count) if cats else None
+        groups["news"][EVENT_KO.get(top, top) if top else "관련 뉴스 없음"].append(bool(r.correct))
+        disc_e = any("earnings" in (d.get("events") or []) for d in ev.get("disclosures") or [])
+        cal_e = any("실적" in str(e.get("title", e)) for e in ev.get("events") or [] if isinstance(e, dict | str))
+        groups["earnings"]["실적 발표 전후" if (disc_e or cal_e or top == "earnings") else "평소"].append(bool(r.correct))
+        groups["symbol"][names.get(r.symbol, r.symbol)].append(bool(r.correct))
+
+    def table(g, k=8):
+        out = [{"key": key, "n": len(v), "hit": round(sum(v) / len(v), 3), "enough": len(v) >= min_n} for key, v in g.items() if v]
+        return sorted(out, key=lambda x: -x["n"])[:k]
+    return {"n": len(rows), "min_n": min_n, "news": table(groups["news"]), "earnings": table(groups["earnings"]),
+            "symbol": table(groups["symbol"], 10),
+            "note": f"채점 끝난 최근 {len(rows)}건 · 표본 {min_n}건 미만은 우연일 수 있어 흐리게 표시 · 판단 당시 저장된 증거로 분류"}
+
+
+__all__ = ["scorecard", "verify_now", "public_report", "plain", "by_context", "WINDOWS"]

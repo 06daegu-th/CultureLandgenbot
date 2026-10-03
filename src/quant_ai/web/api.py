@@ -692,10 +692,19 @@ class DashboardAPI:
         with session_scope(self.engine) as s:
             res = search(s, q, 10)
             cons = self._latest_consensus(s)
+        from ..companies import identity
         for r in res:
             c = cons.get(r["symbol"])
             r["action"] = c.action if c else None
+            idt = identity(None, r["symbol"], r.get("name"))  # v23: 검색 결과에도 같은 신분증 (거래소·영문명·로고)
+            r["exchange"], r["name_en"], r["logo"] = idt["exchange"], idt["name_en"], idt["logo"]
         return {"results": res}
+
+    def company(self, symbol: str) -> dict:
+        from ..companies import identity
+        if not symbol:
+            return {"error": "symbol 필요"}
+        return identity(self.app, symbol)
 
     # ------------------------------------------------------------------ 검증실 · 장부 · 드리프트
     def verify(self) -> dict:
@@ -979,9 +988,31 @@ class DashboardAPI:
             v["market"] = {"flag": m.get("flag"), "name": m.get("short"), "light": m.get("light"), "notice": m.get("notice"),
                            "state": "장중" if m["phase"] == "open" else (m["session_label"] if m["trading_day"] else "휴장"),
                            "local_time": m.get("local_time"), "tz": m.get("tz"), "next": m.get("next_event"),
-                           "next_kst": m.get("next_close_kst") if m.get("next_event") == "폐장" else m.get("next_open_kst")}
+                           "next_kst": m.get("next_close_kst") if m.get("next_event") == "폐장" else m.get("next_open_kst"),
+                           "seconds_to_next": m.get("seconds_to_next"), "dst": m.get("dst"),
+                           "holiday": m.get("holiday") if not m["trading_day"] else None}
+            # v23 종목 머리: 기업 신분증 · 실적 D-day · 내 보유 (한 번에 — 화면이 여러 번 묻지 않게)
+            from .. import ux
+            from ..companies import identity
+            v["identity"] = identity(self.app, sym)
+            r = next((x for x in _ops.get_state(self.engine, "event_calendar").get("risk") or [] if x.get("symbol") == sym), None)
+            e = (r or {}).get("earnings") or {}
+            v["earnings"] = {"d_label": e.get("d_label"), "trading_days": e.get("trading_days"), "date": e.get("date"),
+                             "estimated": e.get("estimated"), "timing": e.get("timing")} if e else None
+            try:
+                rows = [x for x in (ux.holdings(self.app, sym).get("rows") or []) if x.get("qty")]
+            except Exception:  # noqa: BLE001 - 보유 정보가 없어도 판단은 보인다
+                rows = []
+            if rows:
+                top = max(rows, key=lambda x: x.get("value") or 0)
+                v["holding"] = {"qty": sum(x["qty"] for x in rows), "avg_price": top.get("avg_price"), "pnl_pct": top.get("pnl_pct"),
+                                "book": top.get("book"), "n_books": len(rows)}
             return v
         return self._cached(f"verdict:{sym}", 30, build)
+
+    def ai_context(self) -> dict:
+        from ..scorecard import by_context
+        return self._cached("ai_context", 300, lambda: by_context(self.app))
 
     def ai_plain(self, symbol: str = "") -> dict:
         from ..scorecard import plain

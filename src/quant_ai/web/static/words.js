@@ -3,7 +3,7 @@
 
 const KO_ACT = { BUY: "매수", SELL: "매도", HOLD: "관망", NO_TRADE: "쉬어가기", "NO TRADE": "쉬어가기", 기권: "의견 없음", 통과: "통과", 거부: "거부" };
 const KO_ROLE = { News: "뉴스", Macro: "경제", Earnings: "실적", Quant: "차트·통계", Regime: "시장 흐름", Risk: "위험 점검", Challenger: "비교 모델" };
-const ACT_LV = { BUY: "good", SELL: "bad", HOLD: "warn", NO_TRADE: "idle", "NO TRADE": "idle" };
+const ACT_LV = { BUY: "buy", SELL: "sell", HOLD: "idle", NO_TRADE: "idle", "NO TRADE": "idle" };  // v23: 매수 빨강 · 매도 파랑 (국내 관례)
 const KO_RISK = { HIGH: "높음", MEDIUM: "보통", LOW: "낮음", UNKNOWN: "모름" };
 
 function koAct(a) { return KO_ACT[a] || a || "-"; }

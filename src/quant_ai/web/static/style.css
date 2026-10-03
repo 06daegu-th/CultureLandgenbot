@@ -1317,3 +1317,14 @@ tr.wl-recent:hover td { opacity: 1; }
 .pro-fold { margin-top: 12px; } .pro-fold > summary { cursor: pointer; padding: 10px 14px; border: 1px dashed var(--line-2); border-radius: 10px; color: var(--muted); font-size: 13px; list-style: none; } .pro-fold[open] > summary { margin-bottom: 12px; }
 .tax-tbl { table-layout: fixed; width: 100%; } .tax-tbl th:nth-child(1) { width: 22%; } .tax-tbl th:nth-child(2), .tax-tbl th:nth-child(3) { width: 13%; } .tax-tbl td { white-space: normal; vertical-align: top; }
 @media (max-width: 640px) { .tax-tbl th:nth-child(4), .tax-tbl td:nth-child(4) { display: none; } .tax-tbl th:nth-child(1) { width: 40%; } }
+
+/* v23: 기업 신분증 — 로고 + 이름 + 티커·거래소 (모든 화면 공통) */
+.co-id { display: inline-flex; align-items: center; gap: 10px; min-width: 0; vertical-align: middle; }
+.co-id img.lg { box-shadow: none; background: transparent; }
+.co-t { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.co-n { font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+a.co-n:hover { text-decoration: underline; }
+.co-s { font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.co-s .held { color: var(--text-2, var(--muted)); font-weight: 600; }
+.co-id.big { gap: 14px; } .co-id.big .co-n { font-size: 22px; letter-spacing: -.2px; } .co-id.big .co-s { font-size: 13px; }
+.search-results a .co-id { flex: 1; }

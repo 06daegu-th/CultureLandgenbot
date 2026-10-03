@@ -106,12 +106,52 @@ async function homeTop(root) {
       <div class="xs dim">${(n.symbols || []).map((x) => `${stockLogo(x.symbol, x.name, 14)} ${esc(x.name)}`).join(" · ")}${n.first ? ` · ${esc(n.first)}` : ""}</div></div>`).join("")
       + `<a class="xs" href="#news">뉴스 ${nw.n}건 모두 →</a>` : `<div class="small muted">최근 2일 저장된 뉴스가 없습니다</div><div class="xs dim">뉴스는 24시간 운영이 켜져 있을 때 모입니다</div>`;
   const showGuide = g && !g.done && !(p?.ui?.guide_hidden);
-  box.innerHTML = `${showGuide ? guideCard(g) : ""}${hero}<div class="h5-grid">
-    <div class="h5 card h5-todo"><div class="h5-h">오늘 할 일 <span class="xs dim">${esc(td.as_of || "")}</span></div>${todo}</div>
-    <div class="h5 card h5-ai ai-${esc(ai.key || "")}"><div class="h5-h">AI 믿어도 되나</div>${aiB}</div>
-    <div class="h5 card"><div class="h5-h">오늘 시장</div>${mk}</div>
-    <div class="h5 card h5-wide"><div class="h5-h">중요한 뉴스</div>${nwB}</div>
-  </div>`;
+  // v23 홈 순서: 시장 → 오늘 확인할 것 · 주의할 것 → 내 포트폴리오 · AI 상태 → 시장 핵심 · 관심종목 → 오늘의 결론 → 뉴스
+  const sys = Array.isArray(h.system) ? h.system : [];
+  const sysLine = sys.length ? `<details class="sys-line"><summary>${lvDot(sys.some((x) => x.level === "bad") ? "bad" : "warn")}시스템 점검 필요 ${sys.length}건 <span class="xs muted">— 투자 판단과는 별개 · 눌러서 해결 방법</span></summary>
+      ${sys.map((x) => `<div class="small">${esc(x.text)}<div class="xs muted">${esc(x.fix)}</div></div>`).join("")}</details>` : "";
+  const cd = (sec) => { if (sec == null) return ""; const d = Math.floor(sec / 86400), hh = Math.floor((sec % 86400) / 3600), mm = Math.floor((sec % 3600) / 60);
+    return d ? `${d}일 ${hh}시간` : `${hh}:${String(mm).padStart(2, "0")}`; };
+  const mkt = m.error ? err(m) : `<div class="mkt-strip">${(m.markets || []).map((x) => `<div class="mkt-it"><span class="mkt-n">${esc(x.name)}</span>
+      <span class="mkt-s ${x.state === "장중" ? "open" : ""}">${x.state === "장중" ? '<i class="live-dot"></i>' : ""}${esc(x.state || "")}${x.holiday ? ` · ${esc(x.holiday)}` : ""}</span>
+      ${x.next_kst ? `<span class="xs dim" data-cd="${x.seconds_to_next ?? ""}">${esc(x.next_event === "개장" ? "개장까지" : "마감까지")} <b class="num">${cd(x.seconds_to_next)}</b> · ${esc(x.next_kst)}</span>` : ""}
+      ${x.dst != null ? `<span class="xs dim">${x.dst ? "서머타임" : "표준시"}</span>` : ""}</div>`).join("")}
+    ${m.index ? `<div class="mkt-it"><span class="mkt-n">${esc(m.index.name)}</span><span class="num ${m.index.chg >= 0 ? "up" : "down"}">${P(m.index.chg, 2)}</span><span class="xs dim">${esc(m.index.date)}</span></div>` : ""}</div>`;
+  const dh = h.data || {};
+  const dataLine = dh.overall == null ? "" : `<a class="data-line" href="#datahealth"><span class="xs muted">데이터 상태</span> <b class="num">${Math.round(dh.overall)}</b><span class="xs dim">/100</span>
+      ${(dh.items || []).filter((x) => x.status !== "na").map((x) => `<span class="xs">${lvDot({ ok: "good", warn: "warn", bad: "bad" }[x.status] || "idle")}${esc(x.name)} ${esc(x.label)}</span>`).join("")}</a>`;
+  const cau = Array.isArray(h.caution) ? h.caution : [];
+  const cauB = h.caution?.error ? err(h.caution) : cau.length ? cau.map((c) => `<a class="td-it" href="${esc(c.link)}"><span class="td-ic">${lvDot(c.level === "bad" ? "bad" : "warn")}</span>
+      <span class="td-tx"><b>${esc(c.text)}</b>${c.why ? `<span class="xs muted">${esc(c.why)}</span>` : ""}</span><span class="td-go">›</span></a>`).join("")
+    : '<div class="td-empty"><div class="small">특별히 조심할 것은 없습니다</div></div>';
+  const ACT_TXT = (r) => r.ai ? `${koAct(r.ai === "NO_TRADE" ? "NO TRADE" : r.ai)}${r.prob_up != null && r.ai !== "NO_TRADE" ? ` ${Math.round(r.prob_up * 100)}%` : ""}` : "판단 없음";
+  const wl = Array.isArray(h.watch) ? h.watch : [];
+  const wlB = h.watch?.error ? err(h.watch) : wl.length ? `<div class="wl-mini">${wl.map((r) => `<a class="wl-row" href="#analysis/${esc(r.symbol)}">${coId(r.symbol, r.name, { size: 26, link: false, tail: r.held ? " · 보유" : "" })}
+      <span class="wl-r"><span class="act-pill act-${esc(r.ai || "none")}">${esc(ACT_TXT(r))}</span>${r.chg_pct != null ? `<span class="num xs ${r.chg_pct >= 0 ? "up" : "down"}">${P(r.chg_pct, 2)}</span>` : ""}</span></a>`).join("")}</div>
+      <a class="xs" href="#watch">관심종목 전체 →</a>`
+    : '<div class="td-empty"><div class="small">관심종목이 없습니다 — 종목을 검색해 ☆ 를 누르세요</div><button class="btn-sm" data-focus-search>종목 검색 ( / )</button></div>';
+  const core = h.core || {};
+  const coreB = core.error ? err(core) : (core.lines || []).length ? `<ul class="core-l">${core.lines.map((x) => `<li><b class="${x.dir > 0 ? "up" : "down"}">${x.dir > 0 ? "▲" : "▼"}</b> <b>${esc(x.text)}</b><span class="xs muted">${esc(x.detail)}</span></li>`).join("")}</ul>
+      ${core.as_of ? `<div class="xs dim">경제지표 기준 ${esc(core.as_of)}</div>` : ""}` : `<div class="small muted">${esc(core.hint || "")}</div>`;
+  const STAGE_KO = { BACKTEST: "과거 시험만", SHADOW: "그림자 기록 (주문 없음)", PAPER: "모의투자", LIVE: "소액 실전" };
+  const aiTop = ai.error ? "" : `<div class="ai-stage xs"><span class="stage-tag">${esc(ai.stage || "")}</span> ${esc(STAGE_KO[ai.stage] || "")}</div>`;
+  const cc = h.conclusion || {};
+  box.innerHTML = `${showGuide ? guideCard(g) : ""}
+  <div class="card h5-mkt"><div class="h5-h">시장</div>${mkt}${dataLine}${sysLine}</div>
+  <div class="h5-grid two">
+    <div class="h5 card h5-todo"><div class="h5-h">오늘 확인할 것 <span class="xs dim">${esc(td.as_of || "")}</span></div>${todo}</div>
+    <div class="h5 card h5-todo"><div class="h5-h">오늘 주의할 것</div>${cauB}</div>
+  </div>
+  ${hero}
+  <div class="h5-grid two">
+    <div class="h5 card h5-ai ai-${esc(ai.key || "")}"><div class="h5-h">AI 상태 — 지금 믿을 만한가</div>${aiTop}${aiB}</div>
+    <div class="h5 card"><div class="h5-h">시장 핵심 <span class="xs dim">최근 5거래일</span></div>${coreB}</div>
+  </div>
+  <div class="h5-grid two">
+    <div class="h5 card"><div class="h5-h">관심종목 — AI 판단</div>${wlB}</div>
+    <div class="h5 card"><div class="h5-h">중요한 뉴스</div>${nwB}</div>
+  </div>
+  ${cc.text ? `<div class="card concl concl-${esc(cc.level || "ok")}"><div class="h5-h">오늘의 결론</div><div class="concl-t">${esc(cc.text)}</div></div>` : ""}`;
   bindGuide(box);
   box.querySelectorAll("[data-focus-search]").forEach((b) => b.onclick = () => $("#search").focus());
 }
@@ -174,7 +214,7 @@ function bindUiSettings() {
 }
 
 // ------------------------------------------------------------ 종목 첫 화면 (토스처럼): 장 상태 · 52주 위치 · AI 최종 판단 하나
-const VIEW_CLS = { BUY: "up", SELL: "down", HOLD: "warn-t", "NO TRADE": "dim", 기권: "dim", 통과: "good" };
+const VIEW_CLS = { BUY: "up", SELL: "down", HOLD: "", "NO TRADE": "dim", 기권: "dim", 통과: "" };  // v23: 매수 빨강 · 매도 파랑 · 관망 중립
 async function stockTop(sym) {
   const box = $("#pf-top");
   if (!box) return;
@@ -195,7 +235,7 @@ async function stockTop(sym) {
     ai = `<div class="vt-card vt-none"><div class="xs muted">AI 의견</div><div class="vt-big">${lvDot("idle")}아직 AI 의견 없음</div><div class="small muted">${esc(v.why_none || "")}</div></div>`;
   } else {
     const votes = (v.votes || []).map((x) => `<span class="vt-vote" title="${esc(x.label)} · ${esc(koText(x.summary || ""))}"><span class="xs muted">${esc(koRole(x.role))}</span> <b class="${VIEW_CLS[x.view] || ""}">${esc(koAct(x.view))}</b></span>`).join("");
-    const li = (xs, empty) => xs.length ? `<ol class="vt-ol">${xs.map((x) => `<li>${esc(koText(x))}</li>`).join("")}</ol>` : `<div class="xs dim">${empty}</div>`;
+    const li = (xs, empty) => xs.length ? `<ol class="vt-ol">${xs.slice(0, 3).map((x) => `<li>${esc(koText(x))}</li>`).join("")}</ol>` : `<div class="xs dim">${empty}</div>`;  // v23: 이유는 3개만
     const u = v.used || {};
     const banned = v.trust?.key === "banned";
     const prob = v.final !== "NO_TRADE" && v.prob_up != null ? `<span class="vt-p">오를 확률 <b>${Math.round(v.prob_up * 100)}%</b></span>` : "";
@@ -213,7 +253,30 @@ async function stockTop(sym) {
       <div class="xs dim vt-used">근거 데이터 · 가격 ${esc(u.price || "-")} 종가 · 뉴스 ${u.news?.n ?? 0}건 · 공시 ${u.disclosures?.n ?? 0}건${u.macro?.n ? ` · 경제지표 ${u.macro.n}개` : ""}${u.regime ? ` · 시장 ${esc(REGIME_KO?.[u.regime] || u.regime)}` : ""}
         ${v.plan?.stop ? ` · 이 가격 아래로 가면 틀린 것: ${esc(price(v.plan.stop, sym))}` : ""}</div></div>`;
   }
-  box.innerHTML = `<div class="vt">${mk}${r52}</div>${ai}`;
+  box.innerHTML = `<div class="vt">${$("#sh-meta") ? "" : mk}${r52}</div>${ai}`;  // v23: 장 상태는 머리 한 줄(sh-meta)에 — 두 번 보이지 않게
+  stockMeta(sym, v);
+}
+
+// v23 종목 머리 한 줄: 장 상태 · 한국시간/현지시간(1초마다) · 실적 D-day · 내 보유 + 거래소·영문명
+let _metaTimer = null;
+function stockMeta(sym, v) {
+  const box = $("#sh-meta");
+  if (!box) return;
+  const idt = v.identity || {};
+  const co = $("#sh-id .co-s");
+  if (co && idt.exchange) co.textContent = [sym, idt.exchange, idt.name_en && idt.name_en !== idt.name ? idt.name_en : ""].filter(Boolean).join(" · ");
+  const m = v.market || {};
+  const tz = m.tz || (/^\d/.test(sym) ? "Asia/Seoul" : "America/New_York");
+  const t = (zone) => new Date().toLocaleTimeString("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const e = v.earnings, h = v.holding;
+  const html = () => `<span class="sm-it"><b class="${m.state === "장중" ? "open" : ""}">${m.state === "장중" ? '<i class="live-dot"></i>' : ""}${esc(m.state || "")}</b>${m.holiday ? ` · ${esc(m.holiday)}` : ""}</span>
+    <span class="sm-it num">${t("Asia/Seoul")} 한국</span>${tz !== "Asia/Seoul" ? `<span class="sm-it num">${t(tz)} 현지${m.dst != null ? (m.dst ? " (서머타임)" : "") : ""}</span>` : ""}
+    ${m.next_kst ? `<span class="sm-it xs dim">다음 ${esc(m.next === "폐장" ? "마감" : "개장")} ${esc(m.next_kst)}</span>` : ""}
+    ${e && e.d_label ? `<span class="sm-it chip ${e.trading_days != null && e.trading_days <= 3 ? "warn" : ""}">실적 ${esc(e.d_label)}${e.estimated ? " (추정)" : ""}</span>` : ""}
+    ${h ? `<span class="sm-it chip">보유 ${num(h.qty)}주 · 평균 ${esc(price(h.avg_price, sym))} · <b class="${h.pnl_pct >= 0 ? "up" : "down"}">${P(h.pnl_pct, 1)}</b></span>` : ""}`;
+  box.innerHTML = html();
+  clearInterval(_metaTimer);
+  _metaTimer = setInterval(() => { if (!document.body.contains(box)) { clearInterval(_metaTimer); return; } box.innerHTML = html(); }, 1000);
 }
 
 // ------------------------------------------------------------ 쉬운 말 AI 성적표 (전문 지표 위에)

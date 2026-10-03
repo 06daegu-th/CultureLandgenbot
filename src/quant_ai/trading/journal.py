@@ -24,7 +24,7 @@ class Entry:
     data: dict = field(default_factory=dict)
 
 
-FINAL = ("filled", "partial", "unfilled", "cancelled", "rejected", "error")
+FINAL = ("filled", "partial", "unfilled", "cancelled", "rejected", "error", "unknown")
 OPEN = ("pending", "submitted")
 
 

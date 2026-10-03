@@ -56,7 +56,7 @@ async function viewWatch(el) {
   const tabs = (id, list, cur) => `<div class="tabs" id="${id}">${["전체", ...list].map((g) => `<button data-k="${esc(g)}" class="${cur === g ? "on" : ""}">${esc(g)}</button>`).join("")}</div>`;
   const tr = rows.map((r) => `<tr class="${r.starred ? "" : "wl-recent"}"><td>${r.starred ? `<button class="star-btn on" data-unstar="${esc(r.symbol)}" title="관심 해제">★</button>`
       : `<button class="star-btn" data-star="${esc(r.symbol)}" title="최근 본 종목 — 눌러서 관심종목에 담기">☆</button>`}</td>
-    <td>${stockLogo(r.symbol, r.name)} <a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name)}</b></a> <span class="xs dim">${esc(r.symbol)}</span>${r.held ? ' <span class="chip xs">보유</span>' : ""}</td>
+    <td>${coId(r.symbol, r.name, { size: 28, tail: r.held ? ' · <b class="held">보유</b>' : "" })}</td>
     <td class="small">${esc(r.type)}</td><td class="r num">${r.last != null ? num(r.last, r.last < 1000 ? 2 : 0) : "-"}</td>
     <td class="r ${r.chg_pct >= 0 ? "up" : "down"}">${P(r.chg_pct, 2)}</td><td>${badge(r.ai)} <span class="xs num">${R(r.prob_up, 0)}</span></td>
     <td class="small">${r.change ? `<span class="${r.change_dir > 0 ? "up" : r.change_dir < 0 ? "down" : ""}">${esc(r.change)}</span>` : '<span class="dim">-</span>'}</td>
@@ -114,7 +114,7 @@ async function viewScorecard(el) {
     <div class="grid g-2" style="margin-top:8px"><div>${calTable(pub.calibration)}</div>
       <div><div class="small muted">실패 사례 (크게 틀린 순)</div><table class="tight"><tbody>${(pub.failures || []).map((f) => `<tr><td class="xs">${esc(f.at)}</td><td><a href="#analysis/${esc(f.symbol)}">${esc(f.name)}</a></td><td>${badge(f.action)}</td><td class="r num">${R(f.prob_up, 0)}</td><td class="r ${f.realized >= 0 ? "up" : "down"}">${P(f.realized, 1)}</td></tr>`).join("")}</tbody></table></div></div>
     <div class="xs dim" style="margin-top:6px">${esc(pub.method)} · ${esc(pub.stability_msg || "")}</div>`) : "";
-  el.innerHTML = `<div id="sc-easy"></div>
+  el.innerHTML = `<div id="sc-easy"></div><div id="sc-ctx"></div>
   <div class="card"><div class="card-h"><h3>AI 성적표 (전문 지표) ${sym ? `— <a href="#analysis/${esc(sym)}">${esc(sym)}</a>` : "— 전체"} <span class="small dim">결과가 확정된 판단만 · ${esc(c.horizon)} · 마지막 ${esc(c.last || "-")}</span></h3>
     <div class="right"><input id="sc-sym" class="mini-in" placeholder="종목 코드" value="${esc(sym)}"><button class="btn-sm" id="sc-go">보기</button>${sym ? '<a class="btn-sm" href="#scorecard">전체</a>' : ""}</div></div>
     <div class="small">채점 ${num(c.n_scored)}건 / 전체 판단 ${num(c.n_total)}건</div>
@@ -123,6 +123,7 @@ async function viewScorecard(el) {
     <div class="xs dim">${esc(c.note)} · Brier Skill = 1 − Brier/기준 Brier (0 보다 작으면 '늘 평균 확률을 말하는 것'보다 못함) · AI Alpha = AI 가 고른 판단(P≥50%)의 평균 수익 − 전체 평균</div></div>
   ${pubCard}`;
   plainScore($("#sc-easy"), sym);  // v19: 쉬운 말 성적표를 맨 위에 (easy.js)
+  if (!sym) contextScore($("#sc-ctx"));  // v23: 상황별 성적 (뉴스 유형 · 실적 전후 · 종목)
   if (uiMode() === "easy") foldPro(el, "#sc-easy", "전문 지표 펼치기 (정확도 구간 · 확률 보정 · 기간별 성적)");
   const go = () => { const v = $("#sc-sym").value.trim(); location.hash = v ? `#scorecard/${encodeURIComponent(v)}` : "#scorecard"; };
   $("#sc-go").onclick = go;
@@ -231,7 +232,7 @@ async function viewPortfolioOS(el) {
   if (o.empty) { el.innerHTML = card("Portfolio OS", `<div class="lesson">${esc(o.headline)}</div>`, '<a class="link" href="#accounts">계좌 입력</a>'); return; }
   const lvCls = { LOW: "good", MEDIUM: "warn-t", HIGH: "bad-t" }[o.risk_level] || "";
   // v19: 보유 종목마다 로고 · AI 상태 · 중요 뉴스 · 실적 D-day
-  const hold = (o.holdings || []).map((h) => `<tr><td>${stockLogo(h.symbol, h.name, 20)} <a href="#analysis/${esc(h.symbol)}"><b>${esc(h.name)}</b></a>
+  const hold = (o.holdings || []).map((h) => `<tr><td>${coId(h.symbol, h.name, { size: 26 })}
       ${h.ai ? ` <span class="chip xs" title="AI 마지막 판단 · ${esc(h.ai.at)}">${lvDot(ACT_LV[h.ai.action])}${esc(koAct(h.ai.action))}</span>` : ""}
       ${h.news ? ` <span class="chip xs warn" data-news="${esc(h.news.top?.id)}" title="${esc(h.news.top?.title || "")}" role="button">중요 뉴스 ${h.news.n}</span>` : ""}
       ${h.earn ? ` <span class="chip xs ${h.earn.d_day <= 3 ? "warn" : ""}">실적 ${esc(h.earn.d_label)}${h.earn.estimated ? " 추정" : ""}</span>` : ""}</td>
@@ -248,6 +249,9 @@ async function viewPortfolioOS(el) {
     <div class="pos-risk"><span class="xs muted">포트폴리오 위험</span> <b class="pos-lv ${lvCls}">${esc(koRisk(o.risk_level))}</b></div>
     <div class="biggest"><div class="xs muted">지금 포트폴리오에서 가장 큰 위험은?</div><div class="b">${esc(o.biggest_risk)}</div>${(o.other_risks || []).length ? `<div class="xs muted">${o.other_risks.map(esc).join(" · ")}</div>` : ""}</div></div>
   ${soon || nws ? card("보유 종목 — 지금 챙길 것", `${soon ? `<div class="xs muted b">실적 발표 (14일 안)</div><div style="margin:4px 0 8px">${soon}</div>` : ""}${nws ? `<div class="xs muted b">중요 뉴스 (3일)</div>${nws}` : ""}`) : ""}
+  ${(o.bets || []).length ? card("사실상 하나의 큰 베팅 <span class='small dim'>이름은 달라도 같이 오르내리는 묶음</span>", (o.bets || []).map((b) => `<div class="bet-row bet-${esc(b.level)}">
+      <div class="bet-h"><b>${esc(b.label)} 노출</b><b class="num bet-w">${R(b.weight, 0)}</b></div>
+      <div class="small">${esc(b.members.join(" · "))}</div><div class="xs muted">${esc(b.why)}${b.weight > 0.25 ? " → 한 종목처럼 움직일 수 있음 — 같은 악재에 같이 빠짐" : ""}</div></div>`).join("")) : ""}
   ${themes ? card("테마 · 같은 베팅 집중도 <span class='small dim'>업종이 달라도 같은 재료에 함께 움직이는 묶음</span>", themes) : ""}
   <div class="grid g-2">
     ${card("보유 비중", hold ? `<table class="tight"><tbody>${hold}</tbody></table>` : empty(), "", "")}
@@ -396,4 +400,16 @@ function segTable(rows) {
   return `<div class="small b" style="margin-top:10px">상황별 슬리피지 <span class="xs dim">${esc(r.mode)} 장부${r.measured ? " · 실측" : " · 모델 체결이라 참고"}</span></div>
     <table class="tight"><thead><tr><th>상황</th><th class="r">건수</th><th class="r">평균</th><th class="r">p90</th></tr></thead><tbody>${r.segments.map((g) =>
       `<tr><td class="small">${esc(g.label)}${g.enough ? "" : ' <span class="xs dim">표본 적음</span>'}</td><td class="r num">${g.n}</td><td class="r num ${g.mean_bps > 20 ? "warn-t" : ""}">${g.mean_bps}bp</td><td class="r num">${g.p90_bps ?? "-"}bp</td></tr>`).join("")}</tbody></table>`;
+}
+
+// v23 상황별 AI 성적 — 어떤 상황에서 맞고 어떤 상황에서 틀리는지 (실제 전진 기록만)
+async function contextScore(box) {
+  if (!box) return;
+  let r;
+  try { r = await api("/api/ai-context"); } catch { return; }
+  if (!r.n) { box.innerHTML = ""; return; }
+  const tb = (title, rows) => `<div><div class="small b" style="margin-bottom:4px">${esc(title)}</div><table class="tight"><tbody>${rows.map((x) => `<tr class="${x.enough ? "" : "dim"}">
+    <td class="small">${esc(x.key)}</td><td class="r num"><b>${Math.round(x.hit * 100)}%</b></td><td class="r xs dim">${x.n}건${x.enough ? "" : " · 표본 부족"}</td></tr>`).join("")}</tbody></table></div>`;
+  box.innerHTML = card("상황별 성적 <span class='small dim'>어떤 상황에서 맞고 틀리나 — 방향 적중률</span>",
+    `<div class="grid g-3">${tb("뉴스 유형별", r.news)}${tb("실적 발표 전후", r.earnings)}${tb("종목별", r.symbol)}</div><div class="xs dim" style="margin-top:6px">${esc(r.note)}</div>`);
 }

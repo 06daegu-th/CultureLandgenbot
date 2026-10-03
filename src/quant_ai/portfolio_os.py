@@ -166,6 +166,21 @@ def overview(app, mode: str = "paper", source: str = "auto") -> dict:
         risks.append((hot[0]["weight"], hot[0]["text"] + " — 한 가지 재료(예: AI 수요·금리)에 같이 오르내림"))
         risks.sort(key=lambda x: -x[0])
         biggest = risks[0][1]
+    # v23 '사실상 하나의 큰 베팅' — 같은 테마(이름으로 묶임) + 최근 같이 움직인 묶음(상관 0.6 이상, 실제 가격으로)
+    bets = [{"label": t["theme"], "weight": t["weight"], "members": t["members"], "why": "같은 테마·업종", "level": t["level"]}
+            for t in th if t["n"] >= 2 and t["weight"] > 0.15]
+    try:
+        from .trading.portfolio_risk import portfolio_risk
+        bars, bench, _ = app.market_data()
+        pr = portfolio_risk({k: v for k, v in w.items() if k in bars}, bars, bench, names=names)
+        for c in pr.get("clusters") or []:
+            if c["weight"] > 0.15 and not any(set(c["members"]) <= set(b["members"]) for b in bets):
+                bets.append({"label": "같이 움직이는 묶음", "weight": c["weight"], "members": c["members"][:6],
+                             "why": f"최근 1년 하루 등락이 같이 움직임 (상관 {0.6:.1f} 이상)",
+                             "level": "HIGH" if c["weight"] > 0.4 else "MEDIUM" if c["weight"] > 0.25 else "LOW"})
+    except Exception:  # noqa: BLE001, S110 - 가격이 부족하면 테마 묶음만
+        pass
+    bets.sort(key=lambda b: -b["weight"])
     top12 = [s_ for s_, _ in sorted(vals.items(), key=lambda x: -x[1])[:12]]
     ex = holding_extras(app, top12)
     level = LEVEL.get(lvl, "MEDIUM")
@@ -175,7 +190,7 @@ def overview(app, mode: str = "paper", source: str = "auto") -> dict:
             "cash_pct": round(cash / total, 4), "n": len(vals),
             "holdings": [{"symbol": s_, "name": names.get(s_, s_), "value": round(vals[s_]), "weight": round(vals[s_] / total, 4),
                           "sector": sectors.get(s_) or "미분류", **ex.get(s_, {})} for s_ in top12],
-            "themes": th[:5], "earnings_soon": sorted([{"symbol": s_, "name": names.get(s_, s_), **x["earn"]} for s_, x in ex.items() if x.get("earn")],
+            "themes": th[:5], "bets": bets[:4], "earnings_soon": sorted([{"symbol": s_, "name": names.get(s_, s_), **x["earn"]} for s_, x in ex.items() if x.get("earn")],
                                                        key=lambda e: e["d_day"]),
             "news_alerts": [{"symbol": s_, "name": names.get(s_, s_), **x["news"]} for s_, x in ex.items() if x.get("news")],
             "sectors": [{"sector": k, "weight": round(v, 4)} for k, v in sec_sorted[:6]], "sector_level": sec_level,

@@ -360,14 +360,14 @@ async function osOverlay(sym) {
       else if (m.kind === "macro") mk.push({ time: t, position: "aboveBar", shape: "square", color: "#38bdf8", text: { fomc: "FOMC", cpi: "CPI", nfp: "고용", pce: "PCE" }[m.event] || "지표" });
       else if (m.kind === "move") mk.push({ time: t, position: m.chg > 0 ? "aboveBar" : "belowBar", shape: m.chg > 0 ? "arrowUp" : "arrowDown", color: m.chg > 0 ? "#f0474f" : "#3b8cff", text: `${m.chg > 0 ? "+" : ""}${(m.chg * 100).toFixed(0)}%` });
       else if (m.kind === "ai_change") mk.push({ time: t, position: m.to === "SELL" ? "aboveBar" : "belowBar", shape: m.to === "SELL" ? "arrowDown" : m.to === "BUY" ? "arrowUp" : "circle",
-        color: m.to === "BUY" ? "#22c55e" : m.to === "SELL" ? "#ef4444" : "#94a3b8", text: `AI ${{ BUY: "매수", SELL: "매도", HOLD: "관망", NO_TRADE: "쉼" }[m.to] || m.to}` });
-      else if (m.kind === "news" && m.tone !== "중립") mk.push({ time: t, position: "belowBar", shape: "circle", color: m.tone === "긍정" ? "#22c55e" : "#ef4444", text: "" });
+        color: m.to === "BUY" ? "#f04452" : m.to === "SELL" ? "#3182f6" : "#94a3b8", text: `AI ${{ BUY: "매수", SELL: "매도", HOLD: "관망", NO_TRADE: "쉼" }[m.to] || m.to}` });
+      else if (m.kind === "news" && m.tone !== "중립") mk.push({ time: t, position: "belowBar", shape: "circle", color: m.tone === "긍정" ? "#f04452" : "#3182f6", text: "" });  // v23: 좋은 뉴스 빨강 · 나쁜 뉴스 파랑 (국내 관례)
     });
     mk.sort((a, b) => a.time - b.time);
     try { s.setMarkers(declutterMarkers(mk, times)); } catch { /* 표시 실패는 무시 */ }
     const leg = document.createElement("div");
     leg.className = "chart-legend xs";
-    leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#22c55e">● 긍정</span>/<span style="color:#ef4444">●</span> 부정 뉴스 <span style="color:#f0474f">▲</span>/<span style="color:#3b8cff">▼</span> 급등락 <span style="color:#94a3b8">↑ AI 신호 변화</span> <span style="color:#a78bfa">● 거래량 급증</span> <span style="color:#38bdf8">■ FOMC·CPI·고용</span> <span style="color:#facc15">━ 내 평균 매수가</span> <span style="color:#60a5fa">┄ 5일 보통 범위</span> <span style="color:#94a3b8">┄ 52주 고/저</span> <span class="dim">· ${esc(o.note)}</span>`;
+    leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#f04452">● 긍정</span>/<span style="color:#3182f6">●</span> 부정 뉴스 <span style="color:#f0474f">▲</span>/<span style="color:#3b8cff">▼</span> 급등락 <span style="color:#f04452">↑</span>/<span style="color:#3182f6">↓</span> AI 매수·매도 신호 <span style="color:#a78bfa">● 거래량 급증</span> <span style="color:#38bdf8">■ FOMC·CPI·고용</span> <span style="color:#facc15">━ 내 평균 매수가</span> <span style="color:#60a5fa">┄ 5일 보통 범위</span> <span style="color:#94a3b8">┄ 52주 고/저</span> <span class="dim">· ${esc(o.note)}</span>`;
     el.parentElement?.appendChild(leg);
     return;
   }

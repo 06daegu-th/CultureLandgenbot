@@ -45,7 +45,11 @@ function time(ts, withDate = false) {
 }
 function date(ts) { if (!ts) return "-"; const d = new Date(ts); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`; }
 // v18: 종목 로고 — 서버가 로고(없으면 이니셜 아이콘)를 돌려준다
-const stockLogo = (sym, name = "", size = 22) => sym ? `<img class="lg" src="/api/logo/${encodeURIComponent(sym)}?n=${encodeURIComponent(name || "")}" width="${size}" height="${size}" alt="" loading="lazy" decoding="async">` : "";
+const stockLogo = (sym, name = "", size = 22) => sym ? `<img class="lg" src="/api/logo/${encodeURIComponent(sym)}?n=${encodeURIComponent(name || "")}" width="${size}" height="${size}" alt="" loading="lazy" decoding="async" onerror="this.style.visibility='hidden'">` : "";
+// v23: 기업 신분증 — 어디서든 같은 모양 (로고 + 이름 + 티커 · 거래소). 검색·관심종목·포트폴리오·뉴스·종목 화면 공통
+const coId = (sym, name = "", o = {}) => sym ? `<span class="co-id${o.big ? " big" : ""}">${stockLogo(sym, name, o.size || (o.big ? 44 : 28))}<span class="co-t">`
+  + `${o.link === false ? `<b class="co-n">${esc(name || sym)}</b>` : `<a class="co-n" href="#analysis/${encodeURIComponent(sym)}">${esc(name || sym)}</a>`}`
+  + `<span class="co-s">${esc(sym)}${o.ex ? ` · ${esc(o.ex)}` : ""}${o.tail || ""}</span></span></span>` : "";
 const badge = (a) => a ? `<span class="badge b-${esc(a)}">${a === "NO_TRADE" ? "NO TRADE" : esc(a)}</span>` : '<span class="badge b-none">-</span>';
 const card = (title, body, right = "", cls = "") => `<div class="card ${cls}">${title || right ? `<div class="card-h"><h3>${title}</h3><div class="right">${right}</div></div>` : ""}${body}</div>`;
 const empty = (msg = "아직 기록 없음") => `<div class="empty">${esc(msg)}</div>`;
@@ -188,7 +192,7 @@ async function candleChart(el, symbol, n = 260) {
   el._bars = d.bars; el._lines = [];
   el._markers = d.markers.map((m) => ({
     time: m.time, position: m.action === "BUY" ? "belowBar" : "aboveBar", shape: m.action === "BUY" ? "arrowUp" : "arrowDown",
-    color: m.action === "BUY" ? "#22c55e" : "#fb7185", text: `${m.action} ${Math.round(m.confidence)}`,
+    color: m.action === "BUY" ? "#f04452" : "#3182f6", text: `${m.action} ${Math.round(m.confidence)}`,
   }));
   candles.setMarkers(declutterMarkers(el._markers.map((m) => ({ ...m })), el._times));  // v16: 뉴스·공시·실적 표시는 os.js 가 여기에 합친다
   chart.timeScale().fitContent();
@@ -730,10 +734,11 @@ async function viewAnalysis(el) {
   const chgCls = a.chg_pct == null ? "flat" : a.chg_pct >= 0 ? "up" : "down";
   const head = `<div id="pf-sit" class="pf-sit"></div><div class="card stock-head">
     <div class="sh-top"><div style="min-width:0">
-      <div class="sh-name">${stockLogo(sym, a.name, 34)} ${esc(a.name || sym)} <span class="dim small">${esc(sym)}</span> <span class="chip xs">${isGlobal ? "해외" : "국내"}</span></div>
-      <div class="sh-price"><span class="num" data-live-sym="${esc(sym)}">${a.last == null ? "-" : esc(priceCur(a.last, cur))}</span>
-        <span class="${chgCls} num">${a.chg == null ? "" : `${a.chg >= 0 ? "▲" : "▼"} ${esc(priceCur(Math.abs(a.chg), cur))} (${pct(a.chg_pct)})`}</span>
-        <span class="xs dim">${a.last_ts ? date(a.last_ts) + " 종가" : ""}</span></div></div>
+      <div class="sh-name" id="sh-id">${coId(sym, a.name || sym, { big: true, link: false, tail: isGlobal ? " · 해외" : "" })}</div>
+      <div class="sh-price"><span class="num sh-px" data-live-sym="${esc(sym)}">${a.last == null ? "-" : esc(priceCur(a.last, cur))}</span>
+        <span class="${chgCls} num sh-chg">${a.chg == null ? "" : `${a.chg >= 0 ? "▲" : "▼"} ${esc(priceCur(Math.abs(a.chg), cur))} (${pct(a.chg_pct)})`}</span>
+        <span class="xs dim">${a.last_ts ? date(a.last_ts) + " 종가" : ""}</span></div>
+      <div id="sh-meta" class="sh-meta"></div></div>
       <div class="sh-act">${sel}${isKRsym ? '<button class="btn-sm" id="tk-jump">모의 주문</button>' : ""}<button class="btn-sm primary" data-ask="${esc(a.name || sym)} 지금 사도 될까? 일정·지표·뉴스 보고 판단 근거 알려줘">${ICONS.chat} AI 에게 묻기</button></div></div>
     <div id="pf-top" class="pf-top"></div>
     <div id="pf-os" class="pf-os"></div>
@@ -808,7 +813,7 @@ function viewPortfolio(d) {
     <div class="stat"><div class="l">현금</div><div class="big num">₩${num(pf.cash)}</div></div>
     <div class="stat"><div class="l">누적 수익률</div><div class="big">${pct(pf.return_pct)}</div></div>
     <div class="stat"><div class="l">보유 종목</div><div class="big num">${pf.positions.length}</div></div></div>` : empty(`${S.pfMode} 기록 없음`);
-  const rows = (pf.positions || []).map((p) => `<tr><td>${stockLogo(p.symbol, p.name)} <b>${esc(p.name)}</b> <span class="dim small">${esc(p.symbol)}</span>${p.ai ? ` <a class="chip xs" href="#analysis/${esc(p.symbol)}" title="AI 마지막 판단 · ${esc(p.ai.at || "")}">${esc(p.ai.icon)} ${esc(p.ai.action === "NO_TRADE" ? "NO TRADE" : p.ai.action)}${p.ai.prob_up != null ? ` ${Math.round(p.ai.prob_up * 100)}%` : ""}</a>` : ' <span class="chip xs dim">AI 판단 없음</span>'}</td><td class="r num">${num(p.qty)}</td><td class="r num">${price(p.avg_price, p.symbol)}</td><td class="r num">${price(p.last, p.symbol)}</td><td class="r num">₩${num(p.value)}</td><td class="r num">${(p.weight * 100).toFixed(1)}%</td><td class="r">${pct(p.pnl_pct)}</td></tr>`).join("");
+  const rows = (pf.positions || []).map((p) => `<tr><td>${coId(p.symbol, p.name, { size: 26 })}${p.ai ? ` <a class="chip xs" href="#analysis/${esc(p.symbol)}" title="AI 마지막 판단 · ${esc(p.ai.at || "")}">${esc(p.ai.icon)} ${esc(p.ai.action === "NO_TRADE" ? "NO TRADE" : p.ai.action)}${p.ai.prob_up != null ? ` ${Math.round(p.ai.prob_up * 100)}%` : ""}</a>` : ' <span class="chip xs dim">AI 판단 없음</span>'}</td><td class="r num">${num(p.qty)}</td><td class="r num">${price(p.avg_price, p.symbol)}</td><td class="r num">${price(p.last, p.symbol)}</td><td class="r num">₩${num(p.value)}</td><td class="r num">${(p.weight * 100).toFixed(1)}%</td><td class="r">${pct(p.pnl_pct)}</td></tr>`).join("");
   return `
   <div class="card"><div class="card-h"><h3>포트폴리오</h3><div class="right">${pfTabs()}</div></div>${stats}
     <div class="small muted" style="margin-top:10px">PAPER = 가상매매 · SHADOW = 실제 주문이었다면(호가 기준 체결) · LIVE = 실계좌 (Shadow 검증 통과 champion 모델 + 안전장치 필요)</div></div>

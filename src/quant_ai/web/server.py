@@ -113,7 +113,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 except ValueError:
                     return self._json({"error": "bad symbol"}, 400)
                 # 진짜 로고는 하루 · 이니셜은 금방 다시 물어본다 (뒤에서 받는 중이면 1분, 없다고 확인됐으면 1시간)
-                cc = {"monogram": "public, max-age=3600", "pending": "no-cache, max-age=60"}.get(src, "public, max-age=86400")
+                cc = {"monogram": "public, max-age=3600", "default": "public, max-age=3600", "pending": "no-cache, max-age=60"}.get(src, "public, max-age=86400")
                 return self._send(200, data, ctype, cc)
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):
@@ -156,6 +156,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.analytics(url.path.rsplit("/", 1)[-1], arg("mode")))
                     if url.path == "/api/search":
                         return self._json(api.search(arg("q", "")[:60]))
+                    if url.path == "/api/company":  # v23: 기업 신분증 (로고·이름·티커·거래소·업종·ISIN)
+                        return self._json(api.company(arg("symbol", "")[:16]))
                     if url.path == "/api/verify":
                         return self._json(api.verify())
                     if url.path == "/api/ledger":
@@ -220,6 +222,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.ops_status())
                     if url.path == "/api/baseline":
                         return self._json(api.baseline(arg("mode", "paper")))
+                    if url.path == "/api/ai-context":  # v23: 상황별 AI 성적 (뉴스 유형 · 실적 전후 · 종목)
+                        return self._json(api.ai_context())
                     if url.path == "/api/ai-plain":
                         return self._json(api.ai_plain(arg("symbol", "")))
                     if url.path == "/api/verdict":

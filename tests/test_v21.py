@@ -174,7 +174,7 @@ def test_logo_never_blocks_screen_and_retries_blocked(app, monkeypatch, tmp_path
         calls.append(url)
         raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
     data, ctype, src = logos.get(app, "AAA111", "테스트", fetch=blocked)
-    assert src == "monogram" and calls
+    assert src == "default" and calls
     meta = _json.loads((logos._dir(app) / "AAA111.json").read_text())
     assert meta["net"] is True and meta["v"] == logos.META_V  # 403 은 '없음'이 아니라 차단 → 1시간 뒤 다시
     # 옛 버전의 실패 기록(7일 막힘)은 무시하고 다시 받는다

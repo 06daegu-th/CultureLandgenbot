@@ -10,6 +10,7 @@ Action Center 다섯 칸 (모두 저장된 기록에서 — 아침에 열면 바
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
@@ -360,7 +361,7 @@ def _d_word(dd: int) -> str:
     return "오늘" if dd == 0 else "내일" if dd == 1 else f"D-{dd}"
 
 
-def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) -> dict:
+def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3, include_ops: bool = True) -> dict:
     """홈 맨 위 '오늘 내가 할 일' — 가장 중요한 3개만 (나머지는 '더 보기').
 
     우선순위: 자동 정지 > 투자 논리 깨짐 > 보유 종목 실적·일정 임박 > AI 신호 변경 > 보유 종목 중요 공시 >
@@ -377,7 +378,7 @@ def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) ->
     elif ops.kill_switch_on(app.engine):
         add(90, "⏸️", "긴급 정지(수동) 켜져 있음 — 계속 둘지 확인", "#safety", "신규 매수가 멈춰 있습니다", kind="kill")
     try:
-        for it in ops_status(app, now)["issues"]:
+        for it in (ops_status(app, now)["issues"] if include_ops else []):  # v23: 홈은 시스템 점검을 따로 한 줄로
             if it["level"] == "bad":
                 add(95 if it["key"] == "scheduler" else 92, "🔌" if it["key"] == "scheduler" else "🗓️", it["text"], "#server", it["fix"], kind="ops_" + it["key"])
     except Exception:  # noqa: BLE001, S110 - 상태 확인 실패가 할 일을 막지 않게
@@ -516,6 +517,150 @@ def start_guide(app) -> dict:
                           "how": "없어도 규칙 AI 로 동작합니다. 무료 Gemini 키를 .env 에 넣으면 뉴스 번역·쉬운 설명이 켜집니다", "link": "#settings"}]}
 
 
+# ------------------------------------------------------------------ v23 홈: 주의할 것 · 시장 핵심 · 관심종목 판단 · 오늘의 결론
+def caution3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) -> list[dict]:
+    """오늘 '하지 말아야 할 것·조심할 것' 3개 — 할 일(today3)과 반대편. 근거가 있는 것만."""
+    now = now or datetime.now(UTC)
+    out: list[dict] = []
+
+    def add(pri, text, why, level="warn", link="#dashboard"):
+        out.append({"pri": pri, "text": text, "why": why, "level": level, "link": link})
+    try:
+        st = ai_state(app)
+        if st["key"] == "banned":
+            add(90, "AI 판단은 참고만 하세요", st.get("why") or "최근 성적이 기준 미달", "bad", "#scorecard")
+        elif st["key"] == "checking":
+            add(40, "AI 판단은 아직 검증 중", "기록이 쌓일 때까지 큰 금액을 걸지 마세요", "warn", "#scorecard")
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        rk = risk_simple(app, mode)
+        for c in rk.get("cards") or []:
+            if c.get("level") == "bad":
+                add(80, f"{c['title']}: {c['value']}", c.get("plain") or "", "bad", "#risk")
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        for e in weekly_schedule(app, now, days=2)["rows"]:
+            if e.get("scope") == "시장" and e["d_day"] <= 1:
+                add(70, f"{e['title']} {_d_word(e['d_day'])} — 발표 전후 큰 변동", "발표 직전 신규 매수는 서두르지 않기", "warn", "#calendar")
+                break
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        a = action_center(app, mode, now)
+        for e in a.get("events_all") or []:
+            if e.get("held") and "실적" in e.get("title", "") and e["d_day"] <= 3:
+                add(75, f"{e['title']} {_d_word(e['d_day'])} — 보유 종목", "실적 발표 전후로 크게 움직일 수 있음 (AI 는 발표 직전 신규 매수를 쉬어감)", "warn",
+                    f"#analysis/{e['symbol']}")
+    except Exception:  # noqa: BLE001, S110
+        pass
+    try:
+        o = ops_status(app, now)
+        if (o.get("bar") or {}).get("lag_days", 0) >= 2:
+            add(85, f"주가 데이터가 {o['bar']['lag_days']}거래일 밀림", "오래된 가격으로 판단하지 않도록 신규 매수는 막혀 있습니다", "bad", "#datahealth")
+    except Exception:  # noqa: BLE001, S110
+        pass
+    out.sort(key=lambda x: -x["pri"])
+    seen, res = set(), []
+    for x in out:
+        if x["text"] not in seen:
+            seen.add(x["text"])
+            res.append(x)
+    return res[:n]
+
+
+def market_core(app, now: datetime | None = None) -> dict:
+    """시장 핵심 3줄 — 금리 · 달러 · 업종 흐름 (최근 5거래일). 데이터가 없으면 이유를 말한다."""
+    from .data.db import session_scope
+    from .engines.market_intel import load_macro
+    now = now or datetime.now(UTC)
+    lines: list[dict] = []
+    with session_scope(app.engine) as s:
+        mac = load_macro(s, ["DGS10", "DEXKOUS", "DTWEXBGS", "VIXCLS", "DCOILWTICO"], days=40, as_of=now)
+    asof = None
+
+    def tail(sid, k=5):
+        x = mac.get(sid)
+        if x is None or len(x.dropna()) <= k:
+            return None
+        x = x.dropna()
+        return x.iloc[-1], x.iloc[-1 - k], x.index[-1]
+    t = tail("DGS10")
+    if t:
+        d = float(t[0] - t[1])
+        asof = t[2]
+        if abs(d) >= 0.08:
+            lines.append({"key": "rate", "text": f"금리 {'상승' if d > 0 else '하락'}", "detail": f"미국채 10년 {t[0]:.2f}% ({d:+.2f}%p · 5일)",
+                          "dir": 1 if d > 0 else -1, "tone": "warn" if d > 0 else "ok"})
+    fx = tail("DEXKOUS") or tail("DTWEXBGS")
+    if fx:
+        r = float(fx[0] / fx[1] - 1)
+        asof = asof or fx[2]
+        if abs(r) >= 0.005:
+            lines.append({"key": "usd", "text": f"달러 {'강세' if r > 0 else '약세'}", "detail": (f"원/달러 {fx[0]:,.0f}원 ({r:+.1%} · 5일)" if mac.get("DEXKOUS") is not None
+                                                                                               else f"달러지수 {r:+.1%} · 5일"),
+                          "dir": 1 if r > 0 else -1, "tone": "warn" if r > 0 else "ok"})
+    v = tail("VIXCLS", 1)
+    if v and float(v[0]) >= 22:
+        lines.append({"key": "vix", "text": "변동성 높음", "detail": f"VIX {float(v[0]):.1f} (20 이상이면 불안한 장)", "dir": 1, "tone": "bad" if v[0] >= 30 else "warn"})
+    try:
+        from .data.db import session_scope as _ss
+        from .data.models import Instrument
+        from .engines.sector import sector_map, sector_stats
+        bars, bench = app._all_bars()
+        mp = sector_map(app.engine)
+        with _ss(app.engine) as s:
+            names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_(list(mp) or [""])))}
+        st = [r for r in sector_stats(bars, mp, bench, names) if r["n"] >= 2 and r["sector"] != "미분류"]
+        if st:
+            best = max(st, key=lambda r: r["ret_5"])
+            worst = min(st, key=lambda r: r["ret_5"])
+            if best["ret_5"] >= 0.015:
+                lines.append({"key": "sector_up", "text": f"{best['sector']} 강세", "detail": f"5일 {best['ret_5']:+.1%} · {', '.join(m['name'] for m in best['leaders'][:2])}",
+                              "dir": 1, "tone": "ok"})
+            if worst["ret_5"] <= -0.015 and worst is not best:
+                lines.append({"key": "sector_dn", "text": f"{worst['sector']} 약세", "detail": f"5일 {worst['ret_5']:+.1%}", "dir": -1, "tone": "warn"})
+    except Exception:  # noqa: BLE001, S110 - 업종 자료가 없어도 나머지는 보인다
+        pass
+    order = {"rate": 0, "usd": 1, "vix": 2, "sector_up": 3, "sector_dn": 4}
+    lines.sort(key=lambda x: order.get(x["key"], 9))
+    hint = None if lines else ("경제지표(금리·환율)가 아직 없습니다 — .env 에 FRED_API_KEY 를 넣고 24시간 운영을 켜면 매일 채워집니다"
+                               if not mac else "최근 5일 금리·환율·업종에 큰 변화 없음")
+    return {"lines": lines[:3], "hint": hint, "as_of": str(asof.date()) if asof is not None else None}
+
+
+def watch_verdicts(app, n: int = 6) -> list[dict]:
+    """홈 관심종목 — ★ 종목의 AI 판단 하나씩 (로고 · 판단 · 상승 확률 · 등락)."""
+    w = watchlist(app)
+    rows = [r for r in w["rows"] if r["starred"]] or w["rows"]
+    return [{"symbol": r["symbol"], "name": r["name"], "ai": r["ai"], "prob_up": r["prob_up"], "chg_pct": r["chg_pct"], "held": r["held"],
+             "change": r["change"]} for r in rows[:n]]
+
+
+def conclusion(h: dict) -> dict:
+    """오늘의 결론 한 문단 — 홈의 다른 칸에서 이미 계산한 사실만으로 만든다 (새 판단을 만들지 않는다)."""
+    caution = h.get("caution") if isinstance(h.get("caution"), list) else []
+    todo = (h.get("todo") or {}).get("items") or [] if isinstance(h.get("todo"), dict) else []
+    ai = h.get("ai") or {}
+    core = (h.get("core") or {}).get("lines") or [] if isinstance(h.get("core"), dict) else []
+    bad = [c for c in caution if c.get("level") == "bad"]
+    vol = any(x["key"] == "vix" for x in core)
+    if any("데이터" in c["text"] for c in bad):
+        text, level = "데이터가 최신이 아닙니다. 오늘은 새로 사지 말고 데이터부터 최신으로 맞추세요.", "bad"
+    elif vol or len(bad) >= 2:
+        text, level = "시장 변동성이 커졌습니다. 새 포지션보다 지금 가진 종목의 위험 관리가 먼저입니다.", "warn"
+    elif bad:
+        text, level = f"{bad[0]['text']} — 이것부터 확인하세요. 나머지는 평소대로입니다.", "warn"
+    elif todo:
+        text, level = f"확인할 것 {len(todo)}가지만 보면 됩니다. 급하게 사고팔 이유는 없습니다.", "ok"
+    else:
+        text, level = "오늘은 아무것도 하지 않아도 됩니다. 기다리는 것도 투자입니다.", "ok"
+    if ai.get("key") == "banned" and level == "ok":
+        text += " AI 판단은 아직 참고만 하세요."
+    return {"text": text, "level": level, "do_nothing": level == "ok" and not todo}
+
+
 def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
     """홈 첫 화면 5칸: 오늘 시장 · 내 자산 · AI 상태 · 중요한 뉴스 · 오늘 할 일 (각 칸 실패해도 나머지는 보인다)."""
     from .clock import clock_status
@@ -541,7 +686,11 @@ def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
                 "event": next((x for x in ol["items"] if x["key"] == "event"), None), "index": idx,
                 "markets": [{"flag": m["flag"], "name": m["short"], "light": m.get("light"),
                              "state": "장중" if m["phase"] == "open" else (m["session_label"] if m["trading_day"] else "휴장"),
-                             "notice": m.get("notice")} for m in clk.values()]}
+                             "notice": m.get("notice"), "local_time": m.get("local_time"), "dst": m.get("dst"),
+                             # v23: 휴장 이유(우리말) · 다음 개장/마감 시각과 남은 초 (화면이 1초마다 줄여 보여 준다)
+                             "holiday": (re.search(r"휴장입니다 \(([^)]+)\)", m.get("notice") or "") or [None, m.get("holiday")])[1] if not m["trading_day"] else None,
+                             "next_event": m.get("next_event"), "next_kst": m.get("next_open_kst") if m.get("next_event") == "개장" else m.get("next_close_kst"),
+                             "seconds_to_next": m.get("seconds_to_next")} for m in clk.values()]}
 
     def assets():
         pf = app.load_portfolio(mode)
@@ -564,14 +713,26 @@ def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
                            "symbols": [{"symbol": x["symbol"], "name": x["name"]} for x in c["symbols"][:2]], "first": c["first"]} for c in top],
                 "n": len(b["cards"])}
 
-    def todo():
-        return today3(app, mode, now)
-
     safe("market", market)
     safe("assets", assets)
-    safe("ai", lambda: ai_state(app))
+    safe("ai", lambda: {**ai_state(app), "stage": (ops.get_state(app.engine, "ladder").get("stage") or "backtest").upper()})
     safe("news", news)
-    safe("todo", todo)
+    safe("todo", lambda: today3(app, mode, now, include_ops=False))
+    safe("system", lambda: [{"text": it["text"], "fix": it["fix"], "level": it["level"]} for it in ops_status(app, now)["issues"]])
+    safe("caution", lambda: caution3(app, mode, now))
+    safe("core", lambda: market_core(app, now))
+    safe("watch", lambda: watch_verdicts(app))
+
+    def data_():  # v23: 데이터 상태 한 줄 (점수 + 종류별 정상/지연/문제)
+        from . import datahealth
+        st = ops.get_state(app.engine, "data_health")
+        fresh = st.get("at") and (now - datetime.fromisoformat(st["at"])).total_seconds() < 600
+        d = st if fresh else datahealth.report(app, now)
+        ko = {"ok": "정상", "warn": "지연", "bad": "문제", "na": "키 없음"}
+        return {"overall": d.get("overall"), "trading": d.get("trading"),
+                "items": [{"name": r["name"], "status": r["status"], "label": ko.get(r["status"], r["status"])} for r in d.get("rows") or []]}
+    safe("data", data_)
+    out["conclusion"] = conclusion(out)
 
     def goal_():
         from .goal import progress

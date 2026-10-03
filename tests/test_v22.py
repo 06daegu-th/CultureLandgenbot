@@ -1,5 +1,6 @@
 """v22: 해외 종목 한글 이름 · 화면 이모지 정리기 · 종목 화면 채팅 버튼 · 로고 키 안내 · 서비스 준비도 문서."""
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,7 +26,7 @@ def test_static_v22_wiring():
     app_js = (STATIC / "app.js").read_text()
     assert '"on-stock"' in app_js and "el.isConnected" in app_js
     assert "body.on-stock .chat-dock:not(.open)" in (STATIC / "style.css").read_text()
-    assert "qa-shell-v22" in (STATIC / "sw.js").read_text()
+    assert re.search(r"qa-shell-v2\d", (STATIC / "sw.js").read_text())
 
 
 def test_deemoji_regex_keeps_symbols():

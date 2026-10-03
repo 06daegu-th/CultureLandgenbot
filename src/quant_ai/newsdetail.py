@@ -108,6 +108,35 @@ def key_numbers(text: str, k: int = 6) -> list[str]:
     return out[:k]
 
 
+FIN_LABELS = [("revenue", "매출", r"매출액|매출|영업수익|revenue|net sales|total revenues?"),
+              ("op_income", "영업이익", r"영업이익|operating income|operating profit"),
+              ("net_income", "순이익", r"당기순이익|순이익|net income|net earnings"),
+              ("eps", "EPS", r"주당순이익|EPS|earnings per (?:diluted )?share")]
+_AMT = r"([-−△]?\$?\s?\d[\d,]*(?:\.\d+)?\s?(?:조\s?\d[\d,]*\s?억|조|억|백만|천만|만)?\s?(?:원|달러|USD|billion|million|bn|mn|M|B)?)"
+_PCT = r"([-+−△]?\s?\d+(?:\.\d+)?\s?%)"
+
+
+def fin_numbers(text: str) -> list[dict]:
+    """공시·실적 기사에서 매출 · 영업이익 · 순이익 · EPS 와 증감률을 뽑아 카드로 (못 찾으면 그 항목은 없음).
+    예: '매출액 79조 1,000억원(전년 대비 12.3% 증가)' → {label: 매출, value: 79조 1,000억원, change: +12.3%}"""
+    t = re.sub(r"\s+", " ", text or "")
+    out = []
+    for key, name, pat in FIN_LABELS:
+        m = re.search(rf"(?:{pat})\s*(?:은|는|이|가|:|of|was|were|to)?\s*{_AMT}", t, re.I)
+        if not m or not re.search(r"\d", m.group(1)):
+            continue
+        val = m.group(1).strip().replace("△", "-").replace("−", "-")
+        rest = t[m.end(): m.end() + 40]
+        pm = re.search(_PCT, rest)
+        chg = None
+        if pm:
+            p_ = pm.group(1).replace(" ", "").replace("△", "-").replace("−", "-")
+            down = re.search(r"감소|하락|decrease|down|declin", rest[: pm.end() + 8], re.I)
+            chg = ("-" + p_.lstrip("+-")) if down and not p_.startswith("-") else (p_ if p_[0] in "+-" else "+" + p_)
+        out.append({"key": key, "label": name, "value": val, "change": chg})
+    return out
+
+
 def level(importance: float | None, event: str | None, tone: float, n_sources: int = 1, source_weight: float = 0.7,
           primary: bool = False) -> dict:
     """중요도 등급: 중요도 점수 + 이벤트 종류 + 톤 세기 + 보도 매체 수 + 1차 자료(공시·SEC) 여부."""
@@ -210,6 +239,52 @@ def explain(app, title: str, body: str, client=None) -> dict:
             "at": datetime.now(UTC).isoformat()}
 
 
+def _held(app) -> dict[str, dict]:
+    """모든 장부의 보유 종목 {종목: {수량, 장부}} — '내 보유 종목 영향' 에 쓴다."""
+    out: dict[str, dict] = {}
+    for m in ("live", "paper", "shadow", "us-paper"):
+        try:
+            for sym, p in app.load_portfolio(m).positions.items():
+                if p.qty:
+                    out.setdefault(sym, {"qty": p.qty, "book": m})
+        except Exception:  # noqa: BLE001, S112 - 없는 장부는 건너뜀
+            continue
+    return out
+
+
+def so_what(app, title: str, tone: float, event_ko: str, explain: dict | None, related: list[dict], chain: list[dict]) -> dict:
+    """뉴스를 읽고 끝나지 않게 — 무슨 뜻 → 관련 기업 → 내 보유 영향 → AI 판단 변화 → 결론 (규칙으로, 새 예측을 만들지 않음)."""
+    held = _held(app)
+    tone_ko = "긍정" if tone > 0.2 else "부정" if tone < -0.2 else "중립"
+    meaning = ((explain or {}).get("impact") or (explain or {}).get("easy")
+               or f"{event_ko} 관련 {tone_ko} 소식입니다" + (" — 관련 기업 실적·주가에 영향을 줄 수 있습니다" if tone_ko != "중립" else " — 직접적인 영향은 크지 않을 수 있습니다"))
+    names = {c["symbol"]: c["name"] for c in chain} | {r["symbol"]: r["name"] for r in related}
+    companies = [{"symbol": c["symbol"], "name": c["name"], "why": c.get("why"), "held": c["symbol"] in held} for c in chain[:5]]
+    mine = [{"symbol": s_, "name": names.get(s_, s_), "qty": held[s_]["qty"], "book": held[s_]["book"]} for s_ in names if s_ in held]
+    changes = []
+    for r in related:
+        ch = r.get("ai_change") or {}
+        if ch.get("before") and ch.get("after"):
+            b, a = ch["before"], ch["after"]
+            changes.append({"symbol": r["symbol"], "name": r["name"], "text": f"{b['action']} {b['score']}% → {a['action']} {a['score']}%",
+                            "delta": ch.get("delta"), "held": r["symbol"] in held})
+    worse = any((c.get("delta") or 0) <= -5 for c in changes)
+    if mine and tone_ko == "부정":
+        concl, lv = f"보유 종목({', '.join(m['name'] for m in mine[:2])})에 부정적인 소식 — 신규 매수는 보류하고 손실 한도(손절선)를 확인하세요", "bad"
+    elif mine and worse:
+        concl, lv = "뉴스 뒤 AI 판단이 낮아졌습니다 — 추가 매수는 보류", "warn"
+    elif tone_ko == "긍정" and mine:
+        concl, lv = "보유 종목에 긍정적 — 이미 가격에 반영됐을 수 있어 따라 사기(추격 매수)는 주의", "ok"
+    elif tone_ko == "긍정":
+        concl, lv = "긍정적 소식이지만 내 보유와는 직접 관련 없음 — 관심종목으로 지켜보기", "ok"
+    elif tone_ko == "부정":
+        concl, lv = "부정적 소식이지만 내 보유와는 직접 관련 없음 — 같은 업종 보유 여부만 확인", "warn"
+    else:
+        concl, lv = "직접적인 영향은 작아 보입니다 — 할 일 없음", "ok"
+    return {"meaning": meaning, "tone": tone_ko, "companies": companies, "mine": mine, "ai_changes": changes[:4],
+            "conclusion": concl, "level": lv, "note": "결론은 규칙으로 만든 참고 문장 — 투자 권유가 아님"}
+
+
 def news_detail(app, news_id: int) -> dict:
     from .data.db import session_scope
     from .data.models import NewsArticle
@@ -238,14 +313,17 @@ def news_detail(app, news_id: int) -> dict:
     lv = level(art["importance"], event, tone, 1 + len(siblings), srcw, any(p in (art["source"] or "").lower() for p in PRIMARY))
     cached = ex.get("explain")
     text = f"{art['title']} {art['body']}"
+    chain = impact_chain(app, art["symbols"])
     return {"kind": "news", "id": art["id"], "title": art["title"], "source": art["source"], "url": art["url"], "time": times(pub),
             "body": art["body"], "lang": lang(text), "event": event, "event_ko": EVENT_KO.get(event, event), "tone": round(tone, 2),
             "tone_ko": "긍정" if tone > 0.2 else "부정" if tone < -0.2 else "중립", "level": lv, "source_weight": srcw,
             "summary": ex.get("summary"), "rumor": bool(ex.get("rumor")),
             "explain": cached or _rule_explain(art["title"], tone, event, first),
             "terms": terms(text), "numbers": (cached or {}).get("numbers") or [{"label": "", "value": v} for v in key_numbers(text)],
-            "chain": impact_chain(app, art["symbols"]), "related": list(rel.values()), "siblings": siblings[:10],
-            "note": "움직임은 시장 대비 · '뉴스 후'는 같이 일어난 일이지 원인이라는 증거가 아님 · 과거 비슷한 뉴스 평균은 참고용"}
+            "fin": fin_numbers(text), "chain": chain, "related": list(rel.values()), "siblings": siblings[:10],
+            "note": "움직임은 시장 대비 · '뉴스 후'는 같이 일어난 일이지 원인이라는 증거가 아님 · 과거 비슷한 뉴스 평균은 참고용"} | {
+            "so_what": so_what(app, title=art["title"], tone=tone, event_ko=EVENT_KO.get(event, event), explain=cached,
+                               related=list(rel.values()), chain=chain)}
 
 
 def explain_news(app, news_id: int, client=None) -> dict:
@@ -299,7 +377,7 @@ def disclosure_detail(app, disc_id: int) -> dict:
                                   "impact": None, "translation": None,
                                   "note": "AI 설명(번역·쉬운 해설·중요한 숫자)은 [AI 설명] 버튼 — LLM 키가 있어야 합니다"},
             "terms": terms(text), "numbers": (cached or {}).get("numbers") or [{"label": "", "value": v} for v in key_numbers(text)],
-            "chain": impact_chain(app, [row["symbol"]]) if row["symbol"] else [], "impact": impact,
+            "chain": impact_chain(app, [row["symbol"]]) if row["symbol"] else [], "impact": impact, "fin": fin_numbers(text),
             "note": "공시 원문이 1차 자료 — 요약·번역은 참고 · 주가 반응은 과거 평균(인과 아님)"}
 
 

@@ -489,7 +489,7 @@ function initSearch() {
       if (my !== seq) return;
       const none = res.length ? "" : `<div class="sr-none small muted">'${esc(q)}' 종목을 찾지 못했습니다 — 종목코드(예: 005930)·티커(NVDA)·영문명으로도 찾을 수 있습니다.
         국내 종목이 하나도 안 나오면 아직 주가 데이터를 받지 않은 것입니다 (홈의 '처음이라면' ①).</div>`;
-      box.innerHTML = none + res.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${stockLogo(w.symbol, w.name, 24)} ${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span>${w.market === "GLOBAL" ? '<span class="chip">해외</span>' : badge(w.action)}</a>`).join("")
+      box.innerHTML = none + res.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${coId(w.symbol, w.name, { size: 30, ex: w.exchange || (w.market === "GLOBAL" ? "미국" : ""), link: false, tail: w.name_en && w.name_en !== w.name ? ` · ${esc(w.name_en)}` : "" })}</span>${w.market === "GLOBAL" ? '<span class="chip">해외</span>' : badge(w.action)}</a>`).join("")
         + `<a data-ask="${esc(q)}" class="ask"><span>${ICONS.chat} AI 에게 “${esc(q)}” 물어보기</span></a>`;
       box.classList.add("open");
       box.querySelectorAll("a[data-sym]").forEach((a) => a.onclick = () => { box.classList.remove("open"); input.value = ""; location.hash = `#analysis/${a.dataset.sym}`; });

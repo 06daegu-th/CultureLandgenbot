@@ -56,24 +56,25 @@ def test_logo_sources_cache_fallback_and_safety(app):
 
     def fetch(url):
         calls.append(url)
-        if "financialmodelingprep" in url and "NVDA" in url:
+        if "financialmodelingprep" in url and "ROKU" in url:
             return PNG
-        if "samsung.com" in url:
+        if "posco-holdings.com" in url:
             return PNG
         if "evil" in url:
             return b"<svg onload=alert(1)>" + b" " * 400  # 외부 SVG 는 받지 않는다
         raise OSError("blocked")
 
-    d, t, src = logos.get(app, "NVDA", "NVIDIA", fetch=fetch)
+    d, t, src = logos.get(app, "ROKU", "Roku", fetch=fetch)
     assert t == "image/png" and src == "fmp" and d == PNG
-    assert logos.get(app, "NVDA", fetch=fetch)[2] == "fmp" and len(calls) == 1  # 저장된 것 재사용
-    d, t, src = logos.get(app, "005930", "삼성전자", fetch=fetch)
-    assert src == "favicon" and "samsung.com" in calls[-1]
+    assert logos.get(app, "ROKU", fetch=fetch)[2] == "fmp" and len(calls) == 1  # 저장된 것 재사용
+    d, t, src = logos.get(app, "005490", "POSCO홀딩스", fetch=fetch)
+    assert src == "favicon" and "posco-holdings.com" in calls[-1]
+    assert logos.get(app, "005930", "삼성전자", fetch=fetch)[2] == "bundled"  # v23: 주요 종목은 내장 로고 (네트워크 안 씀)
     ops.set_state(app.engine, "profile:EVIL", {"data": {"company": {"website": "https://evil.example"}}})
     d, t, src = logos.get(app, "EVIL", "Evil Corp", fetch=fetch)
-    assert src == "monogram" and t == "image/svg+xml" and b"onload" not in d and b"EV" in d
+    assert src == "default" and t == "image/svg+xml" and b"onload" not in d and b"<svg" in d
     n = len(calls)
-    assert logos.get(app, "EVIL", fetch=fetch)[2] == "monogram" and len(calls) == n  # 실패는 7일간 다시 시도 안 함
+    assert logos.get(app, "EVIL", fetch=fetch)[2] == "default" and len(calls) == n  # 실패는 7일간 다시 시도 안 함
     mono = logos.monogram("000020", "종목1")
     assert b"\xec\xa2\x85" in mono  # '종'
     (logos._dir(app) / "custom" / "000030.png").write_bytes(PNG)

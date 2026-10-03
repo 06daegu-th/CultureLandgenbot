@@ -266,11 +266,11 @@ def test_logo_kr_sources_retry_case_and_prefetch(app, monkeypatch):
     assert logos.get(app, k1, fetch=fetch_toss)[2] == "toss" and "icn-sec-fill-" + k1 in urls[0]
     # 네트워크 오류만 → 1시간 뒤 다시 · '없음'(404)이면 7일
     t0 = 1_000_000.0
-    assert logos.get(app, k2, fetch=lambda u: (_ for _ in ()).throw(urllib.error.URLError("x")), now=t0)[2] == "monogram"
+    assert logos.get(app, k2, fetch=lambda u: (_ for _ in ()).throw(urllib.error.URLError("x")), now=t0)[2] == "default"
     meta = json.loads((logos._dir(app) / f"{k2}.json").read_text())
     assert meta["net"] is True
     n = []
-    assert logos.get(app, k2, fetch=lambda u: n.append(u) or PNG, now=t0 + 1800)[2] == "monogram" and not n  # 30분 뒤: 아직 안 함
+    assert logos.get(app, k2, fetch=lambda u: n.append(u) or PNG, now=t0 + 1800)[2] == "default" and not n  # 30분 뒤: 아직 안 함
     assert logos.get(app, k2, fetch=lambda u: n.append(u) or PNG, now=t0 + 3700)[2] == "toss"  # 1시간 지나면 다시 받음
 
     def not_found(url):
@@ -278,7 +278,7 @@ def test_logo_kr_sources_retry_case_and_prefetch(app, monkeypatch):
     k3 = syms[2]
     logos.get(app, k3, fetch=not_found, now=t0)
     assert json.loads((logos._dir(app) / f"{k3}.json").read_text())["net"] is False
-    assert logos.get(app, k3, fetch=lambda u: PNG, now=t0 + 7200)[2] == "monogram"  # 없음 → 7일
+    assert logos.get(app, k3, fetch=lambda u: PNG, now=t0 + 7200)[2] == "default"  # 없음 → 7일
     assert logos.get(app, k3, fetch=lambda u: PNG, now=t0 + 7200, force=True)[2] == "toss"  # --retry
     # 소문자 파일 이름도 인식 · 이름 없이 불러도 종목 이름으로 이니셜
     (logos._dir(app) / "custom" / "tsla.png").write_bytes(PNG)
@@ -288,9 +288,9 @@ def test_logo_kr_sources_retry_case_and_prefetch(app, monkeypatch):
     monkeypatch.delenv("QUANT_LOGO_SOURCES")
     monkeypatch.setenv("QUANT_LOGOS", "off")
     mono, _, src = logos.get(app, syms[3])
-    assert src == "monogram" and b"<svg" in mono
+    assert src == "default" and b"<svg" in mono
     r = logos.prefetch(app, [k1, syms[3]])
-    assert r["n"] == 2 and r["by_source"].get("monogram") == 1 and syms[3] in r["missing"]
+    assert r["n"] == 2 and r["by_source"].get("default") == 1 and syms[3] in r["missing"]
 
 
 # ------------------------------------------------------------------ 보안 · 오프라인 · 화면 파일

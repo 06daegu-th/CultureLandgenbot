@@ -261,6 +261,7 @@ async function openDetail(kind, id) {
     <div class="xs muted">🕒 ${esc(d.time?.text || "")}${d.time?.collected ? ` · 수집 ${esc(d.time.collected)}` : ""} ${d.lang && d.lang !== "ko" ? ` · 원문 언어 ${esc({ en: "영어", ja: "일본어", zh: "중국어" }[d.lang] || d.lang)}` : ""}</div>
     <div style="margin:10px 0"><a class="btn-sm primary" href="${esc(d.url || "#")}" target="_blank" rel="noopener noreferrer">원문 보기 ↗</a>
       <button class="btn-sm" id="dt-ai">${ex.by === "llm" ? "AI 설명 다시" : "AI 설명 (번역 · 쉬운 해설)"}</button></div>
+    ${soWhat(d.so_what)}
     <div class="dt-grid">
       <div class="dt-sec"><div class="dt-h">① 원문</div><div class="small dt-text">${esc(d.body || d.summary || "(본문 없음 — 원문 링크에서 확인)")}</div></div>
       <div class="dt-sec"><div class="dt-h">② 한국어 번역</div><div class="small dt-text">${d.lang === "ko" ? '<span class="dim">한국어 기사</span>' : ex.translation ? esc(ex.translation) : `<span class="dim">${esc(ex.note || "AI 설명을 누르면 번역합니다")}</span>`}</div></div>
@@ -268,6 +269,8 @@ async function openDetail(kind, id) {
     <div class="dt-sec dt-easy"><div class="dt-h">③ 쉽게 말하면</div><div>${esc(ex.easy || "-")}</div>
       <div class="dt-h" style="margin-top:8px">④ 주가에 미칠 수 있는 영향</div><div class="small">${esc(ex.impact || (imp.similar ? "과거 비슷한 공시 뒤 평균 움직임 참고" : "-"))}</div>
       ${imp.ai_change ? `<div class="small" style="margin-top:6px">🤖 ${esc(imp.ai_change.text)}</div>` : ""}</div>
+    ${(d.fin || []).length ? `<div class="dt-sec"><div class="dt-h">실적 숫자</div><div class="fin-cards">${d.fin.map((f) => `<div class="fin-c"><div class="xs muted">${esc(f.label)}</div>
+      <div class="fin-v num">${esc(f.value)}</div>${f.change ? `<div class="num small ${f.change.startsWith("-") ? "down" : "up"}">${esc(f.change)} <span class="xs dim">증감 (기사에 적힌 기준)</span></div>` : ""}</div>`).join("")}</div></div>` : ""}
     ${(d.numbers || []).length ? `<div class="dt-sec"><div class="dt-h">중요한 숫자</div>${d.numbers.map((n) => `<span class="chip">${n.label ? `<span class="xs muted">${esc(n.label)}</span> ` : ""}<b>${esc(n.value)}</b></span>`).join(" ")}</div>` : ""}
     ${(d.terms || []).length ? `<div class="dt-sec"><div class="dt-h">용어 풀이</div>${d.terms.map((t) => `<div class="small"><b>${esc(t.term)}</b> — ${esc(t.meaning)}</div>`).join("")}</div>` : ""}
     ${(d.chain || []).length ? `<div class="dt-sec"><div class="dt-h">⑤ 영향 받을 수 있는 종목</div><div class="dt-chain">${d.chain.map((c) => `<a class="chip dt-go" href="#analysis/${esc(c.symbol)}" title="${esc(c.why)}">${stockLogo(c.symbol, c.name, 18)} ${esc(c.name)} ${esc(c.level)}</a>`).join(" → ")}</div>
@@ -289,3 +292,18 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   openDetail(t.dataset.news ? "news" : "disclosure", t.dataset.news || t.dataset.disc);
 });
+
+// v23 So What — 뉴스를 읽고 끝나지 않게: 무슨 뜻 → 관련 기업 → 내 보유 영향 → AI 판단 변화 → 결론
+function soWhat(w) {
+  if (!w) return "";
+  const co = (w.companies || []).map((c) => `<a class="sw-co" href="#analysis/${esc(c.symbol)}" title="${esc(c.why || "")}">${stockLogo(c.symbol, c.name, 18)} ${esc(c.name)}${c.held ? ' <b class="xs">보유</b>' : ""}</a>`).join("");
+  const mine = (w.mine || []).length ? w.mine.map((m) => `${esc(m.name)} ${num(m.qty)}주`).join(" · ") : "내 보유 종목과 직접 관련 없음";
+  const ch = (w.ai_changes || []).length ? w.ai_changes.map((c) => `<div class="small">${esc(c.name)} <b class="num ${c.delta < 0 ? "down" : c.delta > 0 ? "up" : ""}">${esc(koText(c.text))}</b></div>`).join("")
+    : '<div class="small muted">뉴스 이후 새 AI 판단 없음 (다음 판단 때 반영)</div>';
+  return `<div class="sowhat sw-${esc(w.level || "ok")}">
+    <div class="sw-row"><span class="sw-k">무슨 뜻?</span><div>${esc(w.meaning || "")}</div></div>
+    ${co ? `<div class="sw-row"><span class="sw-k">관련 기업</span><div class="sw-cos">${co}</div></div>` : ""}
+    <div class="sw-row"><span class="sw-k">내 보유 영향</span><div>${esc(mine)}</div></div>
+    <div class="sw-row"><span class="sw-k">AI 판단</span><div>${ch}</div></div>
+    <div class="sw-row sw-end"><span class="sw-k">결론</span><div><b>${esc(w.conclusion || "")}</b><div class="xs dim">${esc(w.note || "")}</div></div></div></div>`;
+}

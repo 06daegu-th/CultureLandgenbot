@@ -19,6 +19,7 @@ class KISMock:
         self.positions: dict[str, list[float]] = {}  # code → [qty, avg]
         self.orders: dict[str, dict] = {}
         self.calls: list[tuple[str, str, str]] = []
+        self.drop_order_response = False
         self.lock = threading.Lock()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -54,7 +55,12 @@ class KISMock:
                     if self.headers.get("authorization") != "Bearer MOCK":
                         return self._send({"rt_cd": "1", "msg_cd": "EGW00123", "msg1": "토큰 오류"})
                     if path.endswith("/order-cash"):
-                        return self._send(mock._order(body, self.headers.get("tr_id")))
+                        r = mock._order(body, self.headers.get("tr_id"))
+                        if mock.drop_order_response:  # 네트워크 끊김 흉내: 증권사는 주문을 받았는데 응답이 오지 않음
+                            self.close_connection = True
+                            self.connection.shutdown(2)
+                            return None
+                        return self._send(r)
                     if path.endswith("/order-rvsecncl"):
                         o = mock.orders.get(body["ORGN_ODNO"])
                         if o:
