@@ -140,6 +140,16 @@ def build_default_scheduler(app, mode) -> Scheduler:
         S2.cached(app, "KR")
     sch.add("signals2", signals2_job, 3600, "always")
 
+    def datacheck_job(now):  # v29: 하루 한 번 데이터 정합성 점검 (자동 갱신이 멈춰도 '밀림'을 기록)
+        from .datacheck import run as _datacheck
+        _datacheck(app, now=now)
+    sch.add("datacheck", datacheck_job, 24 * 3600, "closed")
+
+    def proof_job(now):  # v29 증명 프로젝트: 장 마감(15:40 KST) 뒤 하루 한 번 봉인 기록
+        from .proof import record_day
+        record_day(app, now)
+    sch.add("proof_day", proof_job, 1800, "always")
+
     def indices(now):  # v27: 진짜 지수 (코스피·코스닥·나스닥·S&P500·다우) — 키 불필요, 실패하면 이전 값 + 대용
         from .data.collectors.indices import collect_indices
         collect_indices(app.engine)
@@ -223,9 +233,8 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("decide", lambda now: app.decide(), 30 * 60, "always")
 
     # 주가 자동 갱신: 설정이 없어도 ./run.sh data 가 받아 둔 기본 위치가 있으면 쓴다 (없으면 데이터가 낡아 매매 중단)
-    marcap_dir = os.environ.get("QUANT_MARCAP_DIR") or next(
-        (str(p / "data") for p in (Path(os.environ.get("QUANT_HOME") or Path.home() / ".quant-ai") / "data" / "marcap",
-                                   Path("data/marcap")) if (p / ".git").exists()), None)
+    from .data.collectors.marcap import default_dir as _marcap_default
+    marcap_dir = _marcap_default()
     if marcap_dir and mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE, Mode.RESEARCH, Mode.PREDICT):
         from .data.collectors.marcap import sync_marcap
 
@@ -236,6 +245,11 @@ def build_default_scheduler(app, mode) -> Scheduler:
             except (subprocess.SubprocessError, OSError) as e:  # 네트워크 장애 → 기존 파일로 계속
                 log.warning("marcap 갱신 실패: %s", e)
             app.ingest_krx(marcap_dir, years=3)
+            try:  # v29: 새 일봉을 받으면 바로 정합성 점검 (원천 · 수정주가 · 외부 시세 대조)
+                from .datacheck import run as _datacheck
+                _datacheck(app, now=now)
+            except Exception as e:  # noqa: BLE001 - 점검 실패가 갱신을 막지 않게
+                log.warning("데이터 점검 실패: %s", e)
         sch.add("krx_data", krx_data, 6 * 3600, "closed")
 
         def krx_bootstrap(now):

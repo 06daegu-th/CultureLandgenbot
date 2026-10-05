@@ -771,3 +771,11 @@ a.t-li.on { background: var(--t-hover); }
   .t2-pick-r { width: 100%; justify-content: space-between; }
 }
 .t2-pick { display: block; margin: 0; }
+
+/* v29 증명 프로젝트 · 데이터 점검 */
+.t2-form { display: grid; gap: 14px; }
+.t2-form .t-btn { justify-self: start; }
+.t2-proof-svg { width: 100%; height: auto; display: block; background: var(--t-soft); border-radius: 14px; }
+.t-chart-src { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--dim); margin-top: 6px; }
+.t-chart-src a { color: inherit; text-decoration: underline; }
+.tsk-chart { touch-action: pan-y; }

@@ -241,6 +241,13 @@ def stock(app, sym: str, now: datetime | None = None) -> dict:
     mc = (prof.get("stats") or {}).get("market_cap") or prof.get("market_cap")
     if mc:
         out["market_cap"] = mc
+    elif sym[:1].isdigit():  # v29: 종목 상세 자료가 없으면 KRX 원천의 시가총액 (기준일 함께)
+        f = ((ops.get_state(app.engine, "krx_facts").get("symbols") or {}).get(sym)) or {}
+        if f.get("marcap"):
+            out["market_cap"] = f["marcap"]
+            out["market_cap_src"] = f"KRX {f.get('date', '')} 종가 기준"
+            if f.get("shares"):
+                out["shares"] = f["shares"]
     m = clock_status(now)["markets"]["KRX" if sym[:1].isdigit() else "US"]
     out["market"] = {"state": "장중" if m["phase"] == "open" else (m["session_label"] if m["trading_day"] else "휴장"),
                      "holiday": m.get("holiday") if not m["trading_day"] else None, "tz": m.get("tz"), "dst": m.get("dst"),

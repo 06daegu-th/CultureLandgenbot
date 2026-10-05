@@ -33,16 +33,20 @@ def progress(app, now: datetime | None = None) -> dict:
     import os
     kis_keys = {k: bool(os.environ.get(k)) for k in ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT")}
     v = ops.get_state(app.engine, "kis_validation")
-    steps = [bool(v.get("ok")), bool(v.get("order_path_verified")), bool(v.get("fill_path_verified") or v.get("fill_verified"))]
-    items.append({"key": "kis", "title": "KIS 모의계좌 검증", "progress": round(sum(steps) / 3, 3) if kis else 0.0,
+    e2e_ok = any(h.get("e2e") for h in (v.get("history") or [])) or bool(v.get("e2e_verified"))
+    steps = [bool(v.get("ok")), bool(v.get("order_path_verified")), bool(v.get("fill_path_verified") or v.get("fill_verified")), e2e_ok]
+    items.append({"key": "kis", "title": "KIS 모의계좌 검증", "progress": round(sum(steps) / 4, 3) if kis else 0.0,
                   "status": "ok" if all(steps) else "warn" if kis else "setup",
                   "detail": (f"스위트 {'통과' if steps[0] else '미통과'} · 주문 경로 {'확인' if steps[1] else '미확인'} · 실체결 {'확인' if steps[2] else '미확인'}"
+                             f" · 전 과정(주문→체결→장부→잔고) {'확인' if steps[3] else '미확인'}"
                              + (f" · {label(v.get('at'))}" if v.get("at") else "")) if kis else
                             "KIS 미설정 — 가짜 서버 테스트만 통과한 상태 · 키: " + " · ".join(f"{k.replace('KIS_', '')} {'✓' if ok else '✗'}" for k, ok in kis_keys.items()),
                   "steps": ["모의투자 신청 (한국투자증권 앱·홈페이지)", ".env 에 KIS_APP_KEY · KIS_APP_SECRET · KIS_ACCOUNT · KIS_ENV=demo",
                             "./run.sh kis-check --suite (시세·잔고·주문·취소·정정 경로)", "장중 ./run.sh kis-check --suite --fill (1주 실제 체결)",
-                            "서버 재시작 후 잔고 대조 (재시작 복구) — 하루 1회 자동 재검증"],
-                  "next": "./run.sh kis-check --suite --fill (장중, 모의투자)" if not all(steps) else "하루 1회 자동 재검증 중"})
+                            "장중 ./run.sh kis-check --suite --e2e (주문→체결→장부→잔고 대조→중복 방지→되팔기→재시작 복구)",
+                            "하루 1회 자동 재검증"],
+                  "next": ("./run.sh kis-check --suite --fill (장중, 모의투자)" if not all(steps[:3]) else
+                           "./run.sh kis-check --suite --e2e (장중, 모의투자)" if not steps[3] else "하루 1회 자동 재검증 중")})
     ws = ops.get_state(app.engine, "kis_ws")
     lq = ops.get_state(app.engine, "live_quotes")
     srcs = [q.get("source") for k, q in lq.items() if not k.startswith("_") and isinstance(q, dict)]

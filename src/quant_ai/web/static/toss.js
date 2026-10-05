@@ -108,7 +108,7 @@ function tSheet(html, onMount) {
 }
 
 // 면적 차트 (가격 흐름 + 거래량) — 손가락/마우스를 올리면 위 가격 칸이 그 날로 바뀐다
-function tArea(el, bars, sym, onHover) {
+function tArea(el, bars, sym, onHover, o = {}) {
   if (!el) return null;
   if (!window.LightweightCharts) { el.innerHTML = tEmpty("차트를 그리지 못했어요", "차트 파일을 불러오지 못했습니다"); return null; }
   if (!bars?.length) { el.innerHTML = tEmpty("차트 자료가 없어요", "일봉이 쌓이면 그려집니다"); return null; }
@@ -124,19 +124,36 @@ function tArea(el, bars, sym, onHover) {
   });
   S.charts.push(chart);
   const kr = isKR(sym);
+  // v29: 가격 축·마지막 값에 콤마 (360000 → 360,000) · 미국은 소수 2자리
   const s = chart.addAreaSeries({ lineColor: c, topColor: c + "38", bottomColor: c + "00", lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
-    priceFormat: { type: "price", precision: kr ? 0 : 2, minMove: kr ? 1 : 0.01 } });
+    priceFormat: { type: "custom", minMove: kr ? 1 : 0.01, formatter: (p) => num(p, kr ? 0 : 2) } });
   s.setData(bars.map((b) => ({ time: b.time, value: b.close })));
+  // v29: 기준선 점선 — 1일은 어제 종가, 기간 차트는 기간 시작가 (오르내림을 한눈에)
+  const ref = o.refPrice ?? first;
+  if (ref) s.createPriceLine({ price: ref, color: css("--dim") || "#8b95a1", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: o.refLabel || "" });
   const vol = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol", lastValueVisible: false, priceLineVisible: false });
   chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
   vol.setData(bars.map((b, i) => ({ time: b.time, value: b.volume || 0, color: (i && b.close < bars[i - 1].close ? css("--down") : css("--up")) + "55" })));
   chart.timeScale().fitContent();
   const byTime = new Map(bars.map((b, i) => [b.time, i]));
+  // v29: 두 지점 구간 수익률 — 누른 채(손가락은 댄 채) 끌면 처음 지점 → 지금 지점 수익률
+  let hoverI = null, anchor = null;
+  const down = () => { anchor = hoverI; };
+  const up = () => { if (anchor != null) { anchor = null; if (onHover) onHover(hoverI == null ? null : { bar: bars[hoverI], chg: bars[hoverI].close / ref - 1 }); } };
+  el.addEventListener("pointerdown", down);
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointerleave", up);
   chart.subscribeCrosshairMove((p) => {
     if (!onHover) return;
-    if (!p || !p.time || !byTime.has(p.time)) { onHover(null); return; }
+    if (!p || !p.time || !byTime.has(p.time)) { hoverI = null; onHover(null); return; }
     const i = byTime.get(p.time);
-    onHover({ bar: bars[i], chg: i ? bars[i].close / bars[0].close - 1 : 0 });
+    hoverI = i;
+    if (anchor != null && anchor !== i) {
+      const [a, b] = anchor < i ? [anchor, i] : [i, anchor];
+      onHover({ bar: bars[i], chg: bars[i].close / ref - 1, range: { from: bars[a], to: bars[b], ret: bars[b].close / bars[a].close - 1 } });
+      return;
+    }
+    onHover({ bar: bars[i], chg: bars[i].close / ref - 1 });
   });
   return chart;
 }
@@ -313,10 +330,11 @@ async function tStockTab(ctx, k) {
     const stat = (l, val) => `<div class="t-stat"><span>${l}</span><b class="num">${val}</b></div>`;
     body.innerHTML = `
       <div class="tsk-chart-w"><div class="t-hover" id="tsk-hover"></div><div class="tsk-chart" id="tsk-chart"></div>
+        <div class="t-chart-src"><span>누른 채 끌면 구간 수익률 · 점선 = 기간 시작가 (1일은 어제 종가)</span><span>${isKR(sym) ? "시세 KRX 일봉 (장중은 지연)" : "시세 일봉 (지연)"} · 차트 <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView</a></span></div>
         ${tChips("tsk-per", PERIODS.map(([n, l]) => [String(n), l]), String(T.period))}<div class="t-foot">1일 = 5분봉 (조금 늦을 수 있어요) · 나머지는 일봉 종가 기준</div></div>
       ${tSec("시세", `<div class="t-stats">${stat("시가", tPx(s.open, sym))}${stat("고가", `<span class="up">${tPx(s.high, sym)}</span>`)}${stat("저가", `<span class="down">${tPx(s.low, sym)}</span>`)}
         ${stat("거래량", tVol(s.volume))}${stat("52주 최고", tPx(s.high52, sym))}${stat("52주 최저", tPx(s.low52, sym))}${stat("시가총액", tCap(st.market_cap, sym))}${stat("20일 평균 거래량", tVol(s.avg_volume20))}</div>
-        ${st.bar_date ? `<div class="t-foot">${esc(st.bar_date)} 일봉 기준${st.market_cap ? "" : " · 시가총액은 종목 상세 자료를 받으면 나와요"}</div>` : ""}`, "", "t-card")}
+        ${st.bar_date ? `<div class="t-foot">${esc(st.bar_date)} 일봉 기준${st.market_cap ? (st.market_cap_src ? ` · 시가총액 ${esc(st.market_cap_src)}` : "") : " · 시가총액은 종목 상세 자료를 받으면 나와요"} · <a href="#datacheck">데이터 점검</a></div>` : ""}`, "", "t-card")}
       <div id="tsk-sum-ai"></div><div id="tsk-sum-sig"></div><div id="tsk-sum-news"></div>`;
     tBind(body, "tsk-per", (n) => { T.period = Number(n); body.querySelectorAll("#tsk-per button").forEach((b) => b.classList.toggle("on", b.dataset.k === n)); tStockChart(ctx); });
     tStockChart(ctx);
@@ -379,12 +397,13 @@ async function tStockChart(ctx) {
   const label = (PERIODS.find(([n]) => n === T.period) || [0, ""])[1];
   const base = () => { if (hv) hv.innerHTML = per == null ? "" : `<span>${label} 동안</span> <b class="num ${tCls(per)}">${tPct(per)}</b>`; };
   base();
+  const ymd = (t) => { const dt = new Date(t * 1000); return `${dt.getUTCFullYear()}.${String(dt.getUTCMonth() + 1).padStart(2, "0")}.${String(dt.getUTCDate()).padStart(2, "0")}`; };
   tArea(el, bars, sym, (p) => {
     if (!hv) return;
     if (!p) { base(); return; }
-    const dt = new Date(p.bar.time * 1000);
-    hv.innerHTML = `<span>${dt.getUTCFullYear()}.${String(dt.getUTCMonth() + 1).padStart(2, "0")}.${String(dt.getUTCDate()).padStart(2, "0")}</span> <b class="num">${tPx(p.bar.close, sym)}</b> <span class="num ${tCls(p.chg)}">${tPct(p.chg)}</span>`;
-  });
+    if (p.range) { hv.innerHTML = `<span>${ymd(p.range.from.time)} → ${ymd(p.range.to.time)}</span> <b class="num ${tCls(p.range.ret)}">${tPct(p.range.ret)}</b> <span class="t-sub">구간</span>`; return; }
+    hv.innerHTML = `<span>${ymd(p.bar.time)}</span> <b class="num">${tPx(p.bar.close, sym)}</b> <span class="num ${tCls(p.chg)}">${tPct(p.chg)}</span> <span class="t-sub">${label} 시작 대비</span>`;
+  }, { refLabel: "" });
   void st;
 }
 // v27: '1일' — 오늘(또는 마지막 거래일) 5분봉. 기준선 = 어제 종가. 못 받으면 이유 + 일봉 단추
@@ -412,8 +431,9 @@ async function tStockIntraday(ctx, el) {
   const ch = tArea(el, bars, sym, (p) => {
     if (!hv) return;
     if (!p) { base(); return; }
+    if (p.range) { hv.innerHTML = `<span>${hm(p.range.from.time)} → ${hm(p.range.to.time)}</span> <b class="num ${tCls(p.range.ret)}">${tPct(p.range.ret)}</b> <span class="t-sub">구간</span>`; return; }
     hv.innerHTML = `<span>${hm(p.bar.time)}</span> <b class="num">${tPx(p.bar.close, sym)}</b> <span class="num ${tCls(p.bar.close - prev)}">${tPct(p.bar.close / prev - 1)}</span>`;
-  });
+  }, { refPrice: prev, refLabel: "어제 종가" });
   if (ch) ch.applyOptions({ timeScale: { timeVisible: true, secondsVisible: false } });
 }
 function tStockSumAI(ctx) {
@@ -803,6 +823,7 @@ async function tMore(el) {
   el.innerHTML = `<div class="ts ts-more"><h1 class="t-h1">더보기</h1>
     <div class="t-tiles">
       ${tile("#picks", "ai", "AI 추천", "오늘의 매수·비중 축소 후보")}
+      ${tile("#proof", "check", "증명 프로젝트", "100만원 실계좌 · 매일 봉인 기록")}
       ${tile("#aitrust", "shield", "AI 신뢰 센터", "지금 AI 를 믿어도 되나")}
       ${tile("#report", "ai", "AI 분석 리포트", "종목별 판단 · 근거")}
       ${tile("#research", "research", "리서치", "과거로 시험하기 (백테스트)")}
@@ -819,7 +840,8 @@ async function tMore(el) {
     ${tSec("화면", `<div class="t-list">
       <div class="t-li"><span class="t-co-t"><b>화면 모드</b><span>쉬운 화면 = 토스식 / 전체 = 모든 메뉴·전문가 화면</span></span><span class="t-li-r">${tChips("tm-ui", [["easy", "쉬운"], ["pro", "전체"]], uiMode())}</span></div>
       <div class="t-li"><span class="t-co-t"><b>테마</b><span>기기 설정을 따르다가 직접 바꾸면 기억해요</span></span><span class="t-li-r">${tChips("tm-th", [["light", "라이트"], ["dark", "다크"]], theme)}</span></div></div>`, "", "t-card")}
-    ${tSec("모든 기능", NAV.map(([g, items]) => `<details class="t-allnav"><summary>${esc(g)} <span>${items.length}</span></summary><div class="t-list">${items.map(([v, ic, l]) => `<a class="t-li" href="#${v}"><span class="t-co"><span class="t-ev-ic">${ICONS[ic] || ""}</span><span class="t-co-t"><b>${esc(l)}</b></span></span><span class="t-chev">${TI.chev}</span></a>`).join("")}</div></details>`).join(""), "", "t-card")}</div>`;
+    ${tSec("모든 기능", NAV.map(([g, items]) => `<details class="t-allnav"><summary>${esc(g)} <span>${items.length}</span></summary><div class="t-list">${items.map(([v, ic, l]) => `<a class="t-li" href="#${v}"><span class="t-co"><span class="t-ev-ic">${ICONS[ic] || ""}</span><span class="t-co-t"><b>${esc(l)}</b></span></span><span class="t-chev">${TI.chev}</span></a>`).join("")}</div></details>`).join(""), "", "t-card")}
+    <div class="t-foot">차트: <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView</a> Lightweight Charts™ (Apache 2.0) · 시세·지수는 지연될 수 있으며 투자 판단의 책임은 본인에게 있어요</div></div>`;
   tBind(el, "tm-ui", (k) => { if (k !== uiMode()) setUiMode(k); });
   tBind(el, "tm-th", (k) => { if (k !== document.documentElement.dataset.theme) $("#theme-btn").click(); });
 }

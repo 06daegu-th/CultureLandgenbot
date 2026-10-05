@@ -256,7 +256,7 @@ def risk_of_ruin(app, mode: str) -> dict:
 
 
 # ------------------------------------------------------------------ KIS 검증 · 슬리피지
-def kis_validate(app, fill: bool = False, client=None, market_open: bool | None = None) -> dict:
+def kis_validate(app, fill: bool = False, client=None, market_open: bool | None = None, e2e: bool = False) -> dict:
     from .clock import MARKETS, Phase
     from .trading.kis import KISClient
     from .trading.kis_check import run
@@ -274,10 +274,11 @@ def kis_validate(app, fill: bool = False, client=None, market_open: bool | None 
         pos = {s: p.qty for s, p in app.load_portfolio("live").positions.items()}
     except Exception:  # noqa: BLE001
         pos = None
-    res = run(client, market_open=market_open, fill_test=fill, db_positions=pos)
+    res = run(client, market_open=market_open, fill_test=fill, db_positions=pos, e2e_engine=app.engine if e2e else None)
     prev = ops.get_state(app.engine, "kis_validation")
     hist = (prev.get("history") or [])[-29:] + [{"at": res["at"], "ok": res["ok"], "env": res["env"],
-                                                  "order": res["order_path_verified"], "fill": res["fill_path_verified"]}]
+                                                  "order": res["order_path_verified"], "fill": res["fill_path_verified"],
+                                                  "e2e": res.get("e2e_verified")}]
     ops.set_state(app.engine, "kis_validation", res | {"history": hist})
     if res.get("parity"):
         par = ops.get_state(app.engine, "execution_parity")

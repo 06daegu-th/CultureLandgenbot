@@ -955,7 +955,7 @@ TV.datahealth = async (el) => {
     ${sn && !sn.error ? tCard("5분마다 자동 감시", tList((sn.checks || []).map((c) => tStRow(c.title, c.detail, c.status)))) : ""}
     ${g && !g.error && (g.failmode || []).length ? tCard("장애가 나도 돈은 이렇게 지켜요", tList(g.failmode.map((m) => `<div class="t-li"><span class="t-co-t"><b>${esc(m.part)} 이 멈추면</b><span class="t2-wrap">가진 주식 ${esc(m.positions)} · 새로 사기 ${esc(m.new_buys)} · 팔기 ${esc(m.sells)}</span></span></div>`))) : ""}
     ${tLegacy("dh-legacy")}
-    ${tFull("datahealth", '<a class="t-btn ghost" href="#readiness">매매해도 되나</a><a class="t-btn ghost" href="#truth">데이터 사실 확인</a>')}`);
+    ${tFull("datahealth", '<a class="t-btn ghost" href="#datacheck">데이터 점검 (수정주가 · 외부 시세 대조)</a><a class="t-btn ghost" href="#readiness">매매해도 되나</a><a class="t-btn ghost" href="#truth">데이터 사실 확인</a>')}`);
   L.root.querySelector("#dh-re").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "점검 중…"; await api("/api/data-health?refresh=1").catch(() => null); TV.datahealth(el); };
   const box = L.root.querySelector("#dh-legacy");
   collectCard(box); keysCard(box); netCard(box); conflictCard(box);
@@ -1337,3 +1337,105 @@ async function tStockSignal(root, sym) {
     <div class="t2-sigs">${(r.signals || []).map((s) => `<div class="t2-sig${!s.verified && !s.flip ? " dim" : ""}"><span class="t2-sig-k">${esc(s.label)}</span>${tDiv(s.flip ? -s.score : s.score)}<span class="t2-sig-t">${esc(s.text || "")}</span></div>`).join("")}</div>
     ${r.evidence?.n ? `<div class="t-foot">과거 비슷한 점수 ${tN(r.evidence.n)}번 중 ${tPr(r.evidence.hit)} 시장보다 올랐음 · 평균 ${tPct(r.evidence.mean, 1)} (20거래일)</div>` : ""}`, '<a href="#picks">AI 추천</a>', "t-card");
 }
+
+// ------------------------------------------------------------ v29 데이터 점검 (일봉 최신성 · 자동 갱신 · 원천 정합성 · 외부 시세 대조)
+TV.datacheck = async (el) => {
+  const L = await tLoad(el, "datacheck", "데이터 점검", "t2-dc", () => api("/api/datacheck"));
+  if (!L) return;
+  const d = L.d, f = d.freshness || {}, u = d.update || {}, ref = d.reference || {};
+  const KIND = { limit: "가격제한폭 초과", bigmove: "대형주 큰 움직임", halt: "거래정지 의심", rows: "잘못된 행", marcap: "시가총액 불일치" };
+  const issues = d.issues || [];
+  const F = T2.dcF || "all";
+  const shown = issues.filter((x) => F === "all" || x.level === F);
+  const fx = (v) => v == null ? "-" : v >= 1 ? `${v.toFixed(2)}배` : `1 : ${Math.round(1 / v)}`;
+  tPaint(L.root, "데이터 점검", `
+    ${tHero({ k: `${tAgo(d.at)} 점검 · 국내 ${tN(d.n_symbols)}종목`, lv: d.status, big: `${lvDot(d.status)} ${d.status === "good" ? "믿고 써도 돼요" : d.status === "bad" ? "고칠 것이 있어요" : "확인할 것이 있어요"}`, sub: esc(d.headline || ""),
+      foot: esc(d.note || "") })}
+    <div class="t-pro" style="margin-top:0"><button class="t-btn primary" id="dc-run">지금 다시 점검</button><a class="t-btn ghost" href="#datahealth">데이터 상태</a></div><div class="t-gap"></div>
+    ${tCard("일봉이 최신인가", tList([
+      tStRow("국내 일봉 기준일", f.date ? `${f.date} · ${f.age || ""}` : "일봉 없음", { fresh: "good", stale: "warn", old: "bad" }[f.status] || "idle", { label: f.lag_days ? `${f.lag_days}거래일 밀림` : f.date ? "최신" : "없음" }),
+      tStRow("일봉 자동 갱신", u.text || "", !u.configured ? "warn" : u.last_ok === false ? "bad" : u.last_ok ? "good" : "warn", { label: u.last_success ? `마지막 성공 ${tAgo(u.last_success)}` : u.configured ? "기록 없음" : "설정 필요" }),
+    ]) + (!u.configured || f.lag_days ? `<div class="t-foot">PC 에서 <b>./run.sh data</b> 로 한 번 받으면 이후에는 서버가 켜져 있는 동안 장 마감 후 자동으로 받아요 · PC 를 켜면 자동으로 돌게 하려면 <b>./run.sh install-service</b></div>` : ""))}
+    ${tCard(`외부 시세와 대조 ${tSt(ref.status === "done" ? "good" : ref.status === "partial" ? "warn" : "idle", ref.status === "done" ? "완료" : ref.status === "partial" ? "일부" : "못 함")}`,
+      `<div class="t-sub" style="margin-bottom:8px">${esc(ref.text || "")} — 관심·보유 종목과 거래가 많은 종목의 최근 1년 종가를 네이버 차트(수정주가) · Yahoo 와 날짜별로 비교해요</div>
+      ${tList((ref.rows || []).map((r) => `<div class="t2-item">${tStRow(`${r.name || r.symbol} ${r.symbol}`, `${r.text || ""}${r.source ? ` · ${r.source}` : ""}${r.n ? ` · ${r.from} ~ ${r.to}` : ""}`, r.verdict === "ok" ? "good" : r.verdict === "unknown" ? "idle" : r.verdict, { label: r.verdict === "ok" ? "일치" : r.verdict === "unknown" ? "못 받음" : r.n_bad ? `${r.n_bad}일 다름` : "다름" })}${(r.bad || []).length ? `<div class="t2-why">${r.bad.map((b) => `${esc(b.date)} 우리 ${tN(b.ours)} · 외부 ${tN(b.ref)} (${tPct(b.diff, 1)})`).join(" · ")}</div>` : ""}</div>`), "아직 대조하지 않았어요", "인터넷이 되는 PC 에서 '지금 다시 점검'을 누르세요")}`)}
+    ${Object.keys(d.focus || {}).length ? tCard("대표 종목 숫자 확인", tList(Object.entries(d.focus).map(([s, x]) => `<div class="t2-item">${tSym(s, x.name, `${esc(x.date)} 종가`, `<b class="num">${tPx(x.last, s)}</b>`)}<div class="t2-why">52주 최저 ${tPx(x.w52.low, s)} (${esc(x.w52.low_date)}) · 최고 ${tPx(x.w52.high, s)} (${esc(x.w52.high_date)}) · 1년 ${tPct(x.w52.ret_1y, 0)}${x.marcap ? ` · 시가총액 ${tCap(x.marcap, s)}` : ""}${x.shares ? ` · 주식 ${tN(x.shares)}주` : ""} · 가격 조정 이벤트 ${tN(x.n_adj_events)}번</div></div>`))
+      + '<div class="t-foot">증권사 앱 · 네이버 증권의 같은 날 숫자와 맞는지 눈으로 한 번 확인해 보세요 — 다르면 이 화면에 그대로 보이게 하는 것이 이 점검의 목적이에요</div>') : ""}
+    ${(d.market_days || []).length ? tCard("대형주가 함께 크게 움직인 날", tList(d.market_days.map((m) => tStRow(`${m.date} · ${m.n}종목`, m.names.join(" · "), "warn", { label: "지수와 확인" })))
+      + '<div class="t-foot">여러 대형주가 같은 날 함께 ±15% 넘게 움직였다면 한 종목 자료 오류보다 시장 전체 움직임일 가능성이 커요 — 그날 코스피와 함께 확인해 보세요</div>') : ""}
+    ${tCard(`원천 자료 점검 · 오류 ${tN(d.n_bad)} · 확인 ${tN(d.n_warn)}`, `${tChips("dc-f", [["all", "전체"], ["bad", "오류"], ["warn", "확인"]], F)}<div class="t-gap"></div>
+      ${tList(shown.slice(0, 60).map((x) => `<div class="t2-item">${tSym(x.symbol, x.name, `${esc(KIND[x.kind] || x.kind)}${x.date ? ` · ${esc(x.date)}` : ""}`, tSt(x.level, x.level === "bad" ? "오류" : "확인"))}<div class="t2-why">${esc(x.text)}</div></div>`), "문제 없음", "가격제한폭(±30%) 초과 · 시가총액 불일치 · 거래정지 의심이 없어요")}
+      ${shown.length > 60 ? `<div class="t-foot">외 ${shown.length - 60}건</div>` : ""}
+      <div class="t-foot">오류 = 하루 ±30% 초과(가격제한폭 밖 — 수정주가 오류 의심) · 확인 = 대형주가 하루 ±15% 넘게 움직인 날(실제로 그랬는지 대조) · 거래정지 의심 · 원천 시가총액 ≠ 주식수 × 종가</div>`)}
+    ${tCard(`가격 조정 이벤트 ${tN(d.n_adj_events)}건 — 수정주가로 이어 붙임`, tList((d.adj_events || []).slice(0, 20).map((e) => tSym(e.symbol, e.name, `${esc(e.date)} · 기준가가 전날 종가의 ${fx(e.factor)}`, `<span class="t-sub">${e.factor < 0.6 ? "액면분할·무상증자" : e.factor > 1.05 ? "병합·감자" : "권리락 등"}</span>`)), "가격 조정 이벤트 없음", "")
+      + '<div class="t-foot">액면분할 · 무상증자 · 권리락이 있던 날은 그 전 가격을 같은 비율로 고쳐서 차트가 끊기지 않게 해요 (거래소 기준가 사용)</div>')}`);
+  tBind(L.root, "dc-f", (k) => { T2.dcF = k; TV.datacheck(el); });
+  L.root.querySelector("#dc-run").onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = "점검 중… (외부 시세 대조 포함 최대 1~2분)";
+    try { await api("/api/datacheck", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch (err) { toast({ title: "점검 실패", body: err.message || String(err), level: "warn" }); }
+    TV.datacheck(el);
+  };
+};
+
+// ------------------------------------------------------------ v29 증명 프로젝트 (100만원 실계좌 · 규칙·기준 봉인 · 매일 봉인 기록 · 공개 페이지)
+function tProofChart(days) {
+  const pts = (days || []).map((d) => [100 * (1 + (d.cum || 0)), d.bench_cum == null ? null : 100 * (1 + d.bench_cum)]);
+  if (pts.length < 2) return tEmpty("곡선은 기록이 2일 이상 쌓이면 나와요", "매일 장 마감 뒤 한 번 기록해요");
+  const all = pts.flat().filter((v) => v != null), lo = Math.min(...all), hi = Math.max(...all) > lo ? Math.max(...all) : lo + 1;
+  const W = 640, H = 200, P = 24;
+  const path = (i) => "M" + pts.map((p, k) => p[i] == null ? null : `${(P + k * (W - 2 * P) / (pts.length - 1)).toFixed(1)},${(H - P - (p[i] - lo) / (hi - lo) * (H - 2 * P)).toFixed(1)}`).filter(Boolean).join(" L");
+  return `<svg class="t2-proof-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="수익률 곡선 (시작=100) vs 코스피"><path d="${path(1)}" fill="none" stroke="var(--t-sub,#8b95a1)" stroke-width="2" stroke-dasharray="5 4"/><path d="${path(0)}" fill="none" stroke="var(--t-blue,#3182f6)" stroke-width="2.5"/></svg>
+    <div class="t-foot"><b style="color:var(--t-blue,#3182f6)">━</b> 이 장부 (시작 = 100) · <b>┅</b> 코스피 · 최저 ${lo.toFixed(1)} · 최고 ${hi.toFixed(1)}</div>`;
+}
+const tProofCrit = (c) => c.key === "orders" ? `${tN(c.value || 0)} / ${tN(c.target)}건` : c.key === "excess" ? (c.value == null ? "20거래일 뒤부터" : `${tPct(c.value, 1)} (연환산)`) : c.key === "mdd" ? (c.value == null ? "-" : tPct(c.value, 1)) : ({ H1: "통과", H0: "실패" }[c.value] || "진행 중");
+TV.proof = async (el) => {
+  const L = await tLoad(el, "proof", "증명 프로젝트", "t2-proof", () => api("/api/proof-project"));
+  if (!L) return;
+  const s = L.d, a = s.active;
+  if (!a) {
+    const pr = s.preset || {};
+    tPaint(L.root, "증명 프로젝트", `
+      ${tHero({ k: "100만원 실계좌 · 6~12개월", lv: "idle", big: "AI 가 지수를 이기는지 고칠 수 없는 기록으로 증명", sub: "목표는 '100배'가 아니라 '비용·세금 뒤에도 코스피를 이기는가'예요. 규칙과 성공 기준을 시작할 때 봉인하고, 매일 장 마감 뒤 결과를 이어 붙여 봉인합니다.",
+        foot: "실제 돈은 KIS 키 · 매매 준비 7가지 점검 · 검증 사다리를 모두 통과해야 움직여요 — 가상 장부로 먼저 해 볼 수도 있어요" })}
+      ${tCard("규칙 (시작하면 바꿀 수 없어요)", tList((s.rules || []).map((r) => `<div class="t-li"><span class="t-co-t"><b>${esc(r.title)}</b><span class="t2-wrap">${esc(r.why)}</span></span><span class="t-li-r"><b class="num">${esc(r.value)}</b></span></div>`)))}
+      ${tCard("성공 기준 (기간을 다 채운 뒤 판정)", tList((s.criteria || []).map((c) => tStRow(c.title, "", "idle", { label: "봉인 예정" }))))}
+      ${tCard("시작하기", `<div class="t2-form">
+        <label class="t2-field">장부 ${tChips("pf-mode", [["live", "실제 계좌"], ["paper", "가상 장부"]], T2.pfMode || "live")}</label>
+        <label class="t2-field">원금 (원) <input id="pf-pr" class="t-in num" inputmode="numeric" value="${tN(pr.principal || 1000000)}"></label>
+        <label class="t2-field">전체 정지 손실 (원) <input id="pf-ml" class="t-in num" inputmode="numeric" value="${tN(pr.max_loss || 150000)}"></label>
+        <label class="t2-check"><input type="checkbox" id="pf-pub"> 공개 페이지 켜기 (로그인 없이 /proof — 수익률만, 금액·계좌번호 없음)</label>
+        <button class="t-btn primary" id="pf-start">규칙·기준 봉인하고 시작</button></div>
+        <div class="t-foot">시작하면 '내 투자 한도'가 이 규칙으로 바뀌어요 (종목당 20% · 하루 -3% 신규 매수 중단 · 누적 -15% 전체 정지 → 전량 정리 주문표)</div>`)}
+      ${(s.history || []).length ? tCard("지난 프로젝트", tList(s.history.map((h) => tStRow(`${h.id} · ${h.start} ~ ${(h.ended_at || "").slice(0, 10)}`, `${h.end_reason || ""} · ${h.final?.verdict || ""}`, "idle")))) : ""}`);
+    tBind(L.root, "pf-mode", (k) => { T2.pfMode = k; TV.proof(el); });
+    L.root.querySelector("#pf-start").onclick = async (e) => {
+      const n = (id) => Number(String(L.root.querySelector(id).value).replace(/[^\d.]/g, ""));
+      if (!confirm("규칙과 성공 기준을 봉인하고 시작할까요? 시작한 뒤에는 바꿀 수 없어요 (끝내고 새로 시작만 가능).")) return;
+      e.target.disabled = true;
+      try { await post("/api/proof-project", { action: "start", mode: T2.pfMode || "live", principal: n("#pf-pr"), max_loss: n("#pf-ml"), public: L.root.querySelector("#pf-pub").checked }); toast({ title: "증명 프로젝트 시작", body: "규칙·기준을 봉인했어요", level: "good" }); }
+      catch (err) { toast({ title: "시작하지 못했어요", body: err.message || String(err), level: "warn" }); }
+      TV.proof(el);
+    };
+    return;
+  }
+  const ch = s.chain || {}, days = s.days || [];
+  const lv = s.halted ? "bad" : !ch.ok ? "bad" : s.finished ? ((s.criteria || []).every((c) => c.ok) ? "good" : "bad") : "warn";
+  tPaint(L.root, "증명 프로젝트", `
+    ${tHero({ k: `${esc(a.id)} · ${a.mode === "live" ? "실제 계좌" : a.mode === "paper" ? "가상 장부" : "그림자 장부"} · ${esc(a.start)} ~ ${esc(a.end)}`, lv,
+      big: s.cum == null ? "첫 기록 기다리는 중" : `<span class="${tCls(s.cum)}">${tPct(s.cum, 2)}</span> <span class="t-sub" style="font-size:.55em">코스피 ${tPct(s.bench_cum, 2)}</span>`,
+      sub: esc(s.verdict || ""), foot: `${s.halted ? "긴급 정지 중 · " : ""}봉인 ${ch.ok ? "정상" : "끊김"} — ${esc(ch.text || "")} · 사전 등록 해시 ${esc((a.hash || "").slice(0, 12))}…` })}
+    ${(s.warnings || []).map((w) => `<div class="t-note warn">${esc(w)}</div>`).join("")}
+    ${tKV([["코스피 대비 (연)", s.excess_ann == null ? "-" : tPct(s.excess_ann, 1), tCls(s.excess_ann), "20거래일 뒤부터"], ["최대 낙폭", s.mdd == null ? "-" : tPct(s.mdd, 1), "down", "기준 -15%"], ["체결 주문", `${tN(s.orders)}건`, "", "기준 300건"], ["기록", `${tN(s.n_days)}일`, "", `${tN(s.elapsed_days)}일 지남`]])}
+    ${tCard("수익률 곡선", tProofChart(days))}
+    ${tCard("성공 기준 (시작 때 봉인)", tList((s.criteria || []).map((c) => `<div class="t2-item">${tStRow(c.title, "", c.ok ? "good" : "idle", { label: tProofCrit(c) })}${c.frac != null ? tProg(c.frac, c.ok ? "good" : "warn") : ""}</div>`)) + '<div class="t-foot">판정은 종료일에 한 번 — 중간에 좋을 때 멈추거나 기준을 바꾸면 증명이 되지 않아요</div>')}
+    ${tCard("규칙", tList((a.rules || []).map((r) => `<div class="t-li"><span class="t-co-t"><b>${esc(r.title)}</b><span class="t2-wrap">${esc(r.why)}</span></span><span class="t-li-r"><b class="num">${esc(r.value)}</b></span></div>`)))}
+    ${tCard("공개 페이지", `${tStRow(s.public ? "켜짐 — 로그인 없이 볼 수 있어요" : "꺼짐 — 로그인한 사람만", a.show_amounts ? "금액도 공개" : "수익률만 공개 (금액·계좌번호 없음)", s.public ? "good" : "idle", { label: s.public ? "공개" : "비공개" })}
+      <div class="t-pro"><a class="t-btn ghost" href="/proof" target="_blank" rel="noopener">공개 페이지 열기</a><button class="t-btn ghost" id="pf-pub">${s.public ? "공개 끄기" : "공개 켜기"}</button><button class="t-btn ghost" id="pf-amt">${a.show_amounts ? "금액 숨기기" : "금액도 공개"}</button></div>`)}
+    ${tCard("매일 기록 (최근 20일)", tList(days.slice(-20).reverse().map((d) => `<div class="t-li"><span class="t-co-t"><b class="num">${esc(d.date)}</b><span>그날 ${tPct(d.ret, 2)} · 체결 ${tN(d.orders_day)}건 · 보유 ${tN(d.n_positions)}종목${d.no_snapshot ? " · 장부 기록 없음(전날 값)" : ""}</span></span><span class="t-li-r"><b class="num ${tCls(d.cum)}">${tPct(d.cum, 2)}</b><span class="t-sub num">${esc(String(d.hash || "").slice(0, 8))}</span></span></div>`), "아직 기록이 없어요", "장 마감(15:40) 뒤 자동으로 남아요"))}
+    <div class="t-pro"><button class="t-btn ghost" id="pf-rec">오늘 기록 지금 남기기</button><button class="t-btn ghost" id="pf-end">프로젝트 끝내기</button><a class="t-btn ghost" href="#budget">내 투자 한도</a></div>`);
+  const act = async (body, ok) => { try { await post("/api/proof-project", body); if (ok) toast({ title: ok, level: "good" }); } catch (err) { toast({ title: "실패", body: err.message || String(err), level: "warn" }); } TV.proof(el); };
+  L.root.querySelector("#pf-pub").onclick = () => act({ action: "public", public: !s.public }, s.public ? "공개를 껐어요" : "공개를 켰어요");
+  L.root.querySelector("#pf-amt").onclick = () => act({ action: "public", public: s.public, show_amounts: !a.show_amounts }, "바꿨어요");
+  L.root.querySelector("#pf-rec").onclick = () => act({ action: "record" }, "기록했어요 (오늘 이미 있으면 그대로)");
+  L.root.querySelector("#pf-end").onclick = () => { const r = prompt("끝내는 이유 (기록에 남아요)"); if (r != null) act({ action: "end", reason: r }, "끝냈어요"); };
+};

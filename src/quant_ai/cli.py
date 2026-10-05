@@ -176,7 +176,7 @@ def cmd_kis_check(args):
     """KIS 연결 점검: 토큰 → 잔고 → 현재가/호가 (주문은 내지 않음). --suite 는 8단계 검증을 기록한다."""
     if getattr(args, "suite", False):
         from .desk import kis_validate
-        r = kis_validate(_app(args), fill=args.fill)
+        r = kis_validate(_app(args), fill=args.fill, e2e=args.e2e)
         for st in r.get("steps", []):
             mark = "✅" if st["ok"] else "⏭" if st["ok"] is None else "❌"
             print(f"{mark} {st['title']:<14} {st['detail']}  ({st['ms']}ms)")
@@ -652,6 +652,61 @@ def cmd_logos(args):
         print("  → 인터넷 연결 확인 후 ./run.sh logos --retry · 원하는 그림은 artifacts/logos/custom/<종목코드>.png 로 직접 넣기")
 
 
+def cmd_datacheck(args):
+    """v29 데이터 정합성 점검: 일봉 최신성 · 자동 갱신 · 원천 정합성(제한폭·시가총액·수정주가) · 외부 시세 대조."""
+    from .datacheck import run
+    r = run(_app(args), online=not args.offline)
+    icon = {"good": "🟢", "warn": "🟡", "bad": "🔴"}
+    print(f"{icon.get(r['status'], '·')} {r['headline']}")
+    f = r["freshness"]
+    print(f"  일봉: {f.get('date') or '없음'} ({f.get('age') or '-'}) · 종목 {r['n_symbols']}")
+    print(f"  자동 갱신: {r['update']['text']}")
+    print(f"  외부 시세 대조: {r['reference']['text']}")
+    for row in r["reference"]["rows"]:
+        print(f"    {row['symbol']} {row.get('name', '')}: {row.get('text')}" + (f" ({row['source']})" if row.get("source") else ""))
+    for x in r["focus"].values():
+        w = x["w52"]
+        print(f"  {x['name']} {x['last']:,.0f} · 52주 {w['low']:,.0f}({w['low_date']}) ~ {w['high']:,.0f}({w['high_date']})"
+              + (f" · 시가총액 {x['marcap'] / 1e12:,.1f}조" if x.get("marcap") else ""))
+    for it in r["issues"][: args.limit]:
+        print(f"  {'❌' if it['level'] == 'bad' else '⚠'} {it['symbol']} {it['name']} {it.get('date') or ''}: {it['text']}")
+    if len(r["issues"]) > args.limit:
+        print(f"  … 외 {len(r['issues']) - args.limit}건 (화면 '데이터 점검'에서 전부)")
+    print(f"  가격 조정 이벤트(액면분할·권리락 등) {r['n_adj_events']}건 — 수정주가로 이어 붙임")
+
+
+def cmd_proof_project(args):
+    """v29 증명 프로젝트: start (규칙·기준 봉인) · status · record (오늘 기록) · end."""
+    from . import proof
+    app = _app(args)
+    if args.action == "start":
+        r = proof.start(app, args.mode, args.principal, args.max_loss, public=args.public)
+        print(f"시작: {r['id']} ({r['mode']}) · {r['start']} ~ {r['end']} · 봉인 {r['hash'][:16]}…")
+        for x in r["rules"]:
+            print(f"  · {x['title']}: {x['value']}")
+        print("성공 기준 (바꿀 수 없음): " + " · ".join(c["title"] for c in r["criteria"]))
+        return
+    if args.action == "end":
+        r = proof.end(app, args.reason or "")
+        print(f"종료: {r['id']} · {r['final'].get('verdict')}")
+        return
+    if args.action == "record":
+        r = proof.record_day(app, force=True)
+        print("오늘 기록:" if r else "기록 안 함 (진행 중 프로젝트 없음 · 휴장일 · 이미 기록됨)", r or "")
+        return
+    s = proof.status(app)
+    if not s.get("active"):
+        print("진행 중인 증명 프로젝트가 없어요 — quant-ai proof-project start (기본 100만원 · 실제 계좌)")
+        return
+    a = s["active"]
+    pct = lambda v: "-" if v is None else f"{v * 100:+.2f}%"  # noqa: E731
+    print(f"{a['id']} ({a['mode']}) · {s['verdict']}")
+    print(f"  누적 {pct(s['cum'])} · 코스피 {pct(s['bench_cum'])} · 최대 낙폭 {pct(s['mdd'])} · 체결 {s['orders']}건 · 기록 {s['n_days']}일")
+    print(f"  봉인: {s['chain']['text']} · 공개 페이지 {'켜짐 (/proof)' if s['public'] else '꺼짐'}")
+    for c in s["criteria"]:
+        print(f"  {'✅' if c['ok'] else '·'} {c['title']}: {proof._crit_value(c)}")
+
+
 def cmd_ops_status(args):
     """./run.sh status 가 부른다 — 24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패."""
     from .center import ops_status
@@ -850,6 +905,7 @@ def main(argv: list[str] | None = None) -> None:
     kc.add_argument("--test-order", action="store_true", help="모의투자 전용: 1주 비체결 주문 후 즉시 취소")
     kc.add_argument("--suite", action="store_true", help="검증 스위트 8단계 실행 · 결과 저장 (Readiness BROKER 관문)")
     kc.add_argument("--fill", action="store_true", help="--suite 와 함께: 모의투자에서 1주 실제 체결 → 되팔기 (슬리피지 실측)")
+    kc.add_argument("--e2e", action="store_true", help="--suite 와 함께: 모의투자 장중 · 이 시스템의 주문 경로 그대로 주문→체결→장부→잔고 대조→중복 방지→되팔기→재시작 복구")
     kc.set_defaults(fn=cmd_kis_check)
     ps = sub.add_parser("power-study", help="실제 KRX 데이터로 코어 점수의 예측력 사후 검증 (IC · 분위 · 비용 후 초과)")
     ps.add_argument("--marcap-dir", required=True)
@@ -862,6 +918,18 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("health").set_defaults(fn=cmd_health)
     sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
     sub.add_parser("ops-status", help="운영 상태 (24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패)").set_defaults(fn=cmd_ops_status)
+    pp = sub.add_parser("proof-project", help="증명 프로젝트 (100만원 실계좌 · 규칙·성공 기준 봉인 · 매일 봉인 기록 · 공개 페이지)")
+    pp.add_argument("action", nargs="?", default="status", choices=["status", "start", "record", "end"])
+    pp.add_argument("--mode", default="live", choices=["live", "paper", "shadow"])
+    pp.add_argument("--principal", type=float, default=None)
+    pp.add_argument("--max-loss", type=float, default=None)
+    pp.add_argument("--public", action="store_true", help="공개 페이지(/proof)를 로그인 없이 열기")
+    pp.add_argument("--reason", default="")
+    pp.set_defaults(fn=cmd_proof_project)
+    dc = sub.add_parser("datacheck", help="데이터 정합성 점검 (일봉 최신성 · 자동 갱신 · 수정주가 · 52주 · 시가총액 · 외부 시세 대조)")
+    dc.add_argument("--offline", action="store_true", help="외부 시세 대조 없이")
+    dc.add_argument("--limit", type=int, default=20)
+    dc.set_defaults(fn=cmd_datacheck)
     cm = sub.add_parser("community", help="커뮤니티(종목토론실·StockTwits) 수집 점검")
     cm.add_argument("--test", help="점검할 종목 (쉼표, 기본 005930,NVDA)")
     cm.add_argument("--collect", action="store_true", help="관심·보유 종목 지금 수집")

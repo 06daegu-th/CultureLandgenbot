@@ -116,6 +116,15 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 cc = {"monogram": "public, max-age=3600", "default": "public, max-age=3600", "pending": "no-cache, max-age=60", "custom": "no-cache"}.get(src, "public, max-age=86400")
                 # v24: 로고는 그림일 뿐 — 바로 열어도 스크립트가 절대 돌지 않게 (외부 SVG 를 정화한 뒤에도 한 번 더)
                 return self._send(200, data, ctype, cc, csp="default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox")
+            if url.path in ("/proof", "/proof.json"):  # v29 증명 프로젝트 공개 기록 (공개를 켰을 때만 로그인 없이)
+                from .. import proof as _proof
+                if not (_proof.is_public(api.app) or self._authorized(qs)):
+                    return self._send(404, "공개되지 않은 페이지예요".encode(), "text/plain; charset=utf-8")
+                view = _proof.public_view(api.app)
+                if url.path.endswith(".json"):
+                    return self._json(view)
+                return self._send(200, _proof.public_html(view).encode(), "text/html; charset=utf-8", "no-cache",
+                                  csp="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'")
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):
                     return self._json({"error": "unauthorized"}, 401)
@@ -239,6 +248,10 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.t_collect())
                     if url.path == "/api/signals2":  # v28: 신호 엔진 2.0 · 매수/매도 후보
                         return self._json(api.signals2(arg("market", "KR")[:2]))
+                    if url.path == "/api/datacheck":  # v29: 데이터 정합성 점검
+                        return self._json(api.datacheck())
+                    if url.path == "/api/proof-project":  # v29: 증명 프로젝트
+                        return self._json(api.proof_status())
                     if url.path == "/api/signals2/stock":
                         return self._json(api.signals2_stock(arg("symbol", "")[:12]))
                     if url.path == "/api/t/intraday":  # v27: 하루 안 움직임 (5분봉)
@@ -456,6 +469,10 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json(api.prefs_write(body))
                 if url.path == "/api/netcheck":
                     return self._json(api.netcheck(run=True))
+                if url.path == "/api/datacheck":
+                    return self._json(api.datacheck(run=True))
+                if url.path == "/api/proof-project":
+                    return self._json(api.proof_write(body))
                 if url.path == "/api/news-extract":
                     return self._json(api.news_extract())
                 if url.path == "/api/news-explain":

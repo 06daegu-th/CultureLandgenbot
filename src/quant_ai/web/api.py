@@ -1068,6 +1068,15 @@ class DashboardAPI:
         out = S2.cached(self.app, m)
         return {k: v for k, v in out.items() if k != "_rows"}
 
+    def datacheck(self, run: bool = False) -> dict:
+        """v29 데이터 정합성 점검 (최신성 · 자동 갱신 · 원천 자체 정합성 · 외부 시세 대조). 저장된 결과가 없으면 한 번 실행."""
+        from .. import datacheck as DC
+        from .. import ops as _ops
+        if run:
+            self._audit("datacheck", "데이터 점검 실행")
+            return DC.run(self.app)
+        return _ops.get_state(self.app.engine, DC.STATE_KEY) or DC.run(self.app)
+
     def signals2_stock(self, symbol: str) -> dict:
         from .. import signals2 as S2
         sym = symbol.strip()
@@ -1075,6 +1084,35 @@ class DashboardAPI:
         if not sym:
             raise ValueError("symbol 필요")
         return S2.for_symbol(self.app, sym)
+
+    def proof_status(self) -> dict:
+        """v29 증명 프로젝트: 규칙 · 성공 기준 · 매일 봉인 기록 · 체인 검증."""
+        from .. import proof
+        return proof.status(self.app)
+
+    def proof_write(self, body: dict) -> dict:
+        from .. import proof
+        act = str(body.get("action") or "")
+        if act == "start":
+            try:
+                r = proof.start(self.app, str(body.get("mode") or "live"), float(body.get("principal") or 0) or None,
+                                float(body.get("max_loss") or 0) or None, bool(body.get("public")), bool(body.get("show_amounts")))
+            except (TypeError, ValueError) as e:
+                raise ValueError(str(e) or "원금·최대 손실을 숫자로") from None
+            self._risk_cache.clear()
+            self._audit("proof_start", f"{r['id']} · {r['mode']} · 원금 {r['params']['principal']:,.0f}")
+            return {"ok": True, "project": r}
+        if act == "end":
+            r = proof.end(self.app, str(body.get("reason") or "")[:200])
+            self._audit("proof_end", f"{r['id']} · {r.get('end_reason', '')}")
+            return {"ok": True, "project": {k: v for k, v in r.items() if k != "log"}}
+        if act == "public":
+            r = proof.set_public(self.app, bool(body.get("public")), body.get("show_amounts") if "show_amounts" in body else None)
+            self._audit("proof_public", f"공개 {'켬' if r['public'] else '끔'} · 금액 {'공개' if r.get('show_amounts') else '비공개'}")
+            return {"ok": True, "project": r}
+        if act == "record":
+            return {"ok": True, "record": proof.record_day(self.app, force=True)}
+        raise ValueError("action 은 start / end / public / record")
 
     def logo_upload(self, body: dict) -> dict:
         """v27: 화면에서 종목 로고 직접 넣기·지우기 (body: symbol, data = base64 또는 data: URL, 비우면 지움)."""

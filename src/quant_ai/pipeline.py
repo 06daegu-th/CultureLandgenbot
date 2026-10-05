@@ -173,6 +173,8 @@ class QuantAI:
             if codes:
                 universe[str(m)] = codes
         ops.set_state(self.engine, "krx_universe", universe)
+        if ds.facts:  # v29: 시가총액 · 상장주식수 · 수정주가 이벤트 (종목 화면 시가총액 · 데이터 점검)
+            ops.set_state(self.engine, "krx_facts", {"at": datetime.now(UTC).isoformat(), "symbols": ds.facts})
         return {"bars": n, "symbols": len(ds.bars), "months": len(universe),
                 "last_date": str(ds.eligible.index.max().date())}
 
@@ -891,6 +893,9 @@ class QuantAI:
             raise
         from .engines.sector import sector_map
         risk.sectors = sector_map(self.engine)  # 업종 한도 (섹터 엔진 · 국내는 WICS 우선)
+        if book is None:
+            from .proof import apply_risk as _proof_risk
+            _proof_risk(self, name, risk)  # v29 증명 프로젝트 장부면 보유 종목 수 한도
         if book is None:  # v13 게이트 — 성과 귀속용 장부(book)에는 적용하지 않는다 (비교가 공정해야 함)
             from . import readiness as _rd
             from .desk import event_caps_for, portfolio_gate

@@ -9,6 +9,8 @@
 #   ./run.sh data             KRX 주가 데이터 받기/갱신 + DB 적재
 #   ./run.sh doctor [--ai --kis --notify]   점검 (키·DB·데이터·AI·증권사·알림)
 #   ./run.sh kis-check        KIS 연결 + 모의 1주 주문→취소 (모의투자에서만)
+#   ./run.sh proof-project [start|status|record|end]   증명 프로젝트 (100만원 실계좌 · 규칙·기준 봉인 · 매일 봉인 기록 · 공개 페이지 /proof)
+#   ./run.sh datacheck        데이터 정합성 점검 (일봉 최신성 · 자동 갱신 · 수정주가 · 52주 · 시가총액 · 외부 시세 대조)
 #   ./run.sh cycle            코어 1회 실행
 #   ./run.sh serve            대시보드만 http://127.0.0.1:8050
 #   ./run.sh stop             떠 있는 대시보드 종료 (옛 버전 폴더에서 띄운 것 포함)

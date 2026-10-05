@@ -161,7 +161,9 @@ function clearCharts() { S.charts.forEach((c) => { try { c.remove(); } catch { /
 function chartOpts(el) {
   return {
     width: el.clientWidth, height: el.clientHeight,
-    layout: { background: { type: "solid", color: "transparent" }, textColor: css("--muted"), fontFamily: "Pretendard, sans-serif" },
+    // v29: 차트 라이브러리 로고 대신 화면 아래 글로 출처 표기 · 가격 콤마
+    layout: { background: { type: "solid", color: "transparent" }, textColor: css("--muted"), fontFamily: "Pretendard, sans-serif", attributionLogo: false },
+    localization: { locale: "ko-KR", priceFormatter: (p) => Math.abs(p) >= 1000 ? num(p, 0) : num(p, Math.abs(p) < 10 ? 3 : 2) },
     grid: { vertLines: { color: css("--line") }, horzLines: { color: css("--line") } },
     rightPriceScale: { borderColor: css("--line-2") }, timeScale: { borderColor: css("--line-2") },
     crosshair: { mode: 0 },
@@ -1143,9 +1145,9 @@ const NAV = [
   // v16 메뉴: 홈 · 종목 · 시장 · 뉴스/공시 · AI · 포트폴리오 · 리스크 · 백테스트 · AI 성적표 · 일정 · 투자일지 (+ 신뢰 · 시스템)
   ["핵심", [["dashboard", "home", "홈"], ["action", "bell", "오늘 할 일 (전체)"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["map", "market", "증시 지도"], ["market", "market", "시장 분위기 · 경제지표"], ["news", "news", "뉴스 · 공시"], ["newslist", "news", "뉴스 · 공시 원문 목록"], ["calendar", "bell", "일정 (D-Day)"], ["replay", "review", "그날 다시 보기 (날짜 선택)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
   ["AI", [["picks", "ai", "AI 추천 (매수·매도 후보)"], ["aitrust", "shield", "AI 신뢰 센터"], ["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI가 틀린 이유 연구"], ["ai", "score", "AI 성적 · 확률 보정"], ["aihealth", "pulse", "AI 상태 점검"], ["power", "learn", "AI 예측력 통계 검정"], ["pead", "evidence", "실적 발표 전략 (실전 기록)"], ["verify", "evidence", "예측 기록장 (봉인)"], ["alpha", "alpha", "AI가 돈을 벌었나 (증명)"], ["graph", "models", "종목 관계도 · 업종"]]],
-  ["포트폴리오 · 리스크", [["budget", "risk", "내 투자 한도"], ["pos", "portfolio", "내 자산 한눈에"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 설정"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 품질 · 증권사 점검"], ["sheet", "sheet", "국내 주문표 (리밸런싱)"], ["usorder", "sheet", "미국 주식 주문표"]]],
+  ["포트폴리오 · 리스크", [["proof", "check", "증명 프로젝트 (100만원)"], ["budget", "risk", "내 투자 한도"], ["pos", "portfolio", "내 자산 한눈에"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 설정"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 품질 · 증권사 점검"], ["sheet", "sheet", "국내 주문표 (리밸런싱)"], ["usorder", "sheet", "미국 주식 주문표"]]],
   ["기록 · 연구", [["myjournal", "journal", "내 투자일지 vs AI"], ["profile", "settings", "내 투자 성향"], ["journal", "journal", "AI 판단 일지"], ["research", "research", "과거로 시험하기 (백테스트)"], ["lab", "lab", "모델 실험 · 승격"], ["review", "review", "복기 리포트"], ["reports", "review", "리포트 · 브리핑"], ["models", "models", "모델 목록 · 검증"]]],
-  ["신뢰 · 시스템", [["datahealth", "data", "데이터 상태 · 키 진단"], ["readiness", "check", "매매해도 되나 (7가지 점검)"], ["truth", "shield", "데이터 사실 확인"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "실시간 감시실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 위험 기록"], ["ops", "ops", "운영 · 작업 기록"], ["settings", "settings", "설정"]]],
+  ["신뢰 · 시스템", [["datahealth", "data", "데이터 상태 · 키 진단"], ["datacheck", "data", "데이터 점검 (수정주가 · 외부 대조)"], ["readiness", "check", "매매해도 되나 (7가지 점검)"], ["truth", "shield", "데이터 사실 확인"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "실시간 감시실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 위험 기록"], ["ops", "ops", "운영 · 작업 기록"], ["settings", "settings", "설정"]]],
 ];
 function buildNav() {
   // v19: 쉬운 화면 = 자주 쓰는 6개만, 나머지는 '고급 메뉴'로 접는다 (전체 화면이면 모두 펼침)
