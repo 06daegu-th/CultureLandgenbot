@@ -871,7 +871,7 @@ TV.compare = async (el) => {
   const L = await tLoad(el, "compare", "종목 비교", "t2-cmp", () => syms.length >= 2 ? api(`/api/compare?symbols=${encodeURIComponent(syms.join(","))}`) : Promise.resolve({ error: "비교할 종목을 2개 이상 고르세요" }));
   if (!L) return;
   const r = L.d, COLORS = ["#3182f6", "#f04452", "#12b886", "#f59f00"];
-  const pick = `<div class="t2-pick">${syms.map((s, i) => `<span class="t-chipa" style="border-color:${COLORS[i]}">${stockLogo(s, "", 20)} ${esc((r.rows || []).find((x) => x.symbol === s)?.name || s)} <button class="t-link" data-rm="${esc(s)}" aria-label="빼기">✕</button></span>`).join("")}
+  const pick = `<div class="t2-cmp-pick">${syms.map((s, i) => `<span class="t-chipa" style="border-color:${COLORS[i]}">${stockLogo(s, "", 20)} ${esc((r.rows || []).find((x) => x.symbol === s)?.name || s)} <button class="t-link" data-rm="${esc(s)}" aria-label="빼기">✕</button></span>`).join("")}
     ${syms.length < 4 ? `<input id="cmp-add" class="t-in" placeholder="종목 코드 추가 (예: 000660, AAPL)" maxlength="12"><button class="t-btn" id="cmp-go">추가</button>` : ""}</div>`;
   const go = (xs) => { location.hash = `#compare/${encodeURIComponent(xs.join(","))}`; };
   const bind = () => {
@@ -1262,3 +1262,78 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   tLogoSheet(b.dataset.logoUp || "", b.dataset.logoName || "");
 });
+
+// ============================================================ v28 AI 추천 (신호 엔진 2.0)
+// 가운데가 0, 오른쪽 빨강(+) · 왼쪽 파랑(-) 막대 — 점수 -3 ~ +3
+const tDiv = (v, max = 3) => { const f = Math.min(1, Math.abs(v || 0) / max) * 50; return `<span class="t2-div" aria-hidden="true"><i class="${v >= 0 ? "up" : "down"}" style="${v >= 0 ? "left:50%" : `left:${(50 - f).toFixed(1)}%`};width:${f.toFixed(1)}%"></i></span>`; };
+const tScore = (v) => `<b class="num t2-score ${v >= 0.5 ? "up" : v <= -0.5 ? "down" : ""}">${v > 0 ? "+" : ""}${Number(v).toFixed(1)}</b>`;
+function tPickCard(r, side, money) {
+  const ev = r.evidence || {};
+  const sigs = (r.signals || []).slice().sort((a, b) => (b.verified - a.verified) || (Math.abs(b.score) * (b.weight || 0.01) - Math.abs(a.score) * (a.weight || 0.01)));
+  const tag = (s) => s.flip ? '<span class="t-tag warn">반대로 작동</span>' : s.verified ? '<span class="t-tag">검증됨</span>' : s.verdict === "효과 확인 안 됨" ? '<span class="t-tag">효과 없음 · 0</span>' : '<span class="t-tag">검증 전</span>';
+  return `<details class="t2-pick"${side === "buy" ? "" : ""}>
+    <summary>${tName(r.symbol, r.name, esc([r.sector, r.held ? "보유 중" : r.focus ? "관심" : ""].filter(Boolean).join(" · ")), 44)}
+      <span class="t2-pick-r">${tScore(r.score)}${tDiv(r.score)}<span class="num t-sub">${tPx(r.last, r.symbol)} <span class="${tCls(r.chg)}">${tPct(r.chg)}</span></span></span></summary>
+    <div class="t2-pick-b">
+      ${ev.n ? `<div class="t2-ev"><span class="t-k">과거 비슷한 점수 (${esc(ev.label || "")}) — 보지 않은 기간</span><b>${tN(ev.n)}번 중 ${tPr(ev.hit)} 시장보다 ${side === "buy" ? "올랐음" : "올랐음"}</b><em>20거래일 뒤 평균 ${tPct(ev.mean, 1)} (시장 대비)</em></div>` : ""}
+      <div class="t2-sigs">${sigs.map((s) => `<div class="t2-sig${!s.verified && !s.flip ? " dim" : ""}"><span class="t2-sig-k">${esc(s.label)} ${tag(s)}</span>${tDiv(s.flip ? -s.score : s.score)}<span class="t2-sig-t">${esc(s.text || "")}</span></div>`).join("")}</div>
+      <div class="t2-stop">${side === "buy" && r.stop ? `이 가격 아래로 내려가면 판단이 틀린 것으로 봐요 <b class="num down">${tPx(r.stop, r.symbol)}</b>` : r.invalid_above ? `이 가격 위로 올라가면 판단이 틀린 것으로 봐요 <b class="num up">${tPx(r.invalid_above, r.symbol)}</b>` : ""}<span class="t-sub">하루 평균 움직임의 2배</span></div>
+      <div class="t-pro no-logo" style="margin-top:10px"><a class="t-btn ghost" href="#analysis/${encodeURIComponent(r.symbol)}">종목 화면</a>${side === "buy" ? `<button class="t-btn primary" data-pick-buy="${esc(r.symbol)}" data-name="${esc(r.name)}" data-last="${r.last}">모의 매수</button>` : ""}</div>
+    </div></details>`;
+}
+TV.picks = async (el) => {
+  const mk = T2.picksMk || "KR";
+  const L = await tLoad(el, "picks", "AI 추천", "t2-picks", () => api(`/api/signals2?market=${mk}`));
+  if (!L) return;
+  const d = L.d;
+  if (d.error) { tPaint(L.root, "AI 추천", `${tChips("pk-mk", [["KR", "국내"], ["US", "미국"]], mk)}<div class="t-gap"></div>${tEmpty("아직 계산할 수 없어요", d.error)}`); tBind(L.root, "pk-mk", (k) => { T2.picksMk = k; TV.picks(el); }); return; }
+  const tier = d.calibration?.tier || {};
+  const tab = T2.picksTab || "buy";
+  const list = d[tab] || [];
+  const W = d.weights || {}, st = W.stats || {};
+  const PL = { trend: "추세", mom: "12개월 오름세", high52: "52주 고점 근처", volsurge: "거래대금 급증", reversal: "단기 과열·급락", lowvol: "덜 출렁임", sector_rs: "업종 안 강도" };
+  const fw = d.forward || {};
+  const EMPTY = { buy: ["오늘은 강한 매수 후보가 없어요", "점수 +0.5 이상인 종목이 없을 땐 억지로 고르지 않아요"], sell: ["줄일 만한 보유·관심 종목이 없어요", "보유·관심 종목 중 점수 -0.5 이하가 없어요"], avoid: ["피할 종목이 없어요", ""] };
+  tPaint(L.root, "AI 추천", `
+    ${tChips("pk-mk", [["KR", "국내"], ["US", "미국"]], mk)}<div class="t-gap"></div>
+    ${tHero({ k: `${esc(d.as_of)} 일봉 기준 · ${tN(d.eligible)}종목 중 (거래 적은 종목 제외)`, lv: tier.key, big: `${lvDot(tier.key)} ${esc(tier.label || "-")}`, sub: esc(tier.why || ""),
+      foot: `${esc(d.regime?.text || "")} · 자동매매에는 아직 쓰지 않아요 — 아래 '실제로 지나 본 결과'가 기준을 넘으면 연결해요` })}
+    ${tTabs("pk-tab", [["buy", `매수 후보 ${(d.buy || []).length}`], ["sell", `비중 축소 ${(d.sell || []).length}`], ["avoid", `피할 종목 ${(d.avoid || []).length}`]], tab, "t-tabs-line")}
+    <div class="t-sub" style="margin:8px 4px 12px">${tab === "buy" ? "여러 신호를 합친 점수가 높은 순 · 눌러서 근거 보기" : tab === "sell" ? "내가 가진·관심 종목 중 점수가 낮은 순 — 팔거나 줄일지 검토" : "전체에서 점수가 가장 낮은 종목 — 새로 사지 않기"}</div>
+    ${list.length ? `<div class="t2-picks">${list.map((r) => tPickCard(r, tab)).join("")}</div>` : tCard("", tEmpty(...EMPTY[tab]))}
+    ${tCard("점수를 이렇게 만들어요", `<div class="t-sub" style="margin-bottom:10px">${W.basis === "past" ? `과거 ${esc(W.train_from || "")} ~ ${esc(W.train_to || "")} 동안 신호마다 '20거래일 뒤 시장보다 올랐나'를 재서, 꾸준히 맞은 신호만 반영해요` : "과거 자료가 부족해 검증 전 기본 가중치를 써요"}</div>
+      ${tList(Object.keys(PL).map((k) => { const s = st[k] || {}; const w = (W.weights || {})[k] || 0; return `<div class="t-li"><span class="t-co-t"><b>${PL[k]}</b><span>${esc(s.verdict || "-")}${s.ic != null ? ` · ${tG("IC", "순위 예측력")} ${s.ic.toFixed(3)} (t ${s.t ?? "-"}, ${s.n_dates}개 날짜)` : ""}</span></span><span class="t-li-r t2-w">${tProg(Math.abs(w), w < 0 ? "warn" : w ? "good" : "idle")}<b class="num">${Math.round(Math.abs(w) * 100)}%</b></span></div>`; }))}
+      <div class="t-foot">공시 · 뉴스 · 외국인/기관 수급 · 실적 서프라이즈 · 커뮤니티는 아직 과거 기록이 짧아 '검증 전'으로 작게(최대 30%) 반영 · 지금 자료가 있는 종목: 공시 ${tN(d.live_coverage?.disclosure)} · 뉴스 ${tN(d.live_coverage?.news)} · 수급 ${tN(d.live_coverage?.flow)} · 실적 ${tN(d.live_coverage?.earnings)} · 커뮤니티 ${tN(d.live_coverage?.community)}</div>`)}
+    ${tCard(`점수대별 실제 결과 (보지 않은 기간 ${esc(d.calibration?.from || "")} ~ ${esc(d.calibration?.to || "")})`, `${tVs((d.calibration?.bins || []).map((b) => [esc(b.label), b.hit, b.hit >= 0.5 ? "up" : "down", b.n ? `${tPr(b.hit)} · 평균 ${tPct(b.mean, 1)}` : "-"]), { max: 1 })}
+      <div class="t-foot">막대 = 20거래일 뒤 시장보다 오른 종목 비율 · 평균 = 시장 대비 평균 수익 · 가중치를 정할 때 쓰지 않은 기간이라 '처음 보는 시험'에 가까워요</div>`)}
+    ${tCard("실제로 지나 본 결과 (매일 봉인한 후보)", fw.buy?.n ? tKV([["매수 후보", tPr(fw.buy.hit), fw.buy.hit >= 0.5 ? "up" : "down", `${tN(fw.buy.n)}건 · 평균 ${tPct(fw.buy.mean_excess, 1)}`], ["비중 축소", fw.sell?.n ? tPr(fw.sell.hit) : "-", "", `${tN(fw.sell?.n)}건 · 내려간 비율`], ["피할 종목", fw.avoid?.n ? tPr(fw.avoid.hit) : "-", "", `${tN(fw.avoid?.n)}건`]])
+      : tEmpty(`기록 ${tN(fw.days)}일 · 채점 기다리는 중 ${tN(fw.pending_days)}일`, `후보는 매일 그날 처음 계산한 그대로 저장돼요 (나중에 못 바꿈) · ${fw.horizon || 20}거래일이 지나면 여기에 결과가 나와요`))}
+    <div class="t-foot">${esc(d.rule || "")} · ${esc(d.note || "")}</div>
+    <div class="t-pro"><a class="t-btn ghost" href="#aitrust">AI 신뢰 센터</a><a class="t-btn ghost" href="#scorecard">AI 성적표</a></div>`);
+  tBind(L.root, "pk-mk", (k) => { T2.picksMk = k; TV.picks(el); });
+  tBind(L.root, "pk-tab", (k) => { T2.picksTab = k; TV.picks(el); });
+  L.root.querySelectorAll("[data-pick-buy]").forEach((b) => b.onclick = () => tOrderSheet(b.dataset.pickBuy, b.dataset.name, Number(b.dataset.last)));
+};
+// 홈 카드 · 종목 화면 카드
+async function tPicksHome(box) {
+  let d;
+  try { d = await api("/api/signals2?market=KR"); } catch { box.remove(); return; }
+  if (!box.isConnected || d.error) { box.innerHTML = ""; return; }
+  const t = d.calibration?.tier || {};
+  const xs = (d.buy || []).slice(0, 3);
+  box.innerHTML = tSec("오늘의 매수 후보", `<a class="t-trust t-trust-${t.key === "bad" ? "banned" : t.key === "good" ? "verified" : "checking"}" href="#picks">${lvDot(t.key)}<span><b>신호 엔진 · ${esc(t.label || "")}</b>${esc(t.why || "")}</span>${TI.chev}</a>
+    ${xs.length ? `<div class="t-list">${xs.map((r) => tRow(`#picks`, tName(r.symbol, r.name, esc((r.signals || []).filter((s) => s.verified).slice(0, 2).map((s) => s.text).join(" · ")), 40), `${tScore(r.score)}<span class="t-sub num">${tPx(r.last, r.symbol)}</span>`)).join("")}</div>`
+      : tEmpty("오늘은 강한 매수 후보가 없어요", "억지로 고르지 않아요")}`, '<a href="#picks">전체 · 비중 축소</a>', "t-card");
+}
+async function tStockSignal(root, sym) {
+  const box = root.querySelector("#tsk-sum-sig");
+  if (!box) return;
+  let d;
+  try { d = await api(`/api/signals2/stock?symbol=${encodeURIComponent(sym)}`); } catch { box.innerHTML = ""; return; }
+  if (!box.isConnected) return;
+  if (!d.row) { box.innerHTML = tSec("신호 점수", tEmpty("신호 점수가 없어요", d.why || ""), "", "t-card"); return; }
+  const r = d.row, side = d.side;
+  box.innerHTML = tSec(`신호 점수 ${tScore(r.score)}`, `<div class="t-sub" style="margin-bottom:8px">${side === "buy" ? "오늘의 매수 후보예요" : side === "sell" ? "비중 축소 후보예요" : side === "avoid" ? "피할 종목 목록에 있어요" : "후보는 아니에요"} · 신호 엔진 ${esc(d.tier?.label || "")} · ${esc(d.as_of || "")}</div>
+    <div class="t2-sigs">${(r.signals || []).map((s) => `<div class="t2-sig${!s.verified && !s.flip ? " dim" : ""}"><span class="t2-sig-k">${esc(s.label)}</span>${tDiv(s.flip ? -s.score : s.score)}<span class="t2-sig-t">${esc(s.text || "")}</span></div>`).join("")}</div>
+    ${r.evidence?.n ? `<div class="t-foot">과거 비슷한 점수 ${tN(r.evidence.n)}번 중 ${tPr(r.evidence.hit)} 시장보다 올랐음 · 평균 ${tPct(r.evidence.mean, 1)} (20거래일)</div>` : ""}`, '<a href="#picks">AI 추천</a>', "t-card");
+}

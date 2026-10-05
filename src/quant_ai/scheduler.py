@@ -134,6 +134,12 @@ def build_default_scheduler(app, mode) -> Scheduler:
             _ops.set_state(app.engine, "stock_news_status", {"at": now.isoformat(), **r})
         if os.environ.get("QUANT_STOCK_NEWS", "true").lower() != "false":
             sch.add("stock_news", stock_news, 1800, "always")
+    def signals2_job(now):  # v28: 신호 엔진 2.0 — 새 일봉이 생기면 그날 후보를 계산·봉인 (전진 기록)
+        from . import signals2 as S2
+        S2._CACHE.clear()
+        S2.cached(app, "KR")
+    sch.add("signals2", signals2_job, 3600, "always")
+
     def indices(now):  # v27: 진짜 지수 (코스피·코스닥·나스닥·S&P500·다우) — 키 불필요, 실패하면 이전 값 + 대용
         from .data.collectors.indices import collect_indices
         collect_indices(app.engine)

@@ -700,9 +700,9 @@ a.t-li.on { background: var(--t-hover); }
 .t2-tile:hover { outline: 2px solid var(--text); }
 .t2-datebar { display: flex; gap: 8px; align-items: center; margin: 0 0 14px; flex-wrap: wrap; }
 .t2-datebar .t-in { flex: 0 1 180px; }
-.t2-pick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; }
-.t2-pick .t-chipa { border-width: 2px; }
-.t2-pick .t-in { flex: 0 1 240px; }
+.t2-cmp-pick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; }
+.t2-cmp-pick .t-chipa { border-width: 2px; }
+.t2-cmp-pick .t-in { flex: 0 1 240px; }
 .t2-chart { height: 300px; }
 .t2-scroll { overflow-x: auto; }
 .t2-cmpt th:first-child { color: var(--muted); font-weight: 600; white-space: nowrap; }
@@ -739,3 +739,35 @@ a.t-li.on { background: var(--t-hover); }
 @media (max-width: 760px) { .view-inner { padding-bottom: 72px; } }
 .t-switch input { left: 0; top: 0; width: 100% !important; min-width: 0 !important; max-width: 100% !important; padding: 0 !important; }
 .chat.full { width: 100%; min-width: 0; box-sizing: border-box; } .chat.full .chat-h > div { min-width: 0; flex: 1; } .chat.full .chat-h .xs { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v28 AI 추천 (신호 엔진 2.0) */
+.t2-div { position: relative; display: inline-block; width: 120px; height: 8px; border-radius: 99px; background: var(--t-soft); flex-shrink: 0; overflow: hidden; }
+.t-card .t2-div { background: var(--line); }
+.t2-div::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--dim); }
+.t2-div i { position: absolute; top: 0; bottom: 0; border-radius: 99px; }
+.t2-div i.up { background: var(--up); } .t2-div i.down { background: var(--down); }
+.t2-score { font-size: 20px; font-weight: 800; min-width: 44px; text-align: right; }
+.t2-picks { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.t2-pick { background: var(--t-card); border: 1px solid var(--line); border-radius: 18px; }
+:root[data-theme="light"] .t2-pick { border-color: transparent; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+.t2-pick > summary { list-style: none; display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; }
+.t2-pick > summary::-webkit-details-marker { display: none; }
+.t2-pick > summary .t-co { flex: 1; min-width: 0; }
+.t2-pick-r { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.t2-pick-b { padding: 0 16px 16px; border-top: 1px solid var(--line); }
+.t2-ev { display: flex; flex-direction: column; gap: 2px; background: var(--t-soft); border-radius: 12px; padding: 12px 14px; margin: 14px 0 10px; }
+.t2-ev b { font-size: 16px; } .t2-ev em { font-style: normal; color: var(--muted); font-size: 13px; }
+.t2-sigs { display: flex; flex-direction: column; gap: 8px; }
+.t2-sig { display: grid; grid-template-columns: minmax(130px, 200px) 120px 1fr; gap: 12px; align-items: center; font-size: 14px; }
+.t2-sig.dim { opacity: .62; }
+.t2-sig-k { font-weight: 700; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.t2-sig-k .t-tag { margin-left: 0; }
+.t2-sig-t { color: var(--muted); font-size: 13px; }
+.t2-stop { margin-top: 12px; font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+@media (max-width: 760px) {
+  .t2-sig { grid-template-columns: 1fr 90px; }
+  .t2-sig-t { grid-column: 1 / -1; margin-top: -4px; }
+  .t2-div { width: 90px; }
+  .t2-pick > summary { flex-wrap: wrap; }
+  .t2-pick-r { width: 100%; justify-content: space-between; }
+}
+.t2-pick { display: block; margin: 0; }

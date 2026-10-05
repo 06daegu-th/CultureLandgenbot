@@ -237,6 +237,10 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.t_community(arg("symbol", "")[:12]))
                     if url.path == "/api/t/collect":
                         return self._json(api.t_collect())
+                    if url.path == "/api/signals2":  # v28: 신호 엔진 2.0 · 매수/매도 후보
+                        return self._json(api.signals2(arg("market", "KR")[:2]))
+                    if url.path == "/api/signals2/stock":
+                        return self._json(api.signals2_stock(arg("symbol", "")[:12]))
                     if url.path == "/api/t/intraday":  # v27: 하루 안 움직임 (5분봉)
                         return self._json(api.t_intraday(arg("symbol", "")[:12]))
                     if url.path == "/api/t/market":
@@ -512,7 +516,7 @@ def serve(app, host: str = "127.0.0.1", port: int = 8050) -> None:
     def _warm():  # 첫 화면이 기다리지 않게: 전 종목 일봉·대시보드를 미리 계산해 둔다 (실패해도 무시)
         # v26: 처음 여는 화면들(홈·AI 신뢰·목표·사실 확인·감시실)도 미리 — 첫 방문 2~5초 대기 없애기
         for f in (app.market_data, api.dashboard, api.setup, api.today, api.t_home, lambda: api.home5("paper"), api.ai_trust,
-                  lambda: api.goal({}), api.truth, api.control):
+                  lambda: api.goal({}), api.truth, api.control, api.signals2):
             try:
                 f()
             except Exception as e:  # noqa: BLE001

@@ -1061,6 +1061,21 @@ class DashboardAPI:
         from .. import toss
         return self._cached("t_collect", 30, lambda: toss.collect_status(self.app))
 
+    def signals2(self, market: str = "KR") -> dict:
+        """v28 신호 엔진 2.0: 매수 후보 · 비중 축소 후보 · 피할 종목 (+ 신호별 근거 · 점수대별 과거 결과 · 전진 기록)."""
+        from .. import signals2 as S2
+        m = "US" if market.upper() == "US" else "KR"
+        out = S2.cached(self.app, m)
+        return {k: v for k, v in out.items() if k != "_rows"}
+
+    def signals2_stock(self, symbol: str) -> dict:
+        from .. import signals2 as S2
+        sym = symbol.strip()
+        sym = sym if sym[:1].isdigit() else sym.upper()
+        if not sym:
+            raise ValueError("symbol 필요")
+        return S2.for_symbol(self.app, sym)
+
     def logo_upload(self, body: dict) -> dict:
         """v27: 화면에서 종목 로고 직접 넣기·지우기 (body: symbol, data = base64 또는 data: URL, 비우면 지움)."""
         import base64

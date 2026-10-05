@@ -182,6 +182,7 @@ async function tHome(el) {
     <section class="t-hello"><div><div class="t-date">${esc(h.date || "")} · ${esc(h.as_of || "")}</div><h1>${esc(h.greeting || "안녕하세요")}</h1></div><div class="t-mks">${mk}</div></section>
     <div id="th-guide"></div>
     ${tSec("지수", idxB, '<a href="#market">시장 전체</a>', "t-sec-idx")}
+    <div id="th-picks2"></div>
     ${tSec("AI가 본 오늘의 종목", trustLine + picksB, '<a href="#report">AI 분석</a>')}
     <div class="t-grid2">
       ${tSec("오늘의 주요 이벤트", evB, '<a href="#calendar">일정 전체</a>', "t-card")}
@@ -193,6 +194,7 @@ async function tHome(el) {
     <div class="t-pro"><button class="t-btn ghost" id="th-pro">자세한 홈 (전문가용)</button><span>AI 브리핑 · 매매 준비 · 시장 체크리스트 · 데이터 상태</span></div>`;
   root.querySelector("#th-pro").onclick = () => { S.homeDetail = true; render(); };
   tBindBar(root);
+  if (typeof tPicksHome === "function") tPicksHome(root.querySelector("#th-picks2"));  // v28: 신호 엔진 매수 후보
   tHomeMore(root, q);
 }
 async function tHomeMore(root, q) {  // 느린 칸: 할 일·주의·뉴스·결론·시작 안내 (홈 첫 계산 ~2초)
@@ -315,10 +317,11 @@ async function tStockTab(ctx, k) {
       ${tSec("시세", `<div class="t-stats">${stat("시가", tPx(s.open, sym))}${stat("고가", `<span class="up">${tPx(s.high, sym)}</span>`)}${stat("저가", `<span class="down">${tPx(s.low, sym)}</span>`)}
         ${stat("거래량", tVol(s.volume))}${stat("52주 최고", tPx(s.high52, sym))}${stat("52주 최저", tPx(s.low52, sym))}${stat("시가총액", tCap(st.market_cap, sym))}${stat("20일 평균 거래량", tVol(s.avg_volume20))}</div>
         ${st.bar_date ? `<div class="t-foot">${esc(st.bar_date)} 일봉 기준${st.market_cap ? "" : " · 시가총액은 종목 상세 자료를 받으면 나와요"}</div>` : ""}`, "", "t-card")}
-      <div id="tsk-sum-ai"></div><div id="tsk-sum-news"></div>`;
+      <div id="tsk-sum-ai"></div><div id="tsk-sum-sig"></div><div id="tsk-sum-news"></div>`;
     tBind(body, "tsk-per", (n) => { T.period = Number(n); body.querySelectorAll("#tsk-per button").forEach((b) => b.classList.toggle("on", b.dataset.k === n)); tStockChart(ctx); });
     tStockChart(ctx);
     if (ctx.v) tStockSumAI(ctx);
+    if (typeof tStockSignal === "function") tStockSignal(root, sym);  // v28: 신호 분해
     api(`/api/stock/news?symbol=${encodeURIComponent(sym)}`).then((n) => { const b = root.querySelector("#tsk-sum-news"); if (b) b.innerHTML = tSec("최근 소식", tNewsList(n, 3), '<button class="t-link" data-go="news">더 보기</button>', "t-card"); tGoTab(root); }).catch(() => {});
   } else if (k === "chart") {
     body.innerHTML = `<div class="t-card t-sec">${tChips("tsk-per2", PERIODS.filter(([n]) => n > 1).map(([n, l]) => [String(n), l]), String(Math.max(T.period, 21)))}<div class="tsk-candle" id="tsk-candle"></div>
@@ -799,6 +802,7 @@ async function tMore(el) {
   const theme = document.documentElement.dataset.theme;
   el.innerHTML = `<div class="ts ts-more"><h1 class="t-h1">더보기</h1>
     <div class="t-tiles">
+      ${tile("#picks", "ai", "AI 추천", "오늘의 매수·비중 축소 후보")}
       ${tile("#aitrust", "shield", "AI 신뢰 센터", "지금 AI 를 믿어도 되나")}
       ${tile("#report", "ai", "AI 분석 리포트", "종목별 판단 · 근거")}
       ${tile("#research", "research", "리서치", "과거로 시험하기 (백테스트)")}
