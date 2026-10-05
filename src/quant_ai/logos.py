@@ -39,11 +39,12 @@ LOGODEV_URL = "https://img.logo.dev/ticker/{sym}?token={token}&size=128&format=p
 NAVER_URL = "https://ssl.pstatic.net/imgstock/fn/real/logo/stock/Stock{sym}.svg"  # v24: 국내 전 종목 (SVG → 정화 후 저장)
 CMC_URL = "https://companiesmarketcap.com/img/company-logos/64/{sym}.webp"  # v24: 미국·해외 상장사 대부분
 EODHD_URL = "https://eodhd.com/img/logos/US/{sym}.png"  # v24: 미국 (소문자 티커)
+USL_URL = "https://cdn.jsdelivr.net/npm/us-stock-logos@1/dist/webp/{sym}.webp"  # v26: 미국 상장 4천여 종목 (MIT · jsDelivr CDN — 가장 안정적)
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 META_V = 3  # 실패 기록 형식 — v24 에 출처(네이버·companiesmarketcap·EODHD)가 늘어 이전 실패 기록은 다시 시도
 RETRY_AFTER = 7 * 86400  # 로고가 없다고 확인된 종목
 RETRY_NET = 3600  # 네트워크 오류 — 연결이 돌아오면 금방 다시
-SOURCES = ("logodev", "toss", "alpha", "naver", "fmp", "cmc", "eodhd", "favicon")
+SOURCES = ("logodev", "usl", "toss", "alpha", "naver", "fmp", "cmc", "eodhd", "favicon")
 MAX_BYTES = 300_000
 TYPES = {b"\x89PNG": ("png", "image/png"), b"\xff\xd8\xff": ("jpg", "image/jpeg"), b"GIF8": ("gif", "image/gif"),
          b"RIFF": ("webp", "image/webp"), b"<svg": ("svg", "image/svg+xml"), b"<?xm": ("svg", "image/svg+xml")}
@@ -123,6 +124,8 @@ def candidates(app, sym: str) -> list[tuple[str, str]]:
         if src == "logodev":
             if token:
                 out.append(("logodev", LOGODEV_URL.format(sym=f"{sym}.KS" if kr else sym, token=token)))
+        elif src == "usl" and not kr:
+            out.append(("usl", USL_URL.format(sym=sym.replace(".", "-"))))
         elif src == "toss" and kr:
             out.append(("toss", TOSS_URL.format(sym=sym)))
         elif src == "alpha" and kr:
@@ -197,8 +200,8 @@ BUILDING = ("M20 46V22l12-6 12 6v24h-6V38h-12v12h-6z M25 26h4v4h-4z M35 26h4v4h-
 
 
 def default_icon(app, sym: str, name: str | None = None) -> bytes:
-    """기본 기업 아이콘 (SVG) — 진짜 로고가 없을 때. 건물 모양 + 업종 색 (회색 계열로 차분하게) · ETF 는 'ETF' 글자."""
-    sector, etf = None, False
+    """기본 기업 아이콘 (SVG) — 진짜 로고가 없을 때. 이름 첫 글자 + 업종 색 (회색 계열로 차분하게) · ETF 는 'ETF' 글자."""
+    sector, etf, idt = None, False, {}
     try:
         from .companies import identity
         idt = identity(app, sym, name)
@@ -206,9 +209,19 @@ def default_icon(app, sym: str, name: str | None = None) -> bytes:
     except Exception:  # noqa: BLE001, S110 - 업종을 몰라도 회색으로
         pass
     color = SECTOR_TINT.get(sector or "", "#64748b")
-    inner = ('<text x="32" y="33" dy=".35em" text-anchor="middle" font-family="Pretendard,Apple SD Gothic Neo,sans-serif" '
-             'font-size="17" font-weight="700" fill="#fff" letter-spacing=".5">ETF</text>') if etf else \
-        f'<path fill="#fff" fill-opacity=".92" d="{BUILDING}"/><rect x="18" y="46" width="28" height="2.5" rx="1" fill="#fff" fill-opacity=".92"/>'
+    # v26: 건물 그림은 '그림이 깨진 것' 처럼 보였다 → 토스처럼 이름 첫 글자 (한글 1자 · 영문 2자). 이름을 모르면 건물 그림
+    label = re.sub(r"^(주식회사|\(주\)|㈜)\s*", "", (name or idt.get("name") or _name(app, sym) or "").strip())
+    first = label[:1]
+    text = first if re.match(r"[가-힣]", first) else re.sub(r"[^A-Za-z0-9]", "", label)[:2].upper()
+    if etf:
+        inner = ('<text x="32" y="33" dy=".35em" text-anchor="middle" font-family="Pretendard,Apple SD Gothic Neo,sans-serif" '
+                 'font-size="17" font-weight="700" fill="#fff" letter-spacing=".5">ETF</text>')
+    elif text and label != sym:
+        t = text.replace("&", "&amp;").replace("<", "&lt;")
+        inner = (f'<text x="32" y="33" dy=".35em" text-anchor="middle" font-family="Pretendard,Apple SD Gothic Neo,Malgun Gothic,sans-serif" '
+                 f'font-size="{28 if len(text) == 1 else 22}" font-weight="700" fill="#fff">{t}</text>')
+    else:
+        inner = f'<path fill="#fff" fill-opacity=".92" d="{BUILDING}"/><rect x="18" y="46" width="28" height="2.5" rx="1" fill="#fff" fill-opacity=".92"/>'
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
             f'<circle cx="32" cy="32" r="32" fill="{color}"/>{inner}</svg>').encode()
 
@@ -251,7 +264,7 @@ def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = 
     from .companies import bundled_logo
     data = bundled_logo(sym)
     if data:
-        return data, "image/svg+xml", "bundled"
+        return data, (kind_of(data) or ("svg", "image/svg+xml"))[1], "bundled"
     meta_p = d / f"{sym}.json"
     meta = json.loads(meta_p.read_text()) if meta_p.exists() else {}
     if meta.get("file") and (d / meta["file"]).exists() and not force:

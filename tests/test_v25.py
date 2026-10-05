@@ -189,7 +189,8 @@ def test_static_v25_wiring():
     assert '<script src="/toss.js"></script>' in html and '<link rel="stylesheet" href="/toss.css">' in html
     assert html.index("/toss.js") < html.index("/app.js")  # app.js 가 render() 에서 tossRender 를 부른다
     sw = (STATIC / "sw.js").read_text()
-    assert "qa-shell-v25" in sw and '"/toss.js"' in sw and '"/toss.css"' in sw
+    import re
+    assert re.search(r"qa-shell-v(2[5-9]|[3-9]\d)", sw) and '"/toss.js"' in sw and '"/toss.css"' in sw
     app_js = (STATIC / "app.js").read_text()
     assert "tossRender(el)" in app_js and "S.sub = sub" in app_js
     easy = (STATIC / "easy.js").read_text()

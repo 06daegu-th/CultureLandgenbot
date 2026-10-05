@@ -99,7 +99,7 @@ function bindRun(root = document) {
 async function viewReadiness(el) {
   const [r, p] = await Promise.all([api("/api/readiness"), api("/api/pipeline")]);
   const fr = r.freshness || {};
-  const gates = (r.checks || []).map((c) => `<div class="gate g-${esc(c.status)}"><div class="gate-h"><span class="gate-ic">${GATE_ICON[c.status] || ""}</span><b>${esc(c.key)}</b><span class="small muted">${esc(c.title)}</span></div><div class="small">${esc(c.detail)}</div>${(c.items || []).length > 1 ? `<ul class="plain xs muted">${c.items.slice(0, 5).map((x) => `<li>· ${esc(x)}</li>`).join("")}</ul>` : ""}</div>`).join("");
+  const gates = (r.checks || []).map((c) => `<div class="gate g-${esc(c.status)}"><div class="gate-h"><span class="gate-ic">${GATE_ICON[c.status] || ""}</span><b>${esc(c.title || c.key)}</b></div><div class="small">${esc(c.detail)}</div>${(c.items || []).length > 1 ? `<ul class="plain xs muted">${c.items.slice(0, 5).map((x) => `<li>· ${esc(x)}</li>`).join("")}</ul>` : ""}</div>`).join("");
   const rows = Object.values(fr.items || {}).map((v) => `<tr><td>${esc(v.name || v.kind)}</td><td class="mono small">${esc(v.label || "-")}</td><td>${pill(ST_CLS[v.status] || "warn", v.age || "없음")}</td><td class="xs dim">${v.n_symbols ? `${v.n_symbols}종목 · 가장 늦은 ${esc(v.oldest)}` : ""}</td></tr>`).join("");
   const src = (p.sources || []).map((s) => `<tr><td>${esc(s.source)}</td><td>${pill({ ok: "ok", degraded: "warn", down: "bad", none: "none" }[s.status], { ok: "정상", degraded: "간헐 실패", down: "연속 실패", none: "기록 없음" }[s.status])}</td><td class="r num">${s.runs}</td><td class="r num">${s.fails}</td><td class="small mono">${s.last_ok ? kst(s.last_ok) : "-"}</td><td class="xs dim" style="white-space:normal">${esc(s.last_error || "")}</td></tr>`).join("");
   const rec = p.recovery || {};
@@ -218,7 +218,7 @@ async function viewPower(el) {
       <div class="scroll"><table class="tight"><thead><tr><th>구간</th><th class="r">순위 IC</th><th class="r">무작위 대조</th><th class="r">상위 5분위 적중</th><th class="r">비용 후 상위20 초과/20일</th><th class="r">연환산</th></tr></thead><tbody>${part(st.dev, "개발 (선택에 사용)")}${part(st.holdout, "검증 (선택 후 한 번)")}</tbody></table></div>
       <div class="grid g-2" style="margin-top:10px"><div><div class="small muted">검증 구간 10분위 평균 수익 (1=점수 최하 → 10=최상)</div>${dBars(hold.deciles || [], (hold.deciles || []).map((_, i) => i + 1))}</div>
       <div><div class="small muted">연도별 순위 IC</div>${dBars((st.yearly || []).map((y) => y.ic), (st.yearly || []).map((y) => String(y.year).slice(2)), { fmt: (v) => v.toFixed(3) })}</div></div>
-      <div class="xs dim">${esc(st.caveat || "")}</div>` : empty("연구 결과가 없습니다 — quant-ai power-study --marcap-dir <경로>"))}
+      <div class="xs dim">${esc(st.caveat || "")}</div>` : empty("아직 연구 결과가 없어요 — 터미널에서 ./run.sh power-study 를 실행하면 실제 KRX 데이터로 검정합니다"))}
   <div class="grid g-2">
     ${card(`모델 노후 <span class="small dim">CUSUM · 추세 · 모델 나이별 적중</span>`, (dec.consensus || {}).n ? `<div class="small ${dec.status === "decaying" ? "bad-t" : dec.status === "watch" ? "warn-t" : "good"}">${esc(dec.message || "")}</div>
       ${dLine([{ data: decRoll, color: "var(--accent)" }], { bands: [{ y: dec.consensus.reference ?? 0.5, color: "var(--muted)", label: "초기 적중" }], yfmt: (v) => (v * 100).toFixed(0) + "%" })}

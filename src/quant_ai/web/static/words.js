@@ -84,19 +84,49 @@ function logoLinks(root) {
     a.insertAdjacentHTML("afterbegin", stockLogo(sym, a.textContent.trim().slice(0, 30), 16) + " ");
   });
 }
+// v26: 개발·트레이딩 도구 같은 영어 꼬리표(PAPER·SHADOW·Champion·HALTED…)를 우리말로 — 짧은 라벨만 (기사·대화·입력칸은 건드리지 않음)
+const JARGON = [
+  [/\bLIVE TRADING\b/g, "실전 거래"], [/\bTRADING BLOCKED\b/g, "매매 차단"], [/\bNOT READY\b/g, "준비 안 됨"], [/\bDATA HEALTH\b/g, "데이터 상태"],
+  [/\bTrading Readiness\b/g, "매매 준비 점검"], [/\bMarket Regime Engine\b/g, "시장 국면 판단"], [/\bRisk Gate\b/g, "위험 점검"], [/\bAction Center\b/g, "할 일"],
+  [/\bAI Lab\b/g, "AI 연구실"], [/\bPortfolio OS\b/g, "자산 자세히"], [/\bFail-Closed\b/g, "장애 시 안전 정지"], [/\bNet Alpha\b/g, "지수 대비 순수익"],
+  [/\bus-paper\b/g, "미국 모의"], [/\b(PAPER|paper)\b/g, "모의"], [/\b(SHADOW|Shadow|shadow)\b/g, "그림자"], [/\bLIVE\b/g, "실계좌"], [/\bmanual\b/g, "수동"],
+  [/\bHALTED\b/g, "자동 정지"], [/\bBACKTEST\b/g, "과거 시험"], [/\bBLOCKED\b/g, "차단"], [/\b(CHAMPION|Champion|champion)\b/g, "현재 모델"], [/\b(Challenger|challenger)\b/g, "도전 모델"],
+  [/\b(Candidate|candidate)\b/g, "후보"], [/\bRollback\b/g, "되돌리기"], [/\bResearch\b/g, "연구"], [/\bEnsemble\b/g, "종합"], [/\bSentinel\b/g, "자동 감시"],
+  [/\bReliability\b/g, "신뢰도"], [/\b(REJECTED|rejected)\b/g, "탈락"], [/\bMODEL\b/g, "모델"], [/\bDRIFT\b/g, "데이터 변화"], [/\bCALIBRATION\b/g, "확률 보정"],
+  [/\bBROKER\b/g, "증권사"], [/\bRISK\b/g, "위험"], [/\bEVENT\b/g, "일정"], [/\bDATA\b/g, "데이터"],
+  [/\bbull_quiet\b/g, "안정적 상승"], [/\bbull_volatile\b/g, "변동성 상승"], [/\bbear_quiet\b/g, "완만한 하락"], [/\bbear_volatile\b/g, "변동성 하락"],
+  [/\bsideways\b/g, "횡보"], [/\bcrisis\b/g, "위기"], [/\bregime\b/g, "시장 국면"], [/\bnvidia\b/g, "경제·시장 AI"], [/\bprimary\b/g, "뉴스 AI"],
+  [/\bquant-logistic\b/g, "통계 모델"], [/\bCORE\b/g, "코어"], [/\bbuy\b/g, "매수"], [/\bsell\b/g, "매도"], [/\bDOWN\b/g, "하락"], [/\bUP\b/g, "상승"],
+  [/\bHIGH\b/g, "높음"], [/\bMEDIUM\b/g, "보통"], [/\bLOW\b/g, "낮음"], [/\bPORTFOLIO\b/g, "포트폴리오"], [/\bOPERATIONS\b/g, "운영"], [/\bSAFETY\b/g, "안전"],
+  [/\bstable\b/g, "안정"], [/\bwarn\b/g, "주의"], [/\bFINAL\b/g, "최종"], [/\bRejected\b/g, "탈락"],
+  [/\bNO[ _]TRADE\b/g, "쉬어가기"], [/\bHOLD\b/g, "관망"], [/\bBUY\b/g, "매수"], [/\bSELL\b/g, "매도"],
+];
+const JARGON_ANY = /\b(LIVE|TRADING|READY|HEALTH|Readiness|Regime|Gate|Center|Lab|OS|Fail|Alpha|paper|PAPER|Shadow|SHADOW|shadow|manual|HALTED|BACKTEST|BLOCKED|CHAMPION|Champion|champion|Challenger|challenger|Candidate|candidate|Rollback|Research|Ensemble|Sentinel|Reliability|REJECTED|rejected|MODEL|DRIFT|CALIBRATION|BROKER|RISK|EVENT|DATA|TRADE|HOLD|BUY|SELL|bull_quiet|bull_volatile|bear_quiet|bear_volatile|sideways|crisis|regime|nvidia|primary|quant-logistic|CORE|buy|sell|DOWN|UP|HIGH|MEDIUM|LOW|PORTFOLIO|OPERATIONS|SAFETY|stable|warn|FINAL|Rejected)\b/;
+const JARGON_SKIP = "input,textarea,pre,code,kbd,script,style,option[value],[data-news],[data-disc],.dt,.t-art,.t-text,.msg,.chat-in,.pfn,.no-ko,a[target=_blank]";
+function deJargonNode(t) {
+  const s = t.nodeValue;
+  if (!s || s.length > 140 || !JARGON_ANY.test(s)) return;
+  const p = t.parentNode;
+  if (!p || p.closest?.(JARGON_SKIP)) return;
+  let out = s;
+  for (const [re, ko] of JARGON) out = out.replace(re, ko);
+  if (out !== s) t.nodeValue = out;
+}
 function deEmoji(root) {
   if (!root) return;
-  if (root.nodeType === 3) { deEmojiNode(root); return; }
+  if (root.nodeType === 3) { deEmojiNode(root); if (root.parentNode) deJargonNode(root); return; }
   if (root.nodeType !== 1) return;
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const list = [];
   while (w.nextNode()) list.push(w.currentNode);
   list.forEach(deEmojiNode);
+  const w2 = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (w2.nextNode()) deJargonNode(w2.currentNode);
 }
 if (typeof MutationObserver !== "undefined" && typeof document !== "undefined") {
   const start = () => {
     deEmoji(document.body);
-    new MutationObserver((ms) => ms.forEach((m) => { m.addedNodes.forEach((n) => { deEmoji(n); logoLinks(n); }); if (m.type === "characterData") deEmojiNode(m.target); }))
+    new MutationObserver((ms) => ms.forEach((m) => { m.addedNodes.forEach((n) => { deEmoji(n); logoLinks(n); }); if (m.type === "characterData") { deEmojiNode(m.target); if (m.target.parentNode) deJargonNode(m.target); } }))
       .observe(document.body, { childList: true, subtree: true, characterData: true });
   };
   if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);

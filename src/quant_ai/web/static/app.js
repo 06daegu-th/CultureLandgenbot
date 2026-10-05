@@ -907,7 +907,7 @@ function viewModels(d) {
 async function viewCore(el) {
   const r = await api("/api/core-satellite");
   const p = r.plan;
-  if (!p || !p.core) { el.innerHTML = card("코어-위성 전략", empty("아직 실행 기록 없음 — quant-ai cycle 또는 replay 실행")); return; }
+  if (!p || !p.core) { el.innerHTML = card("코어-위성 전략", empty("아직 실행 기록이 없어요 — 24시간 운영(./run.sh)을 켜 두면 장 마감 뒤 자동으로 돌아요")); return; }
   const nm = (c) => esc((p.names || {})[c] || c);
   const f1 = (v) => v == null ? "-" : (v * 100).toFixed(1) + "%";
   const coreRows = p.core.map((c) => `<tr class="click" data-sym="${esc(c)}"><td class="num dim">#${(p.ranks[c] ?? -1) + 1}</td><td><b>${nm(c)}</b><span class="sub">${esc(c)}</span></td><td class="r num">${f1(p.weights[c])}</td><td class="r num">${p.scores[c] == null ? "-" : Number(p.scores[c]).toFixed(2)}</td></tr>`).join("");
@@ -1029,7 +1029,7 @@ function orderSheetView(r) {
 async function viewResearch(el) {
   const r = await api("/api/research");
   if (r.kind === "lab") return viewLabResult(el, r);
-  if (!r.trials) { el.innerHTML = card("실데이터 연구", empty("리포트 없음 — quant-ai research krx --marcap-dir ... 실행")); return; }
+  if (!r.trials) { el.innerHTML = card("실데이터 연구", empty("아직 과거 시험 결과가 없어요 — 터미널에서 ./run.sh research krx 를 실행하면 실제 KRX 16년치로 전략을 시험해 여기에 보여 줍니다 (수십 분)")); return; }
   const f2 = (v) => v == null ? "-" : Number(v).toFixed(2);
   const rows = r.trials.map((t) => { const s = t.metrics.strategy, p = t.metrics.prediction; return `<tr class="${t.trial.name === r.best ? "" : ""}">
     <td><b>${esc(t.trial.name)}</b>${t.trial.name === r.best ? ' <span class="chip pos">최고</span>' : ""}</td>
@@ -1189,6 +1189,9 @@ async function render() {
   const d = S.data;
   if (!d) { el.innerHTML = skeleton(); return; }
   document.body.classList.remove("ts-on");
+  const legacy = typeof tossOwns === "function" && !tossOwns();
+  document.body.classList.toggle("tl", legacy);  // v26: 기존 화면도 토스식 공통 스킨
+  if (legacy && typeof tlHead === "function") { const h = tlHead(); if (h) $("#view").prepend(h); }
   try {
     if (typeof tossRender === "function" && await tossRender(el)) { document.body.classList.add("ts-on"); }  // v25 토스식 화면 (toss.js)
     else if (S.view === "dashboard") {

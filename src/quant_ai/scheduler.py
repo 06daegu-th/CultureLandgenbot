@@ -124,6 +124,16 @@ def build_default_scheduler(app, mode) -> Scheduler:
                 NewsCollector(st.news_feeds).collect(s)
         sch.add("news", news, 300, "open")
         sch.add("news_offhours", news, 1800, "closed")
+
+        def stock_news(now):  # v26: 관심·보유 종목별 뉴스 (덜 알려진 종목도 뉴스가 붙게)
+            from .alerts import focus_symbols
+            from .data.collectors.news import collect_stock_news
+            with session_scope(app.engine) as s:
+                r = collect_stock_news(s, list(focus_symbols(app)))
+            from . import ops as _ops
+            _ops.set_state(app.engine, "stock_news_status", {"at": now.isoformat(), **r})
+        if os.environ.get("QUANT_STOCK_NEWS", "true").lower() != "false":
+            sch.add("stock_news", stock_news, 1800, "always")
     # 키는 실행 중에 .env 에서 다시 읽힌다 (keys.refresh) → 작업은 항상 등록하고, 키가 없을 때만 건너뛴다
     from .keys import note_error
     from .keys import refresh as _keys_refresh

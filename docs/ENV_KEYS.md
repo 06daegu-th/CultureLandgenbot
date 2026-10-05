@@ -116,7 +116,9 @@
 
 | 변수 | 값 |
 |---|---|
-| `QUANT_LOGO_SOURCES` | 로고 출처와 순서 (기본 `logodev,toss,alpha,naver,fmp,cmc,eodhd,favicon` — logodev 는 키가 있을 때만). 국내: 토스증권·알파스퀘어 공개 아이콘(실제 회사 로고) → 홈페이지 아이콘, 미국: FMP. 예: `favicon` 만 쓰려면 `QUANT_LOGO_SOURCES=favicon` |
+| `QUANT_LOGO_SOURCES` | 로고 출처와 순서 (기본 `logodev,usl,toss,alpha,naver,fmp,cmc,eodhd,favicon` — logodev 는 키가 있을 때만 · usl = 미국 4천여 종목 로고 묶음, jsDelivr). 국내: 토스증권·알파스퀘어 공개 아이콘(실제 회사 로고) → 홈페이지 아이콘, 미국: FMP. 예: `favicon` 만 쓰려면 `QUANT_LOGO_SOURCES=favicon` |
+| `QUANT_STOCK_NEWS` | 기본 켜짐 — 관심·보유 종목마다 구글뉴스 검색 RSS 로 종목별 기사를 30분마다 모음 (키 불필요). 끄려면 `false` |
+| `QUANT_COMMUNITY` | 기본 켜짐 — 관심·보유 종목의 네이버 토론실·StockTwits 분위기를 30분마다. 점검: `./run.sh community --test 005930,NVDA` |
 | `QUANT_LOGO_DEV_TOKEN` | (선택) logo.dev 무료 공개 키(`pk_…`). 넣으면 로고를 정식 로고 API 에서 **먼저** 받습니다 — 국내·해외 대부분 상장사 커버. 없으면 위 공개 이미지 순서대로. 무료 등급은 출처 표기 조건이 있으니 상용 전 약관 확인 |
 | `QUANT_EVENT_GATE` | 기본 `smart` — 실적 발표 D-1 이내는 신규 매수 보류(×0), D-3 이내 ×0.75. `reduce`(예전: D-1 ×0.5) · `block`(걸리면 모두 ×0) · `off` |
 

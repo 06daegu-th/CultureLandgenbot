@@ -97,3 +97,52 @@ class NewsCollector:
                 session.flush()
                 n += 1
         return n
+
+
+# v26: 종목별 뉴스 — 일반 경제 RSS 만으로는 덜 알려진 종목에 뉴스가 거의 안 붙는다.
+# 관심·보유 종목마다 구글뉴스 검색 RSS (키 불필요) 를 받아 그 종목으로 바로 태그한다.
+GNEWS_KR = "https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+GNEWS_US = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+
+
+def stock_feed_url(symbol: str, name: str | None) -> str:
+    from urllib.parse import quote
+    if symbol[:1].isdigit():
+        q = f'"{name or symbol}" 주가 OR 실적 OR 공시'
+        return GNEWS_KR.format(q=quote(q))
+    q = f"{symbol} stock" + (f' OR "{name}"' if name and name != symbol and name.isascii() else "")
+    return GNEWS_US.format(q=quote(q))
+
+
+def collect_stock_news(session: Session, symbols: list[str], analyzer: NewsAnalyzer | None = None, fetch=http.get,
+                       per_stock: int = 15) -> dict:
+    """관심·보유 종목별 최신 기사 (종목당 최대 per_stock 건). 이미 있는 링크는 건너뛰고, 기사에 그 종목 태그를 더한다."""
+    from ..global_stocks import GLOBAL_STOCKS
+    analyzer = analyzer or NewsAnalyzer()
+    names = {i.symbol: i.name for i in session.scalars(select(Instrument).where(Instrument.symbol.in_(symbols or [""])))}
+    ko = {s: n for s, n, *_ in GLOBAL_STOCKS}
+    added, failed = 0, []
+    for sym in symbols[:25]:
+        name = names.get(sym) if names.get(sym) and names.get(sym) != sym else None
+        if not sym[:1].isdigit():
+            from ...companies import identity
+            name = identity(None, sym).get("name_en") or name
+        try:
+            arts = parse_feed(fetch(stock_feed_url(sym, name or ko.get(sym))), source="구글뉴스")[:per_stock]
+        except Exception as exc:  # noqa: BLE001 - 한 종목 실패는 다음 회차에
+            failed.append(f"{sym}: {type(exc).__name__}")
+            continue
+        for a in arts:
+            old = session.scalar(select(NewsArticle).where(NewsArticle.url == a.url))
+            if old:
+                if sym not in (old.symbols or []):
+                    old.symbols = [*(old.symbols or []), sym]
+                continue
+            src = a.title.rsplit(" - ", 1)[-1][:60] if " - " in a.title else "구글뉴스"  # 구글뉴스 제목 끝의 '- 매체명'
+            title = a.title.rsplit(" - ", 1)[0] if " - " in a.title else a.title
+            r = analyzer.analyze(title, "")
+            session.add(NewsArticle(source=src, url=a.url, published_at=a.published_at, title=title, body="", symbols=[sym],
+                                    sentiment=r.sentiment, events=r.events, importance=r.importance, collected_at=datetime.now(UTC)))
+            session.flush()
+            added += 1
+    return {"added": added, "failed": failed[:10], "symbols": len(symbols[:25])}

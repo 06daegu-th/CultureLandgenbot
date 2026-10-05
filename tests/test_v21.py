@@ -180,7 +180,7 @@ def test_logo_never_blocks_screen_and_retries_blocked(app, monkeypatch, tmp_path
     # 옛 버전의 실패 기록(7일 막힘)은 무시하고 다시 받는다
     (logos._dir(app) / "BBB222.json").write_text(_json.dumps({"failed_at": _time.time(), "net": False, "tried": ["toss: HTTPError"]}))
     _, _, src2 = logos.get(app, "BBB222", fetch=lambda u: png)
-    assert src2 in ("toss", "alpha", "fmp", "favicon", "logodev")
+    assert src2 in ("usl", "toss", "alpha", "fmp", "favicon", "logodev")
     # 화면용(block=False): 기다리지 않고 이니셜 → 뒤에서 받아 두면 다음엔 진짜 로고
     _, _, src3 = logos.get(app, "CCC333", fetch=lambda u: png, block=False)
     assert src3 == "pending"

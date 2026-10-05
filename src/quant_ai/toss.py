@@ -442,4 +442,43 @@ def report(app, sym: str) -> dict:
             "delta": round(hist[-1]["prob_up"] - prev["prob_up"], 3) if prev else None}
 
 
-__all__ = ["home", "stock", "feed", "portfolio", "alerts", "alerts_write", "quotes", "report", "market"]
+# ------------------------------------------------------------------ 수집 상태 (커뮤니티 · 로고) · 종목 커뮤니티
+def community(app, sym: str) -> dict:
+    st = ops.get_state(app.engine, f"community:{sym}")
+    fail = ops.get_state(app.engine, "community_fail").get(sym)
+    return {"symbol": sym, "at": st.get("at"), "ago": _ago(datetime.fromisoformat(st["at"]), datetime.now(UTC)) if st.get("at") else None,
+            "source": st.get("source"), "n": st.get("n", 0), "bull": st.get("bull", 0), "bear": st.get("bear", 0), "mood": st.get("mood"),
+            "label": st.get("label"), "posts": (st.get("posts") or [])[:10], "failed_at": fail,
+            "note": "커뮤니티 글은 참고용입니다 — 신뢰도가 낮고 반대로 움직이는(역지표) 경우도 많습니다"}
+
+
+def collect_status(app) -> dict:
+    """데이터 상태 화면용: 커뮤니티 수집이 실제로 되고 있나 · 로고가 몇 개나 진짜인가."""
+    import json as _json
+
+    from .companies import LOGO_DIR, bundled
+    from .logos import _dir
+    cs = ops.get_state(app.engine, "community_status")
+    d = _dir(app)
+    by_src: dict[str, int] = {}
+    failed = 0
+    for f in d.glob("*.json"):
+        try:
+            m = _json.loads(f.read_text())
+        except Exception:  # noqa: BLE001, S112 - 깨진 기록은 건너뜀
+            continue
+        if m.get("source"):
+            by_src[m["source"]] = by_src.get(m["source"], 0) + 1
+        elif m.get("failed_at"):
+            failed += 1
+    us_bundled = len(list((LOGO_DIR / "us").glob("*.webp")))
+    sn = ops.get_state(app.engine, "stock_news_status")
+    return {"stock_news": {"at": sn.get("at"), "added": sn.get("added", 0), "symbols": sn.get("symbols", 0), "failed": sn.get("failed", [])},
+            "community": {"at": cs.get("at"), "last_ok": cs.get("last_ok"), "tried": cs.get("tried", 0), "ok": cs.get("ok", 0),
+                          "failed": cs.get("failed", []),
+                          "hint": "'./run.sh community --test 005930,NVDA' 로 출처마다 실제로 받아지는지 확인할 수 있어요"},
+            "logos": {"bundled": len(bundled()) + us_bundled, "downloaded": sum(by_src.values()), "by_source": by_src, "failed": failed,
+                      "hint": "'./run.sh logos --all' 로 전 종목 로고를 미리 받습니다 · 진짜 로고가 없으면 이름 첫 글자로 표시"}}
+
+
+__all__ = ["home", "stock", "feed", "portfolio", "alerts", "alerts_write", "quotes", "report", "market", "community", "collect_status"]

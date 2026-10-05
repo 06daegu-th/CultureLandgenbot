@@ -233,6 +233,10 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.t_portfolio(arg("mode", "paper")[:10]))
                     if url.path == "/api/t/alerts":
                         return self._json(api.t_alerts())
+                    if url.path == "/api/t/community":
+                        return self._json(api.t_community(arg("symbol", "")[:12]))
+                    if url.path == "/api/t/collect":
+                        return self._json(api.t_collect())
                     if url.path == "/api/t/market":
                         return self._json(api.t_market())
                     if url.path == "/api/t/quotes":
@@ -502,7 +506,9 @@ def serve(app, host: str = "127.0.0.1", port: int = 8050) -> None:
     httpd = ThreadingHTTPServer((host, port), make_handler(api, token, allowed, auth))
 
     def _warm():  # 첫 화면이 기다리지 않게: 전 종목 일봉·대시보드를 미리 계산해 둔다 (실패해도 무시)
-        for f in (app.market_data, api.dashboard, api.setup, api.today):
+        # v26: 처음 여는 화면들(홈·AI 신뢰·목표·사실 확인·감시실)도 미리 — 첫 방문 2~5초 대기 없애기
+        for f in (app.market_data, api.dashboard, api.setup, api.today, api.t_home, lambda: api.home5("paper"), api.ai_trust,
+                  lambda: api.goal({}), api.truth, api.control):
             try:
                 f()
             except Exception as e:  # noqa: BLE001

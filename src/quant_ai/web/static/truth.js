@@ -64,7 +64,7 @@ async function viewTruth(el) {
   const rows = items.map((r) => {
     const head = r.area !== lastArea ? `<tr class="ck-area"><td colspan="4">${esc(r.area)}</td></tr>` : "";
     lastArea = r.area;
-    return `${head}<tr><td><b>${esc(r.item)}</b><div class="xs dim">${esc(r.what)}</div></td><td>${pill(CK_CLS[r.status], CK_LABEL[r.status] || r.status)}</td><td class="xs" style="white-space:normal">${esc(r.detail || "")}</td><td class="xs mono dim" style="white-space:normal">${esc(r.where)}<br>${esc(r.test)}</td></tr>`;
+    return `${head}<tr><td><b>${esc(r.item)}</b><div class="xs dim">${esc(r.what)}</div></td><td>${pill(CK_CLS[r.status], CK_LABEL[r.status] || r.status)}</td><td class="xs" style="white-space:normal">${esc(r.detail || "")}</td><td class="xs mono dim dev-only" style="white-space:normal">${esc(r.where)}<br>${esc(r.test)}</td></tr>`;
   }).join("");
   const tot = c.total || {};
   el.innerHTML = `
@@ -80,7 +80,7 @@ async function viewTruth(el) {
   ${card(`완성 기준 체크리스트 <span class="small dim">${tot.n || 0}개 항목 · 확인 ${tot.done || 0} · 설정 필요 ${tot.setup || 0} · 문제 ${tot.problems || 0}</span>`, `
     <div class="ck-areas">${areas.map(([a, v]) => `<div class="ck-a"><b>${esc(a)}</b><div class="ck-bar">${["live", "impl", "setup", "warn", "bad"].map((k) => v[k] ? `<span class="ck-${k}" style="flex:${v[k]}" title="${CK_LABEL[k]} ${v[k]}"></span>` : "").join("")}</div><span class="xs dim">${v.live + v.impl}/${v.n}</span></div>`).join("")}</div>
     <div class="tabs" id="ck-tabs" style="margin:10px 0">${[["all", "전체"], ["live", "실시간 확인"], ["problem", "문제·주의"], ["setup", "설정 필요"]].map(([k, l]) => `<button data-k="${k}" class="${f === k ? "on" : ""}">${l}</button>`).join("")}</div>
-    <div class="scroll" style="max-height:640px"><table class="tight ck-table"><thead><tr><th>항목</th><th>상태</th><th>지금 확인된 것</th><th>구현 · 검증 테스트</th></tr></thead><tbody>${rows || `<tr><td colspan="4">${empty("해당 항목 없음")}</td></tr>`}</tbody></table></div>
+    <div class="scroll" style="max-height:640px"><table class="tight ck-table"><thead><tr><th>항목</th><th>상태</th><th>지금 확인된 것</th><th class="dev-only">구현 · 검증 테스트</th></tr></thead><tbody>${rows || `<tr><td colspan="4">${empty("해당 항목 없음")}</td></tr>`}</tbody></table></div>
     <div class="xs dim" style="margin-top:8px">'구현·테스트' = 코드와 자동 테스트로 확인, 지금 관찰할 데이터가 없는 항목 (예: 실주문이 없어 부분체결 0건). 문서: docs/FINAL_CHECKLIST.md</div>`)}`;
   $("#truth-refresh").onclick = () => { S._truthRefresh = true; render(); };
   document.querySelectorAll("#ck-tabs button").forEach((b) => b.onclick = () => { S.ckFilter = b.dataset.k; render(); });

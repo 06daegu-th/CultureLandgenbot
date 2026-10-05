@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-ai"
-version = "0.25.0"
+version = "0.26.0"
 description = "Self-reviewing quant AI: data collection, regime/news/feature engines, prediction, backtest, paper/shadow/live trading and daily review"
 requires-python = ">=3.11"
 dependencies = [
@@ -32,7 +32,7 @@ quant-ai = "quant_ai.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-quant_ai = ["web/static/*", "web/static/vendor/*", "assets/logos/*"]
+quant_ai = ["web/static/*", "web/static/vendor/*", "assets/logos/*", "assets/logos/us/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

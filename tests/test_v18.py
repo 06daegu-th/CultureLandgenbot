@@ -56,7 +56,7 @@ def test_logo_sources_cache_fallback_and_safety(app):
 
     def fetch(url):
         calls.append(url)
-        if "financialmodelingprep" in url and "ROKU" in url:
+        if "financialmodelingprep" in url and "ZYXI" in url:
             return PNG
         if "posco-holdings.com" in url:
             return PNG
@@ -64,9 +64,10 @@ def test_logo_sources_cache_fallback_and_safety(app):
             return b"<svg onload=alert(1)>" + b" " * 400  # 외부 SVG 는 받지 않는다
         raise OSError("blocked")
 
-    d, t, src = logos.get(app, "ROKU", "Roku", fetch=fetch)
+    d, t, src = logos.get(app, "ZYXI", "Zynex", fetch=fetch)
     assert t == "image/png" and src == "fmp" and d == PNG
-    assert logos.get(app, "ROKU", fetch=fetch)[2] == "fmp" and len(calls) == 1  # 저장된 것 재사용
+    n0 = len(calls)
+    assert logos.get(app, "ZYXI", fetch=fetch)[2] == "fmp" and len(calls) == n0  # 저장된 것 재사용 (v26: 앞에 미국 로고 묶음 출처가 하나 더 있음)
     d, t, src = logos.get(app, "005490", "POSCO홀딩스", fetch=fetch)
     assert src == "favicon" and "posco-holdings.com" in calls[-1]
     assert logos.get(app, "005930", "삼성전자", fetch=fetch)[2] == "bundled"  # v23: 주요 종목은 내장 로고 (네트워크 안 씀)

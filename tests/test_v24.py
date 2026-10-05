@@ -41,11 +41,11 @@ def test_logo_sources_cover_unknown_kr_and_us(app, monkeypatch):
     from quant_ai import logos
     monkeypatch.delenv("QUANT_LOGO_SOURCES", raising=False)
     kr = [s for s, _ in logos.candidates(app, "123450")]
-    us = [s for s, _ in logos.candidates(app, "ROKU")]
+    us = [s for s, _ in logos.candidates(app, "ZYXI")]
     assert kr[:3] == ["toss", "alpha", "naver"]
-    assert us[:3] == ["fmp", "cmc", "eodhd"]
+    assert us[:4] == ["usl", "fmp", "cmc", "eodhd"]  # v26: 미국 로고 묶음(jsDelivr) 먼저
     assert any("Stock123450.svg" in u for _, u in logos.candidates(app, "123450"))
-    assert any(u.endswith("/roku.png") for _, u in logos.candidates(app, "ROKU"))
+    assert any(u.endswith("/zyxi.png") for _, u in logos.candidates(app, "ZYXI"))
 
 
 def test_sanitize_svg_rejects_anything_active():

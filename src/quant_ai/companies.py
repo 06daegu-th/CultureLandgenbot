@@ -192,7 +192,10 @@ def bundled() -> dict[str, str]:
 
 def bundled_logo(sym: str) -> bytes | None:
     f = LOGO_DIR / f"{sym.upper()}.svg"
-    return f.read_bytes() if sym.upper() in bundled() and f.exists() else None
+    if sym.upper() in bundled() and f.exists():
+        return f.read_bytes()
+    w = LOGO_DIR / "us" / f"{sym.upper().replace('.', '-')}.webp"  # v26: 미국 대형주·인기 종목 (us-stock-logos, MIT)
+    return w.read_bytes() if not sym[:1].isdigit() and w.exists() else None
 
 
 def is_etf(sym: str, name: str | None = None) -> bool:

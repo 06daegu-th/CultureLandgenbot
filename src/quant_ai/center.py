@@ -517,7 +517,7 @@ def ops_status(app, now: datetime | None = None) -> dict:
                        "fix": "./run.sh doctor 로 뉴스 소스 연결 확인 (회사망·방화벽이면 RSS 주소가 막힐 수 있음) · 지금 바로: qa collect news"})
     if sector_cov is not None and len(kr_syms) >= 10 and sector_cov < 0.5:
         issues.append({"key": "sector", "level": "warn", "text": f"업종 분류가 {1 - sector_cov:.0%} 비어 있습니다 ({len(kr_syms) - mapped}/{len(kr_syms)}종목)",
-                       "fix": "업종 집중 위험·섹터 비교가 부정확합니다 — 지금 바로: qa collect sectors (24시간 운영 중이면 장 마감 뒤 자동)"})
+                       "fix": "업종 집중 위험·섹터 비교가 부정확합니다 — 지금 바로: ./run.sh collect sectors (24시간 운영 중이면 장 마감 뒤 자동)"})
     if fails >= 3:
         issues.append({"key": "jobs", "level": "warn", "text": f"최근 하루 작업 실패 {fails}건", "fix": "서버 · DB 화면에서 실패한 작업 확인"})
     return {"running": running, "heartbeat_age_s": hb, "bar": {k: bar.get(k) for k in ("label", "status", "lag_days")},

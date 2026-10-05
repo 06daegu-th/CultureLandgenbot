@@ -470,3 +470,110 @@ a.tsk-card:hover { background: color-mix(in srgb, var(--text) 3%, var(--t-card))
 .menu-btn svg { display: block; }
 .tsk-price.dim { color: var(--muted); font-size: 24px; }
 .t-btn.sm { font-size: 13px; padding: 8px 12px; align-self: flex-start; margin-top: 2px; }
+
+/* =====================================================================
+   v26 공통 스킨 — 토스식으로 새로 만들지 않은 나머지 화면(47개)도 같은 말투로.
+   원칙: 숫자도 본문 글꼴(코딩 글꼴 X) · 큰 제목 · 둥근 카드 · 선 대신 면 · 버튼/탭은 단색 · 그라데이션 X
+   ===================================================================== */
+/* 숫자·라벨에 쓰던 코딩용 고정폭 글꼴 → 본문 글꼴 + 같은 폭 숫자 (개발 도구처럼 보이던 가장 큰 원인) */
+.num, .mono, .clock, .asof-chip, .state-pill, .fl-node, .fac, .asof, .rd-gate, .gate-h b, .cal-date b, .layer-k, .svg-lbl, table.heat, .ck-area td, .bal {
+  font-family: Pretendard, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif !important; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+kbd, code, .sg-cmd code, .msg code, .acct-form textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* 화면 머리: ← 제목 (모든 기존 화면 공통) */
+.tl-head { display: flex; align-items: center; gap: 6px; max-width: 1240px; width: 100%; margin: 0 auto -4px; }
+.tl-head h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.03em; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-head .tl-sub { font-size: 13px; color: var(--muted); font-weight: 500; margin-left: 8px; }
+.tl-head .t-back { margin-left: -8px; }
+.tl .view-inner { max-width: 1240px; width: 100%; margin: 0 auto; }
+
+/* 카드 */
+.tl .view-inner .card { border-radius: var(--t-r) !important; padding: 20px 22px; }
+:root[data-theme="light"] .tl .view-inner .card { border-color: transparent; box-shadow: 0 1px 2px rgba(0,0,0,.035) !important; }
+.tl .card-h { margin-bottom: 14px; gap: 8px 12px; }
+.tl .card-h h3 { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.35; }
+.tl .card-h h3 .small, .tl .card-h h3 .xs, .tl .card-h h3 .dim, .tl .card-h h3 .muted { font-size: 12.5px; font-weight: 500; letter-spacing: 0; }
+.tl .card-h .right a, .tl .card-h .right .link { font-size: 13px; font-weight: 600; color: var(--muted); }
+.tl .view-inner > .grid, .tl .grid { gap: 16px; }
+.tl .small { font-size: 13.5px; line-height: 1.55; } .tl .xs { font-size: 12px; line-height: 1.5; }
+
+/* 표: 넉넉한 줄 · 얇은 선 · 오른쪽 숫자 굵게 */
+.tl table { font-size: 14px; }
+.tl th { font-size: 12.5px; font-weight: 600; color: var(--muted); padding: 10px 10px; border-bottom: 1px solid var(--line); background: transparent; }
+.tl td { padding: 12px 10px; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.tl tbody tr:last-child td { border-bottom: 0; }
+.tl tbody tr:hover td { background: var(--t-hover); }
+.tl td.r.num, .tl td.num { font-weight: 600; }
+.tl table.tight td, .tl table.tight th { padding: 10px 8px; }
+
+/* 탭: 회색 바탕 위 흰 알약 (단색 · 그라데이션 없음) */
+.tl .tabs, .tl .seg { background: var(--t-soft) !important; border: 0 !important; border-radius: 12px; padding: 4px; gap: 2px; }
+.tl .tabs button { font-size: 13.5px; font-weight: 700; padding: 8px 14px; border-radius: 9px; color: var(--muted); }
+.tl .tabs button:hover { color: var(--text); }
+.tl .tabs button.on { background: var(--t-card) !important; color: var(--text) !important; box-shadow: 0 1px 3px rgba(0,0,0,.12) !important; }
+
+/* 버튼: 단색 · 둥글게 · 조금 크게 */
+.tl .btn, .tl .btn-sm.primary { background: var(--accent) !important; color: #fff !important; border: 0 !important; }
+.tl .btn { border-radius: 12px !important; padding: 12px 18px; font-size: 14px; font-weight: 700; }
+.tl .btn-sm { font-size: 13px; font-weight: 700; padding: 8px 13px; border-radius: 10px !important; background: var(--t-soft); border: 1px solid transparent; color: var(--text); }
+.tl .btn-sm:hover { border-color: var(--line-2); }
+.tl .btn-sm.danger { background: color-mix(in srgb, var(--bad) 14%, transparent) !important; color: var(--bad) !important; }
+.tl .btn-sm:disabled, .tl .btn:disabled { opacity: .45; }
+
+/* 칩 · 알약 · 배지: 테두리 대신 옅은 면 */
+.tl .chip { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 0; background: var(--t-soft); color: var(--muted); }
+.tl .chip.pos, .tl .chip.up { color: var(--up); background: color-mix(in srgb, var(--up) 11%, transparent); }
+.tl .chip.neg, .tl .chip.down { color: var(--down); background: color-mix(in srgb, var(--down) 11%, transparent); }
+.tl .chip.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+.tl .chip.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 11%, transparent); }
+.tl .chip.ok { color: var(--text); }
+.tl .badge { border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+.tl .st-pill, .tl .state-pill { border-radius: 999px; }
+
+/* 숫자 칸(kv) */
+.tl .kv-grid { gap: 10px; }
+.tl .kvt { border: 0; border-radius: 14px; background: var(--t-soft); padding: 12px 14px; }
+.tl .kvt .num { font-size: 18px; font-weight: 800; margin-top: 4px; }
+
+/* 입력칸 */
+.tl input:not([type=checkbox]):not([type=radio]):not([type=range]), .tl select, .tl textarea {
+  font-family: inherit; font-size: 14px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--t-card); color: var(--text); padding: 9px 11px; }
+.tl input:focus, .tl select:focus, .tl textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 0; border-color: var(--accent); }
+
+/* 빈칸 · 경고 · 진행 막대 */
+.tl .empty { padding: 30px 10px; font-size: 14px; color: var(--muted); }
+.tl .veto { border-radius: 12px; }
+.tl .notice { border-radius: var(--t-r) !important; border: 0 !important; }
+.tl .hbar, .tl .bar, .tl .prog { border-radius: 999px; overflow: hidden; }
+
+/* 위 막대(쉬운 화면): 군더더기 줄이기 — 장 상태 띠는 각 화면이 직접 보여 준다 */
+.ui-easy #market-notice { display: none; }
+.ui-easy .top .clock { font-size: 12px; }
+.ui-easy .mkt-badges .pill, .ui-easy .sys-pill { font-weight: 600; letter-spacing: 0; }
+.top { backdrop-filter: saturate(1.4) blur(10px); }
+:root[data-theme="light"] .top { background: color-mix(in srgb, var(--bg) 88%, transparent) !important; }
+
+@media (max-width: 760px) {
+  .tl-head h1 { font-size: 21px; }
+  .tl .view-inner .card { padding: 16px; border-radius: 18px !important; }
+  .tl .card-h h3 { font-size: 17px; }
+  .tl td { padding: 11px 8px; }
+  .tl .tabs { display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+  .tl .tabs button { flex-shrink: 0; }
+}
+.ui-easy #market-badges { display: none; }
+.tl label:has(> input[type=checkbox]), .tl label:has(> input[type=radio]) { display: flex; align-items: flex-start; gap: 8px; white-space: normal; text-align: left; }
+.tl label:has(> input[type=checkbox]) > input, .tl label:has(> input[type=radio]) > input { margin-top: 3px; flex-shrink: 0; }
+.tl .chk-chip { display: inline-flex !important; align-items: center !important; white-space: nowrap !important; }
+.sys-pill, #sys-status { font-family: inherit !important; }
+.ui-easy .dev-only { display: none; }
+
+/* 휴대폰: 칸이 4개 이상인 표는 글자를 한 자씩 꺾지 말고 카드 안에서 옆으로 밀어 보기 */
+@media (max-width: 760px) {
+  .tl .view-inner .card { overflow-x: auto; }
+  .tl table:has(tr > :nth-child(4)) { min-width: 560px; }
+  .tl table:has(tr > :nth-child(6)) { min-width: 700px; }
+  .tl td { white-space: nowrap; }
+  .tl td[style*="white-space:normal"] { min-width: 180px; }
+}
+.card label > input[type=radio], .card label > input[type=checkbox] { width: auto !important; margin-top: 3px; }

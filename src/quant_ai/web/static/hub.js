@@ -167,13 +167,31 @@ async function viewDataHealth(el) {
     <div class="scroll" style="margin-top:10px"><table class="tight"><thead><tr><th>분야</th><th>점수</th><th>상태</th><th>출처</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="xs dim" style="margin-top:6px">데이터가 믿을 수 없으면 사지 않는다: 주가 점수 50% 미만 또는 장중 실시간 가격 15분 이상 지연 → 신규 매수 차단 (매도·위험 축소는 가능)</div></div>
   <div class="grid g-2">
-    ${card(`자동 감시 (Sentinel) <span class="small ${LV_CLS[sn.status]}">${esc({ ok: "정상", warn: "주의", bad: "문제" }[sn.status] || sn.status)}</span>`, `<div class="tr-rows">${(sn.checks || []).map(stRow).join("")}</div><div class="xs dim" style="margin-top:6px">5분마다 · 나빠지면 알림, 회복하면 알림 · ${esc(sn.as_of)}</div>`)}
-    ${card("장애가 나도 돈은 안전 (Fail-Closed)", `<table class="tight"><thead><tr><th>장애</th><th>기존 포지션</th><th>신규 매수</th><th>매도</th></tr></thead><tbody>${(g.failmode || []).map((m) => `<tr><td class="small b">${esc(m.part)}</td><td class="small">${esc(m.positions)}</td><td class="small ${/차단|제한/.test(m.new_buys) ? "bad-t" : ""}">${esc(m.new_buys)}</td><td class="small">${esc(m.sells)}</td></tr>`).join("")}</tbody></table>`)}
+    ${card(`자동 감시 <span class="small ${LV_CLS[sn.status]}">${esc({ ok: "정상", warn: "주의", bad: "문제" }[sn.status] || sn.status)}</span>`, `<div class="tr-rows">${(sn.checks || []).map(stRow).join("")}</div><div class="xs dim" style="margin-top:6px">5분마다 · 나빠지면 알림, 회복하면 알림 · ${esc(sn.as_of)}</div>`)}
+    ${card("장애가 나도 돈은 안전", `<table class="tight"><thead><tr><th>장애</th><th>기존 포지션</th><th>신규 매수</th><th>매도</th></tr></thead><tbody>${(g.failmode || []).map((m) => `<tr><td class="small b">${esc(m.part)}</td><td class="small">${esc(m.positions)}</td><td class="small ${/차단|제한/.test(m.new_buys) ? "bad-t" : ""}">${esc(m.new_buys)}</td><td class="small">${esc(m.sells)}</td></tr>`).join("")}</tbody></table>`)}
   </div>`;
   $("#dh-re").onclick = async (e) => { e.target.disabled = true; await api("/api/data-health?refresh=1"); render(); };
+  collectCard(el);
   keysCard(el);
   netCard(el);
   conflictCard(el);
+}
+
+// v26: 커뮤니티 · 로고 수집 — 실제로 모이고 있는지 (조용히 0건이 되지 않게)
+async function collectCard(el) {
+  const box = document.createElement("div");
+  el.appendChild(box);
+  const r = await api("/api/t/collect").catch(() => null);
+  if (!r || !box.isConnected) return;
+  const c = r.community, l = r.logos;
+  const SRC = { usl: "미국 로고 묶음", toss: "토스", alpha: "알파스퀘어", naver: "네이버", fmp: "FMP", cmc: "companiesmarketcap", eodhd: "EODHD", favicon: "홈페이지 아이콘", logodev: "logo.dev" };
+  box.innerHTML = `<div class="grid g-2">${card("커뮤니티 수집", `<div class="kv-grid">${kv("마지막 시도", c.at ? esc(String(c.at).slice(5, 16).replace("T", " ")) : "-")}${kv("이번 성공", `${c.ok}/${c.tried}`)}${kv("마지막 성공", c.last_ok ? esc(String(c.last_ok).slice(5, 16).replace("T", " ")) : "없음")}</div>
+      ${(c.failed || []).length ? `<div class="small" style="margin-top:10px"><b>실패 이유</b>${c.failed.map((f) => `<div class="xs muted">${esc(f)}</div>`).join("")}</div>` : ""}
+      <div class="xs dim" style="margin-top:8px">${esc(c.hint)}</div>
+      ${r.stock_news ? `<div class="small" style="margin-top:10px"><b>종목별 뉴스 검색</b> <span class="xs muted">${r.stock_news.at ? `${esc(String(r.stock_news.at).slice(5, 16).replace("T", " "))} · ${num(r.stock_news.symbols)}종목 · 새 기사 ${num(r.stock_news.added)}건` : "아직 실행 전 (24시간 운영 중 30분마다)"}</span></div>` : ""}`)}
+    ${card("종목 로고", `<div class="kv-grid">${kv("프로젝트에 내장", num(l.bundled))}${kv("받아 둔 것", num(l.downloaded))}${kv("못 받은 것", num(l.failed))}</div>
+      ${Object.keys(l.by_source || {}).length ? `<div class="chips" style="margin-top:10px">${Object.entries(l.by_source).map(([k, v]) => `<span class="chip">${esc(SRC[k] || k)} ${num(v)}</span>`).join("")}</div>` : ""}
+      <div class="xs dim" style="margin-top:8px">${esc(l.hint)}</div>`)}</div>`;
 }
 
 // v17: 데이터 충돌 — 소스끼리 말이 다를 때 (가격 · 실적일 · 뉴스 해석)

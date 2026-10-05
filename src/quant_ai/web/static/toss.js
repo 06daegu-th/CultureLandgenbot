@@ -331,7 +331,12 @@ async function tStockTab(ctx, k) {
     try { n = await api(`/api/stock/news?symbol=${encodeURIComponent(sym)}`); } catch (e) { body.innerHTML = tErr(e); return; }
     if (!body.isConnected) return;
     const sum = (n.rule_summary || []).length ? `<div class="t-note">${n.rule_summary.map((x) => `<div>${esc(x)}</div>`).join("")}</div>` : "";
-    body.innerHTML = k === "news" ? `<div class="t-card t-sec">${n.overall ? `<div class="t-sub">뉴스 분위기 · <b>${esc(n.overall)}</b> (긍정 ${n.counts?.긍정 ?? 0} · 중립 ${n.counts?.중립 ?? 0} · 부정 ${n.counts?.부정 ?? 0})</div>` : ""}${tNewsList(n, 30)}${sum}</div>`
+    const com = k === "news" ? await api(`/api/t/community?symbol=${encodeURIComponent(sym)}`).catch(() => null) : null;
+    const comB = com ? tSec("커뮤니티 분위기", com.at ? `<div class="t-kvs"><div><span class="t-k">${esc(com.source || "")} · ${esc(com.ago || "")}</span><b>${esc(com.label || "-")}</b><span class="t-sub">글 ${num(com.n)}개 · 낙관 ${num(com.bull)} · 비관 ${num(com.bear)}</span></div></div>
+        <div class="t-list">${(com.posts || []).slice(0, 6).map((p) => `<a class="t-li" href="${esc(p.url || "#")}" target="_blank" rel="noopener noreferrer"><span class="t-co-t"><b class="clamp2">${esc(p.title)}</b></span>${p.sentiment != null ? `<span class="t-tone ${p.sentiment > 0.1 ? "up" : p.sentiment < -0.1 ? "down" : ""}">${p.sentiment > 0.1 ? "낙관" : p.sentiment < -0.1 ? "비관" : "중립"}</span>` : ""}</a>`).join("")}</div>
+        <div class="t-foot">${esc(com.note)}</div>`
+      : tEmpty("아직 모은 커뮤니티 글이 없어요", com.failed_at ? "최근 수집이 실패했어요 — 데이터 상태 화면에서 이유를 볼 수 있어요" : "관심종목·보유 종목만 30분마다 모아요 (24시간 운영이 켜져 있을 때)", '<a class="t-btn" href="#datahealth">수집 상태</a>'), "", "t-card") : "";
+    body.innerHTML = k === "news" ? `${comB}<div class="t-card t-sec">${n.overall ? `<div class="t-sub">뉴스 분위기 · <b>${esc(n.overall)}</b> (긍정 ${n.counts?.긍정 ?? 0} · 중립 ${n.counts?.중립 ?? 0} · 부정 ${n.counts?.부정 ?? 0})</div>` : ""}${tNewsList(n, 30)}${sum}</div>`
       : `<div class="t-card t-sec">${tDiscList(n.disclosures || [])}</div>`;
   } else if (k === "earn") {
     let e;
@@ -790,6 +795,25 @@ async function tMore(el) {
 }
 
 // ============================================================ 화면 연결
+// 이 화면을 toss.js 가 그리는가 (아니면 기존 화면 + 공통 스킨 + 화면 머리)
+function tossOwns(v = S.view) {
+  if (["n", "d", "report", "alerts", "more"].includes(v)) return true;
+  if (uiMode() !== "easy" || S.sub === "full") return false;
+  return (v === "dashboard" && !S.homeDetail) || ["analysis", "watch", "news", "pos", "market"].includes(v);
+}
+// 기존 화면 위에 붙는 머리: ← 제목 (메뉴 이름을 그대로 — 어디에 와 있는지 늘 보이게)
+const TL_TITLE = { goal: "내 목표", ledger: "예측 장부", evidence: "판단 근거 원본", dashboard: "홈 (자세히)", analysis: "종목 (전문가용)", market: "시장 분위기 · 경제지표", pos: "내 자산 (전문가용)" };
+function tlHead() {
+  const v = S.view;
+  const flat = [...NAV_EASY, ...NAV.flatMap(([, it]) => it)];
+  const label = TL_TITLE[v] || (flat.find((x) => x[0] === v) || [])[2] || "";
+  if (!label || (v === "dashboard" && uiMode() !== "easy")) return null;
+  const h = document.createElement("div");
+  h.className = "tl-head";
+  h.innerHTML = `<button class="t-back" aria-label="뒤로">${TI.back}</button><h1>${esc(label)}</h1>`;
+  h.querySelector(".t-back").onclick = () => { if (T_NAV.length) history.back(); else location.hash = uiMode() === "easy" ? "#more" : "#dashboard"; };
+  return h;
+}
 async function tossRender(el) {
   const v = S.view;
   const own = { n: () => tArticle(el, "news", S.param), d: () => tArticle(el, "disclosure", S.param), report: () => tReport(el, S.param), alerts: () => tAlerts(el), more: () => tMore(el) };

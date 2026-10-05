@@ -113,8 +113,23 @@ class DashboardAPI:
         now = time.monotonic()
         if self._cache and now - self._cache[0] < 10:
             return self._cache[1]
+        # v26: 10초~3분 지난 값은 바로 돌려주고 뒤에서 새로 계산 (화면을 열 때마다 1~2초 기다리지 않게)
+        if self._cache and now - self._cache[0] < 180:
+            if not getattr(self, "_dash_busy", False):
+                import threading
+                self._dash_busy = True
+
+                def bg():
+                    try:
+                        self._cache = (time.monotonic(), self._dashboard())
+                    except Exception as e:  # noqa: BLE001 - 다음 요청이 다시 시도
+                        log.info("대시보드 새로 계산 실패: %s", e)
+                    finally:
+                        self._dash_busy = False
+                threading.Thread(target=bg, name="dash-refresh", daemon=True).start()
+            return self._cache[1]
         out = self._dashboard()
-        self._cache = (now, out)
+        self._cache = (time.monotonic(), out)
         return out
 
     def _dashboard(self) -> dict:
@@ -1034,6 +1049,17 @@ class DashboardAPI:
         from .. import toss
         mode = mode if mode in ("paper", "shadow", "live", "us-paper") else "paper"
         return self._cached(f"t_pf:{mode}", 20, lambda: toss.portfolio(self.app, mode))
+
+    def t_community(self, symbol: str) -> dict:
+        from .. import toss
+        sym = symbol.strip().upper()[:12] if not symbol.strip()[:1].isdigit() else symbol.strip()[:12]
+        if not sym:
+            raise ValueError("symbol 필요")
+        return toss.community(self.app, sym)
+
+    def t_collect(self) -> dict:
+        from .. import toss
+        return self._cached("t_collect", 30, lambda: toss.collect_status(self.app))
 
     def t_market(self) -> dict:
         from .. import toss

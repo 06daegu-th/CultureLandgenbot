@@ -8,6 +8,7 @@
 | Simple Icons (`simple-icons`) | 16.33.0 | CC0-1.0 | 엔비디아·애플·테슬라·AMD·넷플릭스·인텔·삼성 계열·LG 계열·현대차·기아·NAVER·카카오 등 |
 | Iconify logos (`@iconify-json/logos`, gilbarbara/logos) | 1.2.15 | CC0-1.0 | 마이크로소프트·구글·메타·TSMC·SK하이닉스·브로드컴·마스터카드 등 |
 | Super Tiny Icons (`super-tiny-icons`) | 0.6.0 | MIT (아래 전문) | 아마존 |
+| US Stock Logos (`us-stock-logos`, ngnmarket/us-companies-logos) | 1.0.0 | MIT (`us/LICENSE-us-stock-logos.txt`) | `us/` 폴더 — 미국 대형주·인기 종목 158개 WebP. 나머지 미국 종목은 같은 묶음을 jsDelivr CDN 에서 받아 캐시 |
 
 **상표**: 로고는 각 회사의 상표입니다. 이 프로그램은 종목을 알아보게 하는 표시로만 씁니다 (광고·제휴·보증의 뜻 없음).
 상용 서비스에서는 상표 사용 범위를 따로 검토하세요 (`docs/SERVICE_READINESS.md` 3장).

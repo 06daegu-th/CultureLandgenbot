@@ -592,6 +592,27 @@ def _print_doctor(rows):
     sys.exit(1 if n_fail else 0)
 
 
+def cmd_community(args):
+    """커뮤니티 수집 점검: 종목 하나로 출처마다 실제로 글을 받아 오는지 보여 준다 (네이버 모바일 토론실 · PC 게시판 · StockTwits)."""
+    from .data.collectors import community as C
+    syms = [s.strip() for s in (args.test or "005930,NVDA").split(",") if s.strip()]
+    for sym in syms:
+        fns = [C.fetch_naver_mobile, C.fetch_naver_board] if sym[:1].isdigit() else [C.fetch_stocktwits]
+        for fn in fns:
+            try:
+                posts = fn(sym)
+                s = C.summarize(posts)
+                print(f"  ✓ {sym} {fn.__name__}: {s['n']}건 · 낙관 {s['bull']} · 비관 {s['bear']} → {s['label']}")
+                for p in posts[:3]:
+                    print(f"      - {p['title'][:60]}")
+            except Exception as e:  # noqa: BLE001 - 점검 결과로 보여 줌
+                print(f"  ✕ {sym} {fn.__name__}: {type(e).__name__} {str(e)[:120]}")
+    if args.collect:
+        app = _app(args)
+        from .alerts import focus_symbols
+        print(C.collect(app.engine, list(focus_symbols(app))))
+
+
 def cmd_logos(args):
     """로고 미리 받기: 관심·보유·주요 종목 (또는 --symbols). 출처별 개수와 이니셜로 남은 종목을 보여준다."""
     from . import logos
@@ -840,6 +861,10 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("health").set_defaults(fn=cmd_health)
     sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
     sub.add_parser("ops-status", help="운영 상태 (24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패)").set_defaults(fn=cmd_ops_status)
+    cm = sub.add_parser("community", help="커뮤니티(종목토론실·StockTwits) 수집 점검")
+    cm.add_argument("--test", help="점검할 종목 (쉼표, 기본 005930,NVDA)")
+    cm.add_argument("--collect", action="store_true", help="관심·보유 종목 지금 수집")
+    cm.set_defaults(fn=cmd_community)
     lg = sub.add_parser("logos", help="종목 로고 미리 받기 (관심·보유·주요 종목)")
     lg.add_argument("--symbols", help="쉼표로 구분한 종목 (생략하면 관심·보유·주요 종목)")
     lg.add_argument("--top", type=int, default=100, help="주요 종목 몇 개까지 (기본 100)")

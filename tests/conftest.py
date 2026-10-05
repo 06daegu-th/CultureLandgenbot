@@ -129,6 +129,8 @@ def _no_profile_network(monkeypatch):
     monkeypatch.setattr(live_quotes, "fetch_us", lambda syms: {})
     monkeypatch.setattr(community, "fetch_stocktwits", _offline)
     monkeypatch.setattr(community, "fetch_naver_board", _offline)
+    monkeypatch.setattr(community, "fetch_naver_mobile", _offline)
+    monkeypatch.setenv("QUANT_STOCK_NEWS", "false")  # v26: 종목별 뉴스 검색 작업은 테스트에서 네트워크를 쓰지 않게
     from quant_ai.data.collectors import dart_docs, investor_flow
     from quant_ai.engines import sector
     monkeypatch.setattr(investor_flow, "fetch_naver", _offline)
