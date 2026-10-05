@@ -134,6 +134,11 @@ def build_default_scheduler(app, mode) -> Scheduler:
             _ops.set_state(app.engine, "stock_news_status", {"at": now.isoformat(), **r})
         if os.environ.get("QUANT_STOCK_NEWS", "true").lower() != "false":
             sch.add("stock_news", stock_news, 1800, "always")
+    def indices(now):  # v27: 진짜 지수 (코스피·코스닥·나스닥·S&P500·다우) — 키 불필요, 실패하면 이전 값 + 대용
+        from .data.collectors.indices import collect_indices
+        collect_indices(app.engine)
+    if os.environ.get("QUANT_INDICES", "true").lower() != "false":
+        sch.add("indices", indices, 1800, "always")
     # 키는 실행 중에 .env 에서 다시 읽힌다 (keys.refresh) → 작업은 항상 등록하고, 키가 없을 때만 건너뛴다
     from .keys import note_error
     from .keys import refresh as _keys_refresh
@@ -283,9 +288,10 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("market_pulse", lambda now: market_pulse(app, now), 3600, "always")
         sch.add("event_reanalyze", lambda now: event_reanalyze(app, now), 600, "always")
         if os.environ.get("QUANT_COMMUNITY", "true").lower() != "false":
-            from .alerts import focus_symbols
             from .data.collectors.community import collect as community
-            sch.add("community", lambda now: community(app.engine, list(focus_symbols(app))), 1800, "always")
+            from .data.collectors.community import symbols_for as community_syms
+            # v27: 관심·보유 + 오늘 많이 움직인 종목 (최대 25)
+            sch.add("community", lambda now: community(app.engine, community_syms(app)), 1800, "always")
         # 야간: 검증 사다리 평가 (승격은 한 칸씩 · 강등은 즉시 Shadow 로) → 다음 사이클부터 적용
         sch.add("ladder", lambda now: app.ladder(), 6 * 3600, "closed")
         # 예측 장부 봉인(매시간) · 결과 매칭(1·5·20일, 장외) · 독립 평가(야간)

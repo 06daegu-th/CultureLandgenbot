@@ -75,25 +75,53 @@ def _chg(b) -> tuple[float | None, float | None]:
 
 # ------------------------------------------------------------------ 홈
 def _indices(app) -> list[dict]:
-    """코스피(대용) · 나스닥 · S&P500 — 있는 자료로: 국내 지수(시총가중 대용) · FRED 지수 · 없으면 QQQ/SPY ETF."""
+    """코스피 · 코스닥 · 나스닥 · S&P500 · 다우 — v27: 진짜 지수(공개 시세 · index_daily)를 먼저,
+    못 받았으면 예전처럼 코스피(시총가중 대용) · FRED 지수 · QQQ/SPY ETF 로 대신한다 (화면에 '대용' 표시)."""
+    from .data.collectors.indices import load_indices
+    real = {}
+    try:
+        real = load_indices(app.engine)
+    except Exception:  # noqa: BLE001 - 저장값이 없거나 깨졌으면 대용으로
+        real = {}
+
+    def from_real(key: str, name: str) -> dict | None:
+        r = real.get(key) or {}
+        ser = r.get("series") or []
+        if len(ser) < 3:
+            return None
+        c = [float(x[1]) for x in ser]
+        return {"key": key, "name": name, "proxy": False, "last": round(c[-1], 2), "chg_pct": round(c[-1] / c[-2] - 1, 4),
+                "spark": [round(x, 2) for x in c[-60:]], "as_of": ser[-1][0], "source": r.get("source"), "error": r.get("error")}
+
+    out = []
+    k = from_real("KOSPI", "코스피")
+    if k:
+        out.append(k)
+    else:
+        _, benches = app._all_bars()
+        kb = benches.get("KR")
+        if kb is not None and len(kb) > 2:
+            c = kb["close"].astype(float)
+            out.append({"key": "KOSPI", "name": "코스피", "proxy": True, "proxy_note": "국내 상위 종목 시가총액 가중으로 계산한 대용 지수 — 실제 코스피와 숫자는 다르고 흐름만 참고 (진짜 지수는 인터넷이 되면 자동으로 받아요)", "last": round(float(c.iloc[-1]), 2),
+                        "chg_pct": round(float(c.iloc[-1] / c.iloc[-2] - 1), 4), "spark": [round(float(x), 2) for x in c.iloc[-60:]],
+                        "as_of": str(c.index[-1].date())})
+    kq = from_real("KOSDAQ", "코스닥")
+    if kq:
+        out.append(kq)
     from .data.db import session_scope
     from .engines.market_intel import load_macro
-    out = []
-    _, benches = app._all_bars()
-    kb = benches.get("KR")
-    if kb is not None and len(kb) > 2:
-        c = kb["close"].astype(float)
-        out.append({"key": "KOSPI", "name": "코스피", "proxy": True, "proxy_note": "국내 상위 종목 시가총액 가중으로 계산한 대용 지수 — 실제 코스피와 숫자는 다르고 흐름만 참고", "last": round(float(c.iloc[-1]), 2),
-                    "chg_pct": round(float(c.iloc[-1] / c.iloc[-2] - 1), 4), "spark": [round(float(x), 2) for x in c.iloc[-60:]],
-                    "as_of": str(c.index[-1].date())})
     with session_scope(app.engine) as s:
         mac = load_macro(s, ["NASDAQCOM", "SP500"], days=120)
-    for sid, name, etf in (("NASDAQCOM", "나스닥", "QQQ"), ("SP500", "S&P 500", "SPY")):
+    for rk, sid, name, etf in (("NASDAQ", "NASDAQCOM", "나스닥", "QQQ"), ("SPX", "SP500", "S&P 500", "SPY")):
+        r = from_real(rk, name)
+        if r:
+            out.append(r)
+            continue
         x = mac.get(sid)
         if x is not None and len(x.dropna()) > 2:
             x = x.dropna()
             out.append({"key": sid, "name": name, "proxy": False, "last": round(float(x.iloc[-1]), 2), "chg_pct": round(float(x.iloc[-1] / x.iloc[-2] - 1), 4),
-                        "spark": [round(float(v), 2) for v in x.iloc[-60:]], "as_of": str(x.index[-1].date())})
+                        "spark": [round(float(v), 2) for v in x.iloc[-60:]], "as_of": str(x.index[-1].date()), "source": "FRED"})
             continue
         b = _bars_for(app, etf)
         if b is not None and len(b) > 2:
@@ -102,9 +130,12 @@ def _indices(app) -> list[dict]:
                         "chg_pct": round(float(c.iloc[-1] / c.iloc[-2] - 1), 4), "spark": [round(float(v), 2) for v in c.iloc[-60:]],
                         "as_of": str(c.index[-1].date())})
             continue
-        out.append({"key": sid, "name": name, "missing": True, "why": "자료 없음 — FRED 경제지표 또는 미국 시세 수집이 필요해요"})
+        out.append({"key": sid, "name": name, "missing": True, "why": "자료 없음 — 인터넷이 되면 지수를 자동으로 받아요 (30분마다)"})
+    dj = from_real("DJI", "다우")
+    if dj:
+        out.append(dj)
     if not any(x["key"] == "KOSPI" for x in out):
-        out.insert(0, {"key": "KOSPI", "name": "코스피", "missing": True, "why": "자료 없음 — 국내 일봉을 받으면 나와요"})
+        out.insert(0, {"key": "KOSPI", "name": "코스피", "missing": True, "why": "자료 없음 — 국내 일봉 또는 지수 시세를 받으면 나와요"})
     return out
 
 

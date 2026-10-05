@@ -132,7 +132,22 @@ FREE_PROVIDERS: dict[str, ProviderSpec] = {
                                 "@cf/google/gemma-3-12b-it", "@cf/meta/llama-3.1-8b-instruct-fast"), "CLOUDFLARE_API_TOKEN",
                                daily_requests=150, rpm=30,
                                signup="dash.cloudflare.com → AI → Workers AI → REST API 토큰 + Account ID"),
+    # v27: 내 PC 에서 도는 OpenAI 호환 LLM (Ollama · LM Studio · llama.cpp server) — 키 없이 번역·요약·채팅.
+    # .env: QUANT_LOCAL_LLM_URL=http://127.0.0.1:11434/v1 (주소가 곧 켜기) · 모델은 QUANT_LOCAL_MODELS
+    "local": ProviderSpec("local", "내 PC 로컬 LLM", "{account}", ("qwen2.5:7b-instruct", "llama3.1:8b", "gemma2:9b"),
+                          "QUANT_LOCAL_LLM_URL", daily_requests=5000, rpm=60,
+                          signup="ollama.com 설치 → 'ollama pull qwen2.5:7b-instruct' → .env 에 QUANT_LOCAL_LLM_URL=http://127.0.0.1:11434/v1"),
 }
+
+
+def local_url_ok(url: str) -> bool:
+    """로컬 LLM 주소는 https 이거나, 이 컴퓨터(127.0.0.1 · localhost · ::1)의 http 만 허용 (키·질문이 밖으로 새지 않게)."""
+    import urllib.parse as _u
+    try:
+        p = _u.urlparse(url)
+    except ValueError:
+        return False
+    return p.scheme == "https" or (p.scheme == "http" and (p.hostname or "") in ("127.0.0.1", "localhost", "::1"))
 
 USER_AGENT = "quant-ai/1.0 (+https://github.com/06daegu-th)"  # 파이썬 기본 서명은 일부 공급자(Cloudflare 1010)가 차단
 FALLBACK_CODES = (404, 429, 500, 502, 503, 504)  # 이 응답이면 다음 모델로
@@ -272,8 +287,8 @@ class OpenAICompatClient(LLMClient):
         return _DISCOVERED[key]
 
     def _post(self, path: str, body: dict, retries: int | None = None) -> dict:
-        if not self.base_url.startswith("https://"):
-            raise LLMError("https 엔드포인트만 허용")
+        if not (self.base_url.startswith("https://") or (self.provider == "local" and local_url_ok(self.base_url))):
+            raise LLMError("https 엔드포인트만 허용 (로컬 LLM 은 이 컴퓨터 주소만)")
         last: Exception | None = None
         for attempt in range(retries or self.retries):
             self._throttle()

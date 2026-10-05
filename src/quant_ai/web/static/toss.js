@@ -244,7 +244,7 @@ async function tStock(el, sym) {
     ${tBar(`<span class="t-bar-co">${stockLogo(sym, name, 24)}<b>${esc(name)}</b></span>`, { right: `<button class="t-ic" data-t-search aria-label="검색">${TI.search}</button><button class="t-ic t-star ${isStar ? "on" : ""}" id="tsk-star" aria-label="관심종목">${isStar ? TI.starOn : TI.star}</button>` })}
     <div class="tsk">
       <header class="tsk-head">
-        <div class="tsk-id">${stockLogo(sym, name, 52)}<div><h1>${esc(name)}</h1><div class="t-sub">${sub}${idt.name_en && idt.name_en !== name ? ` · ${esc(idt.name_en)}` : ""}</div></div></div>
+        <div class="tsk-id">${stockLogo(sym, name, 52)}<div><h1>${esc(name)}</h1><div class="t-sub">${sub}${idt.name_en && idt.name_en !== name ? ` · ${esc(idt.name_en)}` : ""}${isKR(sym) ? ` · <button class="t-link" data-logo-up="${esc(sym)}" data-logo-name="${esc(name)}">로고 바꾸기</button>` : ""}</div></div></div>
         <div class="tsk-px" id="tsk-px">${last == null ? `<b class="tsk-price dim">가격 자료 없음</b><span class="t-sub">${isKR(sym) ? "국내 일봉을 받으면 나와요 (./run.sh)" : "해외 시세는 인터넷 연결이 되면 받아와요 — 데이터 상태에서 확인"}</span>`
           : `<b class="num tsk-price">${tPx(last, sym)}</b><span class="num tsk-chg ${tCls(chgP)}">${chgAbs != null ? tSigned(chgAbs, sym) + " " : ""}(${tPct(chgP)})</span>`}</div>
         <div class="tsk-when">${when} ${mkt}</div>
@@ -299,7 +299,7 @@ function tStockSide(ctx) {
   side.querySelector("[data-tab=earn]")?.addEventListener("click", (ev2) => { ev2.preventDefault(); root.querySelector('#tsk-tabs button[data-k="earn"]')?.click(); });
   if ((T.stab[sym] || "sum") === "sum") tStockSumAI(ctx);
 }
-const PERIODS = [[5, "1주"], [21, "1개월"], [63, "3개월"], [126, "6개월"], [252, "1년"], [756, "3년"]];
+const PERIODS = [[1, "1일"], [5, "1주"], [21, "1개월"], [63, "3개월"], [126, "6개월"], [252, "1년"], [756, "3년"]];
 async function tStockTab(ctx, k) {
   const { sym, st, root } = ctx;
   const body = root.querySelector("#tsk-body");
@@ -311,7 +311,7 @@ async function tStockTab(ctx, k) {
     const stat = (l, val) => `<div class="t-stat"><span>${l}</span><b class="num">${val}</b></div>`;
     body.innerHTML = `
       <div class="tsk-chart-w"><div class="t-hover" id="tsk-hover"></div><div class="tsk-chart" id="tsk-chart"></div>
-        ${tChips("tsk-per", PERIODS.map(([n, l]) => [String(n), l]), String(T.period))}<div class="t-foot">일봉 종가 기준 · 하루 안 움직임(분봉)은 아직 없어요</div></div>
+        ${tChips("tsk-per", PERIODS.map(([n, l]) => [String(n), l]), String(T.period))}<div class="t-foot">1일 = 5분봉 (조금 늦을 수 있어요) · 나머지는 일봉 종가 기준</div></div>
       ${tSec("시세", `<div class="t-stats">${stat("시가", tPx(s.open, sym))}${stat("고가", `<span class="up">${tPx(s.high, sym)}</span>`)}${stat("저가", `<span class="down">${tPx(s.low, sym)}</span>`)}
         ${stat("거래량", tVol(s.volume))}${stat("52주 최고", tPx(s.high52, sym))}${stat("52주 최저", tPx(s.low52, sym))}${stat("시가총액", tCap(st.market_cap, sym))}${stat("20일 평균 거래량", tVol(s.avg_volume20))}</div>
         ${st.bar_date ? `<div class="t-foot">${esc(st.bar_date)} 일봉 기준${st.market_cap ? "" : " · 시가총액은 종목 상세 자료를 받으면 나와요"}</div>` : ""}`, "", "t-card")}
@@ -321,7 +321,7 @@ async function tStockTab(ctx, k) {
     if (ctx.v) tStockSumAI(ctx);
     api(`/api/stock/news?symbol=${encodeURIComponent(sym)}`).then((n) => { const b = root.querySelector("#tsk-sum-news"); if (b) b.innerHTML = tSec("최근 소식", tNewsList(n, 3), '<button class="t-link" data-go="news">더 보기</button>', "t-card"); tGoTab(root); }).catch(() => {});
   } else if (k === "chart") {
-    body.innerHTML = `<div class="t-card t-sec">${tChips("tsk-per2", PERIODS.map(([n, l]) => [String(n), l]), String(Math.max(T.period, 21)))}<div class="tsk-candle" id="tsk-candle"></div>
+    body.innerHTML = `<div class="t-card t-sec">${tChips("tsk-per2", PERIODS.filter(([n]) => n > 1).map(([n, l]) => [String(n), l]), String(Math.max(T.period, 21)))}<div class="tsk-candle" id="tsk-candle"></div>
       <div class="t-legend"><span><i style="background:#f59e0b"></i>5일 평균</span><span><i style="background:#a78bfa"></i>20일</span><span><i style="background:#38bdf8"></i>60일</span><span><i class="mk"></i>AI 매수/매도 표시</span></div></div>`;
     const draw = (n) => { clearCharts(); const c = body.querySelector("#tsk-candle"); c.innerHTML = ""; candleChart(c, sym, n).catch((e) => { c.innerHTML = tErr(e); }); };
     tBind(body, "tsk-per2", (n) => { body.querySelectorAll("#tsk-per2 button").forEach((b) => b.classList.toggle("on", b.dataset.k === n)); draw(Number(n)); });
@@ -366,6 +366,7 @@ async function tStockChart(ctx) {
   if (!el) return;
   clearCharts();
   el.innerHTML = "";
+  if (T.period === 1) { await tStockIntraday(ctx, el); return; }  // v27: 하루 안 움직임 (5분봉)
   let d;
   try { d = await api(`/api/chart?symbol=${encodeURIComponent(sym)}&n=${T.period + 1}`); } catch (e) { el.innerHTML = tErr(e); return; }
   if (!el.isConnected) return;
@@ -382,6 +383,35 @@ async function tStockChart(ctx) {
     hv.innerHTML = `<span>${dt.getUTCFullYear()}.${String(dt.getUTCMonth() + 1).padStart(2, "0")}.${String(dt.getUTCDate()).padStart(2, "0")}</span> <b class="num">${tPx(p.bar.close, sym)}</b> <span class="num ${tCls(p.chg)}">${tPct(p.chg)}</span>`;
   });
   void st;
+}
+// v27: '1일' — 오늘(또는 마지막 거래일) 5분봉. 기준선 = 어제 종가. 못 받으면 이유 + 일봉 단추
+async function tStockIntraday(ctx, el) {
+  const { sym, root } = ctx;
+  const hv = root.querySelector("#tsk-hover");
+  let d;
+  try { d = await api(`/api/t/intraday?symbol=${encodeURIComponent(sym)}`); } catch (e) { d = { points: [], error: e.message }; }
+  if (!el.isConnected) return;
+  const pts = d.points || [];
+  if (pts.length < 2) {
+    el.innerHTML = tEmpty("하루 움직임(분봉)을 받지 못했어요", d.error || "장 시작 전이거나 휴장일 수 있어요", '<button class="t-btn" id="tsk-to-week">1주 차트로 보기</button>');
+    if (hv) hv.innerHTML = "";
+    const b = el.querySelector("#tsk-to-week");
+    if (b) b.onclick = () => root.querySelector('#tsk-per button[data-k="5"]')?.click();
+    return;
+  }
+  const off = Number(d.gmtoffset) || 0;  // 차트는 UTC 로 그리므로 거래소 현지 시각이 보이게 더한다
+  const bars = pts.map((p) => ({ time: p[0] + off, close: p[1], volume: p[2] || 0 }));
+  const prev = Number(d.prev_close) || bars[0].close;
+  const last = bars[bars.length - 1].close;
+  const hm = (t) => { const x = new Date(t * 1000); return `${String(x.getUTCHours()).padStart(2, "0")}:${String(x.getUTCMinutes()).padStart(2, "0")}`; };
+  const base = () => { if (hv) hv.innerHTML = `<span>오늘 (어제 종가 대비)</span> <b class="num ${tCls(last - prev)}">${tPct(last / prev - 1)}</b> <span class="t-sub">${esc(d.source || "")}</span>`; };
+  base();
+  const ch = tArea(el, bars, sym, (p) => {
+    if (!hv) return;
+    if (!p) { base(); return; }
+    hv.innerHTML = `<span>${hm(p.bar.time)}</span> <b class="num">${tPx(p.bar.close, sym)}</b> <span class="num ${tCls(p.bar.close - prev)}">${tPct(p.bar.close / prev - 1)}</span>`;
+  });
+  if (ch) ch.applyOptions({ timeScale: { timeVisible: true, secondsVisible: false } });
 }
 function tStockSumAI(ctx) {
   const box = ctx.root.querySelector("#tsk-sum-ai");
@@ -407,21 +437,17 @@ function tDiscList(ds) {
 
 // 모의 매수 시트 (국내: 수동 모의 장부 · 실제 돈 아님)
 function tOrderSheet(sym, name, last) {
-  if (!isKR(sym)) {
-    tSheet(`<h3>${esc(name)} 모의 주문</h3><p class="t-sub">미국 주식 모의 주문 장부는 아직 국내 주식만 지원해요. 미국 주식은 환전·세금을 계산한 <b>주문표</b>로 미리 볼 수 있어요.</p>
-      <div class="t-sheet-act"><a class="t-btn primary" href="#usorder">미국 주문표 열기</a></div>`, (b, close) => b.querySelector("a").addEventListener("click", close));
-    return;
-  }
+  const us = !isKR(sym);  // v27: 미국 종목도 모의 주문 (달러 장부 us-manual · 원화 환산은 참고 환율)
   tSheet(`<h3>${esc(name)} <span class="t-sub">${tPx(last, sym)}</span></h3>
     ${tTabs("tk2-side", [["buy", "매수"], ["sell", "매도"]], "buy", "t-seg")}
     <label class="t-field"><span>수량</span><div class="t-stepper"><button data-d="-1" aria-label="빼기">−</button><input id="tk2-qty" type="number" inputmode="numeric" min="1" value="1"><button data-d="1" aria-label="더하기">+</button></div></label>
     <div class="t-sub" id="tk2-amt"></div>
     <div id="tk2-out"></div>
     <div class="t-sheet-act"><button class="t-btn ghost" id="tk2-prev">점검하기</button><button class="t-btn primary" id="tk2-go" disabled>모의 주문</button></div>
-    <div class="t-foot">수동 모의 장부에 기록돼요 · 실제 돈·실제 주문이 아니에요 · 주문 전에 데이터 상태·한도·AI 판단을 먼저 점검해요</div>`, (b, close) => {
+    <div class="t-foot">${us ? "미국 모의 장부(달러 · 시작 $100,000)에 기록돼요 · 수수료 0.25% 가정 · 환전 비용은 빼고 계산" : "수동 모의 장부에 기록돼요"} · 실제 돈·실제 주문이 아니에요 · 주문 전에 데이터 상태·한도·AI 판단을 먼저 점검해요</div>`, (b, close) => {
     let side = "buy", last2 = null;
     const qty = b.querySelector("#tk2-qty"), out = b.querySelector("#tk2-out"), go = b.querySelector("#tk2-go");
-    const amt = () => { b.querySelector("#tk2-amt").textContent = `예상 금액 약 ${tWon((Number(qty.value) || 0) * (last || 0))}`; go.disabled = true; out.innerHTML = ""; };
+    const amt = () => { b.querySelector("#tk2-amt").textContent = `예상 금액 약 ${us ? `$${num((Number(qty.value) || 0) * (last || 0), 2)}` : tWon((Number(qty.value) || 0) * (last || 0))}`; go.disabled = true; out.innerHTML = ""; };
     amt();
     qty.oninput = amt;
     b.querySelectorAll(".t-stepper button").forEach((x) => x.onclick = () => { qty.value = Math.max(1, (Number(qty.value) || 0) + Number(x.dataset.d)); amt(); });
@@ -433,7 +459,7 @@ function tOrderSheet(sym, name, last) {
       if (v.error) { out.innerHTML = tErr(v); return; }
       last2 = v;
       const ok = v.verdict === "통과" || v.verdict === "축소";
-      out.innerHTML = `<div class="t-check ${v.verdict === "통과" ? "ok" : v.verdict === "축소" ? "warn" : "bad"}"><b>${esc(v.verdict)}</b> · 허용 ${num(v.allowed_qty)}주 / 요청 ${num(v.want_qty)}주${v.fee_tax ? ` · 비용 ${tWon(v.fee_tax)}` : ""}</div>
+      out.innerHTML = `<div class="t-check ${v.verdict === "통과" ? "ok" : v.verdict === "축소" ? "warn" : "bad"}"><b>${esc(v.verdict)}</b> · 허용 ${num(v.allowed_qty)}주 / 요청 ${num(v.want_qty)}주${v.fee_tax ? ` · 비용 ${us ? `$${num(v.fee_tax, 2)}` : tWon(v.fee_tax)}` : ""}${us && v.notional_krw ? ` · 약 ${tMoney(v.notional_krw)} (환율 ${num(v.fx, 1)}원)` : ""}</div>
         <div class="t-steps">${(v.steps || []).map((s) => `<div>${lvDot({ ok: "good", warn: "warn", bad: "bad" }[s.status] || "idle")}<b>${esc(s.gate)}</b><span>${esc(s.detail)}</span></div>`).join("")}</div>
         ${v.message ? `<div class="t-check ${v.placed ? "ok" : "bad"}">${esc(v.message)}</div>` : ""}`;
       go.disabled = place || !ok || !(v.allowed_qty > 0);
@@ -648,7 +674,7 @@ async function tMarket(el) {
       <div class="t-mks big">${(m.markets || []).map((x) => `<div class="t-mkc ${x.open ? "open" : ""}"><span class="t-k">${esc(x.name)} 증시</span><b>${x.open ? '<i class="live-dot"></i>' : ""}${esc(x.state)}</b>
         <span class="t-sub">${x.holiday ? `${esc(x.holiday)} · ` : ""}${x.next_kst ? `${x.next === "폐장" ? "마감" : "개장"} ${esc(String(x.next_kst).replace(" KST", ""))} (한국시간)` : ""}</span></div>`).join("")}</div>
       ${tSec("지수", idx.length ? `<div class="t-idx">${idx.map((x) => x.missing ? `<div class="t-idx-c miss"><div class="t-idx-n">${esc(x.name)}</div><div class="t-idx-v dim">-</div><div class="t-idx-d">${esc(x.why)}</div></div>` : `<div class="t-idx-c"><div class="t-idx-n">${esc(x.name)}${x.proxy ? '<span class="t-tag">대용</span>' : ""}</div>
-        <div class="t-idx-v num">${num(x.last, 2)}</div><div class="num t-idx-c2 ${tCls(x.chg_pct)}">${tPct(x.chg_pct)}</div>${tSpark(x.spark, { h: 44 })}<div class="t-idx-d">${esc(x.as_of)} · 60일</div></div>`).join("")}</div>
+        <div class="t-idx-v num">${num(x.last, 2)}</div><div class="num t-idx-c2 ${tCls(x.chg_pct)}">${tPct(x.chg_pct)}</div>${tSpark(x.spark, { h: 44 })}<div class="t-idx-d">${esc(x.as_of)}${x.source ? ` · ${esc(x.source)}` : " · 60일"}</div></div>`).join("")}</div>
         ${proxy ? `<div class="t-foot">대용: ${esc(proxy.proxy_note)}</div>` : ""}` : tErr(m.indices))}
       ${tTabs("tm-mk", [["kr", "국내"], ["us", "해외"]], T.mvTab, "t-tabs-line")}
       <div class="t-grid3">${tSec("많이 오른", list(mv.up), "", "t-card")}${tSec("많이 내린", list(mv.down), "", "t-card")}${tSec("거래대금 많은", list(mv.turnover), "", "t-card")}</div>
@@ -798,6 +824,7 @@ async function tMore(el) {
 // 이 화면을 toss.js 가 그리는가 (아니면 기존 화면 + 공통 스킨 + 화면 머리)
 function tossOwns(v = S.view) {
   if (["n", "d", "report", "alerts", "more"].includes(v)) return true;
+  if (typeof TV === "object" && TV[v] && S.sub !== "full") return true;  // v27: 나머지 화면도 토스식 (toss2.js) — 두 화면 모드 모두
   if (uiMode() !== "easy" || S.sub === "full") return false;
   return (v === "dashboard" && !S.homeDetail) || ["analysis", "watch", "news", "pos", "market"].includes(v);
 }
@@ -818,13 +845,14 @@ async function tossRender(el) {
   const v = S.view;
   const own = { n: () => tArticle(el, "news", S.param), d: () => tArticle(el, "disclosure", S.param), report: () => tReport(el, S.param), alerts: () => tAlerts(el), more: () => tMore(el) };
   if (own[v]) { await own[v](); return true; }
-  if (uiMode() !== "easy" || S.sub === "full") return false;
+  if (uiMode() !== "easy" || S.sub === "full") { if (typeof TV === "object" && TV[v] && S.sub !== "full") { await TV[v](el); return true; } return false; }
   if (v === "dashboard" && !S.homeDetail) { await tHome(el); return true; }
   if (v === "analysis") { const sym = S.param ? decodeURIComponent(S.param) : S.symbol; if (sym) await tStock(el, sym); else await tFind(el); return true; }
   if (v === "watch") { await tWatch(el); return true; }
   if (v === "news") { await tFeed(el); return true; }
   if (v === "pos") { await tPortfolio(el); return true; }
   if (v === "market") { await tMarket(el); return true; }
+  if (typeof TV === "object" && TV[v]) { await TV[v](el); return true; }
   return false;
 }
 // 쉬운 화면에서는 뉴스·공시를 누르면 작은 창 대신 전체 화면 기사로 (뒤로 가기 됨)
@@ -838,6 +866,7 @@ document.addEventListener("click", (e) => {
 // 앱 안 이동 기록 (뒤로 단추가 사이트 밖으로 나가지 않게): 앞으로 가면 쌓고, 뒤로 오면 뺀다
 const T_NAV = [];
 window.addEventListener("hashchange", (e) => {
+  document.querySelector(".t-sheet-ov")?.remove();  // v27: 다른 화면으로 가면 열린 시트(주문·로고·용어 풀이)는 닫는다
   const old = (() => { try { return new URL(e.oldURL).hash || "#dashboard"; } catch { return "#dashboard"; } })();
   if (T_NAV.length && T_NAV[T_NAV.length - 1] === (location.hash || "#dashboard")) T_NAV.pop(); else T_NAV.push(old);
   if (T_NAV.length > 50) T_NAV.shift();

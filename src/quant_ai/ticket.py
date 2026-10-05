@@ -16,6 +16,24 @@ from . import ops
 from .asof import label
 
 MODE = "manual"
+US_MODE = "us-manual"  # v27: 미국 종목 수동 모의 장부 (달러 · 시작 $100,000 · 국내 장부와 따로)
+
+
+def _is_us(symbol: str) -> bool:
+    return bool(symbol) and not symbol[:1].isdigit()
+
+
+def _us_bars(app, symbol: str):
+    from .global_market import market_data as us_md
+    bars, _, _ = us_md(app, extra=[symbol])
+    if symbol not in bars:
+        try:  # 유니버스 밖 종목은 처음 한 번 받아 둔다 (인터넷 필요)
+            from .data.global_stocks import ensure_global
+            ensure_global(app.engine, symbol)
+            bars, _, _ = us_md(app, extra=[symbol])
+        except Exception:  # noqa: BLE001, S110 - 아래에서 안내
+            pass
+    return bars
 
 
 def _ctx(app, symbol: str, side: str, qty: int | None, amount: float | None, now: datetime):
@@ -28,14 +46,17 @@ def _ctx(app, symbol: str, side: str, qty: int | None, amount: float | None, now
     from .trading.risk import RiskEngine
     if side not in ("buy", "sell"):
         raise ValueError("side 는 buy/sell")
-    bars, _, _ = app.market_data()
+    us = _is_us(symbol)
+    mode = US_MODE if us else MODE
+    bars = _us_bars(app, symbol) if us else app.market_data()[0]
     b = bars.get(symbol)
     if b is None or b.empty:
-        raise ValueError("국내 일봉이 있는 종목만 모의 주문할 수 있습니다")
+        raise ValueError("미국 일봉이 없는 종목이에요 — 인터넷이 되는 곳에서 종목 화면을 한 번 열면 받아요" if us
+                         else "국내 일봉이 있는 종목만 모의 주문할 수 있습니다")
     q = (ops.get_state(app.engine, "live_quotes") or {}).get(symbol) or {}
     price = float(q.get("price") or b["close"].iloc[-1])
-    src = q.get("source") or f"{label(b.index[-1], with_time=False)} 종가"
-    pf = app.load_portfolio(MODE)
+    src = q.get("source") or q.get("src") or f"{label(b.index[-1], with_time=False)} 종가"
+    pf = app.load_portfolio(mode)
     prices = {s: float(x["close"].iloc[-1]) for s, x in bars.items() if len(x)}
     prices[symbol] = price
     for s_, p in pf.positions.items():
@@ -55,7 +76,7 @@ def _ctx(app, symbol: str, side: str, qty: int | None, amount: float | None, now
     lim = app.settings.risk
     risk = RiskEngine(lim)
     risk.kill_switch = app.kill_switch_on()
-    risk.start_day(now.date(), app._day_start_equity(MODE, now, equity), app._orders_today(MODE, now))
+    risk.start_day(now.date(), app._day_start_equity(mode, now, equity), app._orders_today(mode, now))
     with session_scope(app.engine) as s:
         risk.adv = recent_adv(s, {symbol} | set(pf.positions))
     risk.sectors = sector_map(app.engine)
@@ -64,7 +85,7 @@ def _ctx(app, symbol: str, side: str, qty: int | None, amount: float | None, now
     halted = ops.halted(app.engine)
     steps.append({"gate": "HALTED", "status": "bad" if halted else "ok", "detail": "자동 감시가 모든 주문을 멈춤" if halted else "정상"})
     dh = ops.get_state(app.engine, "data_health")
-    data_block = dh.get("trading") == "BLOCKED"
+    data_block = dh.get("trading") == "BLOCKED" and not us  # 데이터 건강 점수는 국내 시세 기준 — 미국 종목은 그 종목 일봉으로 따로 본다
     steps.append({"gate": "데이터 건강", "status": "bad" if data_block else "ok",
                   "detail": (dh.get("block_reason") or "거래 차단") if data_block else f"{dh.get('overall', '-')}% · 거래 가능" if dh else "점검 기록 없음"})
     if sd is Side.BUY and data_block:
@@ -81,7 +102,11 @@ def _ctx(app, symbol: str, side: str, qty: int | None, amount: float | None, now
     if halted:
         dec = type(dec)(False, None, ["HALTED"])
     got = dec.order.qty if dec.approved and dec.order else 0
-    costs = CostModel(cost_config(app, app.settings.costs))
+    if us:
+        from .global_market import COSTS as US_COSTS
+        costs = CostModel(US_COSTS)  # 해외 수수료 0.25% + 체결 차이 · 매도세 없음 (환전 비용은 따로)
+    else:
+        costs = CostModel(cost_config(app, app.settings.costs))
     sig = None
     if len(b) > 21:
         import numpy as np
@@ -92,14 +117,25 @@ def _ctx(app, symbol: str, side: str, qty: int | None, amount: float | None, now
     held = pf.qty(symbol)
     after_w = ((held + (got if sd is Side.BUY else -got)) * price / equity) if equity > 0 else None
     from .explain import for_symbol
-    ex = for_symbol(app, symbol)
+    try:
+        ex = for_symbol(app, symbol)
+    except Exception:  # noqa: BLE001 - AI 판단이 없는 미국 종목
+        ex = None
+    fx = None
+    if us:
+        from .usorder import fx_rate
+        fx = fx_rate(app)
     return {"pf": pf, "prices": prices, "quote": quote, "costs": costs, "decision": dec, "risk": risk, "order": order,
-            "view": {"symbol": symbol, "side": side, "mode": MODE, "price": price, "price_source": src, "want_qty": qty, "allowed_qty": got,
+            "mode": mode,
+            "view": {"symbol": symbol, "side": side, "mode": mode, "currency": "USD" if us else "KRW",
+                     "fx": round(fx[0], 2) if fx else None, "fx_source": fx[1] if fx else None, "price": price, "price_source": src, "want_qty": qty, "allowed_qty": got,
                      "verdict": "차단" if not got else "축소" if got < qty else "통과", "est_fill": round(fill_px, 2) if fill_px else None,
-                     "notional": round(got * (fill_px or price)), "fee_tax": round(fee), "held": held, "cash": round(pf.cash),
+                     "notional": round(got * (fill_px or price), 2 if us else 0), "fee_tax": round(fee, 2 if us else 0), "held": held, "cash": round(pf.cash, 2 if us else 0),
+                     "notional_krw": round(got * (fill_px or price) * fx[0]) if fx else None,
                      "equity": round(equity), "weight_after": None if after_w is None else round(after_w, 4), "steps": steps,
                      "ai": {"action": ex["action"], "effective": ex.get("effective_action"), "headline": ex["headline"]} if ex else None,
-                     "note": "수동 모의 장부(manual) — 실제 돈·실제 주문 아님. 전략 장부와 따로 기록됩니다."}}
+                     "note": ("미국 수동 모의 장부(us-manual · 달러) — 실제 돈·실제 주문 아님. 원화는 참고 환율로 환산" if us
+                              else "수동 모의 장부(manual) — 실제 돈·실제 주문 아님. 전략 장부와 따로 기록됩니다.")}}
 
 
 def preview(app, symbol: str, side: str = "buy", qty: int | None = None, amount: float | None = None, now: datetime | None = None) -> dict:
@@ -124,12 +160,13 @@ def place(app, body: dict, now: datetime | None = None) -> dict:
     if not body.get("confirm"):
         return v | {"placed": False, "message": "확인(confirm) 없이 주문하지 않습니다"}
     dec = c["decision"]
-    j = DBJournal(MODE, app.engine)
+    mode = c["mode"]
+    j = DBJournal(mode, app.engine)
     if not dec.approved or dec.order is None:
         j.order(now, c["order"], "rejected", dec.reasons, None)
         return v | {"placed": False, "message": "차단: " + (" · ".join(dec.reasons) or "게이트")}
     approved = dec.order
-    coid = j.begin(now, approved, f"{MODE}:{now.strftime('%Y%m%dT%H%M%S%f')}:{sym}:{approved.side.value}")
+    coid = j.begin(now, approved, f"{mode}:{now.strftime('%Y%m%dT%H%M%S%f')}:{sym}:{approved.side.value}")
     if coid is None:
         return v | {"placed": False, "message": "중복 주문으로 판단되어 건너뜀"}
     from dataclasses import replace
@@ -140,22 +177,37 @@ def place(app, body: dict, now: datetime | None = None) -> dict:
     from .data.db import session_scope
     from .data.models import PortfolioSnapshot
     with session_scope(app.engine) as s:
-        s.add(PortfolioSnapshot(mode=MODE, ts=now, **pf.snapshot(c["prices"])))
+        s.add(PortfolioSnapshot(mode=mode, ts=now, **pf.snapshot(c["prices"])))
     from .governance import audit
     audit(app.engine, "manual_order", f"{sym} {'매수' if approved.side is Side.BUY else '매도'} {approved.qty}주 @ {fill.price if fill else '-'}")
     return v | {"placed": bool(fill), "fill": {"qty": fill.qty, "price": round(fill.price, 2), "fee": round(fill.fee)} if fill else None,
-                "message": f"모의 체결 {fill.qty}주 @ {fill.price:,.0f}" if fill else "미체결"}
+                "message": (f"모의 체결 {fill.qty}주 @ ${fill.price:,.2f}" if mode == US_MODE else f"모의 체결 {fill.qty}주 @ {fill.price:,.0f}") if fill else "미체결"}
 
 
-def book(app) -> dict:
-    pf = app.load_portfolio(MODE)
-    bars, _ = app._all_bars()
+def book(app, mode: str = MODE) -> dict:
+    """수동 모의 장부. mode=us-manual 이면 미국 장부 (달러 · 원화 환산 함께)."""
+    us = mode == US_MODE
+    pf = app.load_portfolio(mode)
+    if us:
+        from .global_market import CASH_USD
+        from .global_market import market_data as us_md
+        bars, _, _ = us_md(app, extra=list(pf.positions))
+        start = CASH_USD
+    else:
+        bars, _ = app._all_bars()
+        start = app.settings.initial_cash
     prices = {s: float(bars[s]["close"].iloc[-1]) if s in bars and len(bars[s]) else p.avg_price for s, p in pf.positions.items()}
     eq = pf.equity(prices)
-    return {"mode": MODE, "cash": round(pf.cash), "equity": round(eq), "return": round(eq / app.settings.initial_cash - 1, 4),
-            "positions": [{"symbol": s, "qty": p.qty, "avg_price": round(p.avg_price, 2), "price": prices[s],
-                           "pnl_pct": round(prices[s] / p.avg_price - 1, 4) if p.avg_price else None}
-                          for s, p in pf.positions.items() if p.qty]}
+    out = {"mode": mode, "currency": "USD" if us else "KRW", "cash": round(pf.cash, 2 if us else 0), "equity": round(eq, 2 if us else 0),
+           "return": round(eq / start - 1, 4),
+           "positions": [{"symbol": s, "qty": p.qty, "avg_price": round(p.avg_price, 2), "price": prices[s],
+                          "pnl_pct": round(prices[s] / p.avg_price - 1, 4) if p.avg_price else None}
+                         for s, p in pf.positions.items() if p.qty]}
+    if us:
+        from .usorder import fx_rate
+        fx, src = fx_rate(app)
+        out |= {"fx": round(fx, 2), "fx_source": src, "equity_krw": round(eq * fx), "cash_krw": round(pf.cash * fx)}
+    return out
 
 
-__all__ = ["preview", "place", "book", "MODE"]
+__all__ = ["preview", "place", "book", "MODE", "US_MODE"]

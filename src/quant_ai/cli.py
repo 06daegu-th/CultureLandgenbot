@@ -609,8 +609,9 @@ def cmd_community(args):
                 print(f"  ✕ {sym} {fn.__name__}: {type(e).__name__} {str(e)[:120]}")
     if args.collect:
         app = _app(args)
-        from .alerts import focus_symbols
-        print(C.collect(app.engine, list(focus_symbols(app))))
+        syms = C.symbols_for(app)  # v27: 관심·보유 + 오늘 많이 움직인 종목
+        print(f"  수집 대상 {len(syms)}종목: {', '.join(syms[:25])}")
+        print(C.collect(app.engine, syms))
 
 
 def cmd_logos(args):

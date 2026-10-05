@@ -138,6 +138,34 @@ def summarize(posts: list[dict]) -> dict:
             "label": "과열·낙관" if mood >= 0.5 else "낙관" if mood >= 0.15 else "비관" if mood <= -0.15 else "중립"}
 
 
+def movers(bars: dict, n: int = 10, min_value: float = 5e9) -> list[str]:
+    """v27: 오늘(마지막 거래일) 크게 움직인 국내 종목 — 거래대금 50억 이상 중 등락 절댓값 큰 순.
+    관심종목 밖에서도 '왜 움직였나'를 커뮤니티로 보게 (거래가 적은 종목의 큰 등락은 뺀다)."""
+    out = []
+    for sym, b in (bars or {}).items():
+        if not sym[:1].isdigit() or b is None or len(b) < 2:
+            continue
+        try:
+            c0, c1 = float(b["close"].iloc[-2]), float(b["close"].iloc[-1])
+            val = float(b["close"].iloc[-1] * b["volume"].iloc[-1]) if "volume" in b else 0.0
+        except (KeyError, ValueError, TypeError):
+            continue
+        if c0 > 0 and val >= min_value:
+            out.append((abs(c1 / c0 - 1), sym))
+    return [s for _, s in sorted(out, reverse=True)[:n]]
+
+
+def symbols_for(app, cap: int = 25, n_movers: int = 10) -> list[str]:
+    """수집 대상 = 관심·보유 종목(먼저) + 오늘 많이 움직인 종목 · 최대 cap 개 (네이버 토론방은 국내만)."""
+    from ...alerts import focus_symbols
+    focus = [s for s in focus_symbols(app) if s[:1].isdigit()]
+    try:
+        bars = app.market_data()[0]
+    except Exception:  # noqa: BLE001 - 일봉이 없으면 관심종목만
+        bars = {}
+    return list(dict.fromkeys([*focus, *movers(bars, n_movers)]))[:cap]
+
+
 def collect(engine, symbols: list[str], fetchers: dict | None = None, now: datetime | None = None) -> dict:
     f = {"us": fetch_stocktwits, "kr": fetch_naver, **(fetchers or {})}
     now = now or datetime.now(UTC)

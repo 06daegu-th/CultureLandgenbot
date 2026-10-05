@@ -1061,6 +1061,38 @@ class DashboardAPI:
         from .. import toss
         return self._cached("t_collect", 30, lambda: toss.collect_status(self.app))
 
+    def logo_upload(self, body: dict) -> dict:
+        """v27: 화면에서 종목 로고 직접 넣기·지우기 (body: symbol, data = base64 또는 data: URL, 비우면 지움)."""
+        import base64
+        import binascii
+
+        from ..logos import save_custom
+        raw = str(body.get("data") or "")
+        if raw.startswith("data:"):
+            raw = raw.split(",", 1)[-1]
+        try:
+            data = base64.b64decode(raw, validate=True) if raw else b""
+        except (binascii.Error, ValueError):
+            raise ValueError("이미지 데이터가 깨졌어요") from None
+        out = save_custom(self.app, str(body.get("symbol") or ""), data)
+        from ..governance import audit
+        audit(self.engine, "logo_upload", f"{out['symbol']} {'삭제' if out.get('removed') else out.get('type')}")
+        return out
+
+    def t_intraday(self, symbol: str) -> dict:
+        """v27: 종목 화면 '1일' — 5분봉 (Yahoo · 1분 저장). 받지 못하면 이유와 함께 빈 목록."""
+        from ..data.collectors.indices import intraday
+        sym = symbol.strip()
+        sym = sym if sym[:1].isdigit() else sym.upper()
+        if not sym:
+            raise ValueError("symbol 필요")
+        market = None
+        if sym.isdigit():
+            from ..companies import master
+            c = master().get(sym)
+            market = getattr(c, "market", None) or getattr(c, "exchange", None)
+        return intraday(sym, market)
+
     def t_market(self) -> dict:
         from .. import toss
         return self._cached("t_market", 60, lambda: toss.market(self.app))
@@ -1775,9 +1807,9 @@ class DashboardAPI:
         self._risk_cache.clear()
         return out
 
-    def ticket_book(self) -> dict:
+    def ticket_book(self, mode: str = "") -> dict:
         from .. import ticket
-        return ticket.book(self.app)
+        return ticket.book(self.app, ticket.US_MODE if mode == ticket.US_MODE else ticket.MODE)
 
     def reviews(self, limit: int = 10) -> list[dict]:
         with session_scope(self.engine) as s:

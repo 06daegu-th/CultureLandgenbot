@@ -113,7 +113,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 except ValueError:
                     return self._json({"error": "bad symbol"}, 400)
                 # 진짜 로고는 하루 · 이니셜은 금방 다시 물어본다 (뒤에서 받는 중이면 1분, 없다고 확인됐으면 1시간)
-                cc = {"monogram": "public, max-age=3600", "default": "public, max-age=3600", "pending": "no-cache, max-age=60"}.get(src, "public, max-age=86400")
+                cc = {"monogram": "public, max-age=3600", "default": "public, max-age=3600", "pending": "no-cache, max-age=60", "custom": "no-cache"}.get(src, "public, max-age=86400")
                 # v24: 로고는 그림일 뿐 — 바로 열어도 스크립트가 절대 돌지 않게 (외부 SVG 를 정화한 뒤에도 한 번 더)
                 return self._send(200, data, ctype, cc, csp="default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox")
             if url.path.startswith("/api/"):
@@ -237,6 +237,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.t_community(arg("symbol", "")[:12]))
                     if url.path == "/api/t/collect":
                         return self._json(api.t_collect())
+                    if url.path == "/api/t/intraday":  # v27: 하루 안 움직임 (5분봉)
+                        return self._json(api.t_intraday(arg("symbol", "")[:12]))
                     if url.path == "/api/t/market":
                         return self._json(api.t_market())
                     if url.path == "/api/t/quotes":
@@ -364,7 +366,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     if url.path == "/api/ticket":
                         return self._json(api.ticket(sym, arg("side", "buy")[:4], arg("qty", "")[:9], arg("amount", "")[:14]))
                     if url.path == "/api/ticket/book":
-                        return self._json(api.ticket_book())
+                        return self._json(api.ticket_book(arg("mode", "")[:12]))
                 except ValueError as e:
                     return self._json({"error": str(e)}, 400)
                 except Exception as exc:  # noqa: BLE001
@@ -476,6 +478,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json(api.user_profile_write(body))
                 if url.path == "/api/ticket":
                     return self._json(api.ticket_place(body))
+                if url.path == "/api/logo-upload":  # v27: 종목 로고 직접 넣기 (국내 종목 로고 보강)
+                    return self._json(api.logo_upload(body))
                 if url.path == "/api/chat/clear":
                     from ..assistant import clear
                     clear(api.engine, str(body.get("sid", ""))[:40])

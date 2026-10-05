@@ -1269,9 +1269,26 @@ async function render() {
     el.innerHTML = card("오류", `<div class="veto">${esc(e.message)}</div>`);
   }
   if (!el.isConnected) return;
+  if (legacy) { dedupeTitle(el); if (typeof glossify === "function") glossify(el); }  // v27: 같은 제목 두 번 X · 어려운 말 풀이 단추
   bindCommon();
   animateView(el);
   markTab();
+}
+
+// v27: 화면 머리(← 제목)와 첫 카드 제목이 같은 말이면 카드 쪽 글자를 지운다 (예: '증시 지도' 가 두 번)
+function dedupeTitle(el) {
+  const head = $("#view .tl-head h1");
+  const h3 = el.querySelector(".card-h h3, .card > h3");
+  if (!head || !h3) return;
+  const norm = (t) => String(t || "").replace(/[\s·()\-—]/g, "").toLowerCase();
+  const label = norm(head.textContent);
+  const tn = [...h3.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+  if (!tn || !label) return;
+  const own = norm(tn.textContent);
+  if (own && (own === label || (own.length >= 3 && (label.startsWith(own) || own.startsWith(label))))) {
+    tn.textContent = "";
+    if (!h3.textContent.trim()) h3.remove();
+  }
 }
 
 function bindCommon() {
@@ -1361,7 +1378,8 @@ async function refresh() {
 
 function route() {
   const h = (location.hash || "#dashboard").slice(1) || "dashboard";
-  const [v, param, sub] = h.split("/");
+  let [v, param, sub] = h.split("/");
+  if (param === "full" && !sub && v !== "analysis" && v !== "report") { param = null; sub = "full"; }  // v27: #pos/full 도 전문가용 화면으로 (예전엔 같은 토스 화면이 다시 떴다)
   S.view = v; S.param = param || null; S.sub = sub || null;  // v25: #analysis/SYM/full = 전문가용 전체 화면
   document.body.classList.toggle("on-chat", v === "chat");
   document.body.classList.toggle("on-stock", v === "analysis");

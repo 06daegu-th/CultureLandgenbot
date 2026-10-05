@@ -275,7 +275,13 @@ def event_type(title: str) -> str | None:
 
 
 def _abnormal(close: pd.Series, bench: pd.Series, day, n: int) -> float | None:
-    after = close.index[close.index.normalize() >= pd.Timestamp(day)]
+    ts = pd.Timestamp(day)
+    tz = getattr(close.index, "tz", None)
+    if tz is not None and ts.tz is None:  # 일봉은 UTC, 공시일은 날짜만 — 같은 기준으로 맞춘다 (예전: 비교 오류로 화면이 깨짐)
+        ts = ts.tz_localize(tz)
+    elif tz is None and ts.tz is not None:
+        ts = ts.tz_localize(None)
+    after = close.index[close.index.normalize() >= ts]
     if len(after) <= n:
         return None
     i0 = close.index.get_loc(after[0])

@@ -333,10 +333,10 @@ class RiskAnalyst(Analyst):
 
 AI_ROLES = ("primary", "nvidia", "risk", "panel")  # nvidia = 두 번째 의견(독립 검증) 슬롯 — 성적표 호환 위해 이름 유지
 ROLE_PREFS = {  # 역할별 선호 공급자 (키가 있는 것 중 아직 안 쓴 것 우선 → 모델 다양성)
-    "primary": ("gemini", "groq", "nvidia", "cloudflare"),
-    "nvidia": ("nvidia", "groq", "gemini", "cloudflare"),
-    "risk": ("groq", "nvidia", "gemini", "cloudflare"),
-    "panel": ("cloudflare", "groq", "nvidia", "gemini"),
+    "primary": ("gemini", "groq", "nvidia", "cloudflare", "local"),  # local = 내 PC LLM (클라우드 키가 없을 때)
+    "nvidia": ("nvidia", "groq", "gemini", "cloudflare", "local"),
+    "risk": ("groq", "nvidia", "gemini", "cloudflare", "local"),
+    "panel": ("cloudflare", "groq", "nvidia", "gemini", "local"),
 }
 
 

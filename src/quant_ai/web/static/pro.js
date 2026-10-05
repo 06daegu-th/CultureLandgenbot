@@ -455,11 +455,21 @@ function initChatWidget() {
   w.innerHTML = `<button class="chat-fab" id="chat-fab" title="AI 어시스턴트">${ICONS.chat}<span>AI 에게 묻기</span></button>${chatShell("chat-pop")}`;
   document.body.appendChild(w);
   let mounted = false;
-  $("#chat-fab").onclick = () => {
+  const toggle = () => {
     w.classList.toggle("open");
     if (!mounted) { mountChat($("#chat-pop")); mounted = true; }
     if (w.classList.contains("open")) setTimeout(() => $("#chat-pop textarea")?.focus(), 50);
   };
+  $("#chat-fab").onclick = toggle;
+  // v27: PC 에서는 떠 있는 버튼이 카드 끝(숫자·단추)을 가려서 → 위 막대의 'AI' 단추로 옮긴다 (휴대폰은 아래 버튼 그대로)
+  const th = $("#theme-btn");
+  if (th && !$("#ai-top-btn")) {
+    const b = document.createElement("button");
+    b.id = "ai-top-btn"; b.className = "icon-btn ai-top-btn"; b.title = "AI 에게 묻기"; b.setAttribute("aria-label", "AI 에게 묻기");
+    b.innerHTML = `${ICONS.chat}<span>AI 에게 묻기</span>`;
+    b.onclick = toggle;
+    th.parentElement.insertBefore(b, th);
+  }
   window.askAI = (q) => {
     w.classList.add("open");
     if (!mounted) { mountChat($("#chat-pop")); mounted = true; }

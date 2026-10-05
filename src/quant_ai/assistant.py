@@ -29,7 +29,7 @@ from .data.db import load_bars, session_scope
 from .data.models import ConsensusRecord, Disclosure, Instrument, LLMCall, NewsArticle
 
 log = logging.getLogger(__name__)
-CHAT_ORDER = ("gemini", "claude", "groq", "nvidia", "cloudflare")
+CHAT_ORDER = ("gemini", "claude", "groq", "nvidia", "cloudflare", "local")  # v27: local = 내 PC LLM (Ollama 등)
 CHAT_MODELS = {"gemini": ("gemini-pro-latest", "gemini-flash-latest", "gemini-flash-lite-latest")}
 MAX_INPUT = 2000
 MAX_TOOL_ROUNDS = 4

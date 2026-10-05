@@ -67,6 +67,14 @@ def _llm_providers(e) -> dict:
         key = e.get(spec.key_env)
         if not key:
             continue
+        if name == "local":  # 주소가 곧 켜기 — 이 컴퓨터(또는 https) 주소만
+            from .analysts.llm_clients import local_url_ok
+            if not local_url_ok(key.strip()):
+                continue
+            out[name] = {"key": e.get("QUANT_LOCAL_LLM_KEY") or "local", "account": key.strip().rstrip("/"),
+                         "models": tuple(m.strip() for m in e.get("QUANT_LOCAL_MODELS", "").split(",") if m.strip()) or spec.models,
+                         "daily": int(e.get("QUANT_LOCAL_DAILY_LIMIT") or spec.daily_requests), "batch": 1}
+            continue
         models = [m.strip() for m in e.get(f"QUANT_{name.upper()}_MODELS", "").split(",") if m.strip()]
         if name == "nvidia" and not models and e.get("QUANT_NVIDIA_MODEL"):
             # 지정 모델을 먼저, 과부하(503)·종료(404) 때 넘어갈 기본 후보를 뒤에

@@ -307,6 +307,35 @@ def get(app, sym: str, name: str | None = None, fetch=None, now: float | None = 
     return default_icon(app, sym, name), "image/svg+xml", "default"
 
 
+CUSTOM_MAX = 140_000  # 화면에서 올리는 로고 상한 (요청 본문 200KB 안에 base64 로 들어가게)
+
+
+def save_custom(app, sym: str, data: bytes) -> dict:
+    """v27: 직접 넣는 로고 (특히 국내 종목 — 공개 로고 소스가 약하다). PNG·JPG·WEBP·GIF·SVG(정화 통과)만.
+    artifacts/logos/custom/<종목>.<확장자> 에 저장 → 다른 모든 출처보다 먼저 쓴다. 빈 data 면 지운다."""
+    sym = _safe(sym)
+    d = _dir(app) / "custom"
+
+    def drop_old():
+        for old in d.iterdir():
+            if old.is_file() and old.stem.upper() == sym:
+                old.unlink()
+    if not data:
+        drop_old()
+        return {"symbol": sym, "removed": True}
+    if len(data) > CUSTOM_MAX:
+        raise ValueError(f"이미지가 너무 커요 ({len(data) // 1000}KB) — {CUSTOM_MAX // 1000}KB 이하로 줄여 주세요")
+    t = kind_of(data)
+    if t and t[0] == "svg":
+        data = sanitize_svg(data)
+        t = ("svg", "image/svg+xml") if data else None
+    if not t:
+        raise ValueError("PNG · JPG · WEBP · GIF · SVG 이미지만 넣을 수 있어요 (스크립트가 든 SVG 는 받지 않아요)")
+    drop_old()  # 검사를 통과한 뒤에만 예전 로고를 바꾼다 (잘못 올려도 기존 로고가 사라지지 않게)
+    (d / f"{sym}.{t[0]}").write_bytes(data)
+    return {"symbol": sym, "saved": True, "type": t[1], "bytes": len(data)}
+
+
 _inflight: set[str] = set()
 
 
