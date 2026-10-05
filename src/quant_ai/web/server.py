@@ -223,6 +223,22 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.ops_status())
                     if url.path == "/api/baseline":
                         return self._json(api.baseline(arg("mode", "paper")))
+                    if url.path == "/api/t/home":  # v25 토스식 화면
+                        return self._json(api.t_home(arg("mode", "paper")[:8]))
+                    if url.path == "/api/t/stock":
+                        return self._json(api.t_stock(arg("symbol", "")[:12]))
+                    if url.path == "/api/t/feed":
+                        return self._json(api.t_feed(arg("tab", "all")[:8], arg("region", "all")[:4], arg("topic", "all")[:6]))
+                    if url.path == "/api/t/portfolio":
+                        return self._json(api.t_portfolio(arg("mode", "paper")[:10]))
+                    if url.path == "/api/t/alerts":
+                        return self._json(api.t_alerts())
+                    if url.path == "/api/t/market":
+                        return self._json(api.t_market())
+                    if url.path == "/api/t/quotes":
+                        return self._json(api.t_quotes(arg("symbols", "")[:200]))
+                    if url.path == "/api/t/report":
+                        return self._json(api.t_report(arg("symbol", "")[:12]))
                     if url.path == "/api/ai-trust":  # v24: AI 신뢰 센터 (한 화면)
                         return self._json(api.ai_trust())
                     if url.path == "/api/ai-context":  # v23: 상황별 AI 성적 (뉴스 유형 · 실적 전후 · 종목)
@@ -414,6 +430,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json(api.chat(body))
                 if url.path == "/api/rules":
                     return self._json(api.rule_write(body))
+                if url.path == "/api/t/alerts":
+                    return self._json(api.t_alerts_write(body))
                 if url.path.startswith("/api/push/"):
                     return self._json(api.push_write(url.path, body))
                 if url.path == "/api/notify/test":

@@ -1170,9 +1170,10 @@ function buildNav() {
   if (mb) mb.onclick = () => { safeSet("qa_nav_open", open ? "0" : "1"); buildNav(); markNav(); };
   document.querySelectorAll(".ui-mode button").forEach((b) => b.onclick = () => { if (b.dataset.ui !== uiMode()) setUiMode(b.dataset.ui); });
   document.body.classList.toggle("ui-easy", easy);
+  if (typeof buildTabbar === "function") buildTabbar();
 }
 function markNav() {
-  const navView = S.view === "evidence" ? "journal" : S.view;
+  const navView = { evidence: "journal", n: "news", d: "news", newslist: "news" }[S.view] || (S.view === "analysis" && uiMode() === "easy" ? "watch" : S.view);
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.view === navView));
 }
 
@@ -1187,8 +1188,10 @@ async function render() {
   markNav();
   const d = S.data;
   if (!d) { el.innerHTML = skeleton(); return; }
+  document.body.classList.remove("ts-on");
   try {
-    if (S.view === "dashboard") {
+    if (typeof tossRender === "function" && await tossRender(el)) { document.body.classList.add("ts-on"); }  // v25 토스식 화면 (toss.js)
+    else if (S.view === "dashboard") {
       if (uiMode() === "easy" && !S.homeDetail) await homeEasy(el);  // v19: 쉬운 화면은 홈 맨 위 5칸만
       else { el.innerHTML = viewDashboard(d); fillHome(d); homeTop(el); todayCard(el).then(() => osHomeBrief(el)).then(() => weeklyCard(el, "#home-brief")); applyHomeLayout(el); }
     }
@@ -1355,8 +1358,8 @@ async function refresh() {
 
 function route() {
   const h = (location.hash || "#dashboard").slice(1) || "dashboard";
-  const [v, param] = h.split("/");
-  S.view = v; S.param = param || null;
+  const [v, param, sub] = h.split("/");
+  S.view = v; S.param = param || null; S.sub = sub || null;  // v25: #analysis/SYM/full = 전문가용 전체 화면
   document.body.classList.toggle("on-chat", v === "chat");
   document.body.classList.toggle("on-stock", v === "analysis");
   document.body.classList.toggle("on-home", v === "dashboard");  // v24: 홈은 '시장' 칸이 휴장 안내를 대신한다  // 종목 화면은 머리에 'AI 에게 묻기' 가 있어 떠 있는 버튼이 단추를 가리지 않게 숨긴다

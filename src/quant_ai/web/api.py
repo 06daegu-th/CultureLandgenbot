@@ -1010,6 +1010,56 @@ class DashboardAPI:
             return v
         return self._cached(f"verdict:{sym}", 30, build)
 
+    # ------------------------------------------------------------------ v25 토스식 화면
+    def t_home(self, mode: str = "paper") -> dict:
+        from .. import toss
+        mode = mode if mode in ("paper", "shadow", "live") else "paper"
+        return self._cached(f"t_home:{mode}", 30, lambda: toss.home(self.app, mode))
+
+    def t_stock(self, symbol: str) -> dict:
+        from .. import toss
+        sym = symbol.strip().upper()[:12] if not symbol.strip()[:1].isdigit() else symbol.strip()[:12]
+        if not sym:
+            raise ValueError("symbol 필요")
+        return self._cached(f"t_stock:{sym}", 20, lambda: toss.stock(self.app, sym))
+
+    def t_feed(self, tab: str = "all", region: str = "all", topic: str = "all") -> dict:
+        from .. import toss
+        tab = tab if tab in ("all", "news", "disc", "event") else "all"
+        region = region if region in ("all", "kr", "us") else "all"
+        topic = topic if topic in ("all", "ai", "semi", "mine") else "all"
+        return self._cached(f"t_feed:{tab}:{region}:{topic}", 60, lambda: toss.feed(self.app, tab, region, topic))
+
+    def t_portfolio(self, mode: str = "paper") -> dict:
+        from .. import toss
+        mode = mode if mode in ("paper", "shadow", "live", "us-paper") else "paper"
+        return self._cached(f"t_pf:{mode}", 20, lambda: toss.portfolio(self.app, mode))
+
+    def t_market(self) -> dict:
+        from .. import toss
+        return self._cached("t_market", 60, lambda: toss.market(self.app))
+
+    def t_quotes(self, symbols: str) -> dict:
+        from .. import toss
+        syms = [x.strip().upper() if not x.strip()[:1].isdigit() else x.strip() for x in symbols.split(",") if x.strip()][:20]
+        return self._cached(f"t_q:{','.join(syms)}", 20, lambda: toss.quotes(self.app, syms))
+
+    def t_report(self, symbol: str) -> dict:
+        from .. import toss
+        sym = symbol.strip().upper()[:12] if not symbol.strip()[:1].isdigit() else symbol.strip()[:12]
+        if not sym:
+            raise ValueError("symbol 필요")
+        return self._cached(f"t_rep:{sym}", 30, lambda: toss.report(self.app, sym))
+
+    def t_alerts(self) -> dict:
+        from .. import toss
+        return toss.alerts(self.app)
+
+    def t_alerts_write(self, body: dict) -> dict:
+        from .. import toss
+        self._audit("alert_settings", str({k: body.get(k) for k in ("kind", "on", "symbol", "price_on", "value")})[:200])
+        return toss.alerts_write(self.app, body)
+
     def ai_trust(self) -> dict:
         """v24 AI 신뢰 센터 — 한 화면에 모은다: 지금 믿을 만한가(3단계) · 단계(사다리) · 실제 전진 기록 성적 vs 기준선 ·
         독립 평가 결론 · 예측 장부 봉인 상태 · 자동 강등 · 틀린 이유 Top · 상황별 성적. 각 칸은 실패해도 나머지는 보인다."""

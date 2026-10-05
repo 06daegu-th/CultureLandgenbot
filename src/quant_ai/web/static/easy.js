@@ -2,8 +2,9 @@
 "use strict";
 
 // 쉬운 화면에서 보이는 메뉴 6개 (나머지는 '고급 메뉴'에 접혀 있다)
-const NAV_EASY = [["dashboard", "home", "홈"], ["analysis", "ai", "종목"], ["watch", "star", "관심종목"], ["news", "news", "뉴스 · 공시"],
-  ["calendar", "calendar", "일정"], ["pos", "portfolio", "내 자산"], ["goal", "target", "내 목표"]];
+// v25: 토스식 메뉴 — 홈 · 관심종목 · 포트폴리오 · 시장 · 뉴스/공시 · 일정 · AI 분석 · 알림 · 더보기 (종목은 검색·목록에서 바로)
+const NAV_EASY = [["dashboard", "home", "홈"], ["watch", "star", "관심종목"], ["pos", "portfolio", "포트폴리오"], ["market", "market", "시장"],
+  ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["report", "ai", "AI 분석"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
 
 function uiMode() { return S.uiMode || safeGet("qa_ui") || "easy"; }
 function setUiMode(m) {

@@ -140,4 +140,5 @@ def test_static_v24_toss_layout_and_no_flag_emoji():
     assert "Enter = 첫 결과의 올인원 종목 화면" in pro
     calm = (STATIC / "calm.css").read_text()
     assert ".up-strip" in calm and ".t-row" in calm and ".tc-hero" in calm
-    assert "qa-shell-v24" in (STATIC / "sw.js").read_text()
+    import re
+    assert re.search(r"qa-shell-v(2[4-9]|[3-9]\d)", (STATIC / "sw.js").read_text())  # v24 이후 판이면 된다
