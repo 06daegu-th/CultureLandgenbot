@@ -893,9 +893,13 @@ class QuantAI:
             raise
         from .engines.sector import sector_map
         risk.sectors = sector_map(self.engine)  # 업종 한도 (섹터 엔진 · 국내는 WICS 우선)
-        if book is None:
-            from .proof import apply_risk as _proof_risk
-            _proof_risk(self, name, risk)  # v29 증명 프로젝트 장부면 보유 종목 수 한도
+        from .proof import apply_risk as _proof_risk
+        _proof_risk(self, name, risk)  # v29 증명 프로젝트 장부면 보유 종목 수 한도
+        if name == "autopilot":  # v30 AI 자동매매 가상 장부: 같은 규칙 (보유 종목 수 · 종목당 상한)
+            from .autopilot import config as _ap_cfg
+            _c = _ap_cfg(self)
+            risk.max_positions = int(_c["max_positions"])
+            risk.limits = replace(risk.limits, max_position_weight=_c["max_position_weight"], max_order_value=float(_c["principal"]) * _c["max_position_weight"] * 1.5)
         if book is None:  # v13 게이트 — 성과 귀속용 장부(book)에는 적용하지 않는다 (비교가 공정해야 함)
             from . import readiness as _rd
             from .desk import event_caps_for, portfolio_gate

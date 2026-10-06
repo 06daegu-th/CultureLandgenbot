@@ -150,6 +150,16 @@ def build_default_scheduler(app, mode) -> Scheduler:
         record_day(app, now)
     sch.add("proof_day", proof_job, 1800, "always")
 
+    def autopilot_job(now):  # v30 AI 자동매매: 장중 하루 한 번 결정 (가상 장부는 늘 · 실제 계좌는 관문 통과 + 켬)
+        from .autopilot import run as _ap_run
+        _ap_run(app, now)
+    sch.add("autopilot", autopilot_job, 900, "open")
+
+    def autopilot_goal(now):  # 목표 현실성(보지 않은 기간 기반) 하루 한 번 다시 계산
+        from .autopilot import refresh_goal
+        refresh_goal(app)
+    sch.add("autopilot_goal", autopilot_goal, 24 * 3600, "closed")
+
     def indices(now):  # v27: 진짜 지수 (코스피·코스닥·나스닥·S&P500·다우) — 키 불필요, 실패하면 이전 값 + 대용
         from .data.collectors.indices import collect_indices
         collect_indices(app.engine)
@@ -220,6 +230,15 @@ def build_default_scheduler(app, mode) -> Scheduler:
             # 국내 정규장 안에서만, 시가 직후 급변(09:00~09:10)과 종가 동시호가(15:20~) 는 피한다
             if krx.phase(now) is not Phase.OPEN or not (KRX_TRADE_START <= local <= KRX_TRADE_END):
                 return
+            if mode is Mode.LIVE:
+                from .autopilot import live_enabled
+                try:
+                    taken = live_enabled(app)  # v30: 실제 계좌를 AI 자동매매가 맡으면 코어 전략은 같은 계좌에 주문하지 않는다
+                except Exception as e:  # noqa: BLE001 - 판단 못 하면 예전처럼 코어 전략 (AI 자동매매는 관문을 못 넘은 것으로 본다)
+                    log.warning("AI 자동매매 연결 여부 확인 실패: %s", e)
+                    taken = False
+                if taken:
+                    return
             app.run_core_satellite(mode, ts=now)
         sch.add("core_satellite", core_satellite, 3600, "open")
 

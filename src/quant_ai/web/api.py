@@ -1085,6 +1085,57 @@ class DashboardAPI:
             raise ValueError("symbol 필요")
         return S2.for_symbol(self.app, sym)
 
+    def autopilot(self) -> dict:
+        """v30 AI 자동매매: 오늘의 결정 미리보기 · 관문 · 가상 장부 성적 · 봉인 기록 · 목표 현실성."""
+        from .. import autopilot as AP
+        return self._cached("autopilot", 60, lambda: AP.status(self.app))
+
+    def autopilot_write(self, body: dict) -> dict:
+        from .. import autopilot as AP
+        act = str(body.get("action") or "")
+        self._risk_cache.pop("autopilot", None)
+        if act == "run":
+            self._audit("autopilot_run", "AI 자동매매 지금 실행")
+            r = AP.run(self.app, force=True)
+            return {"ok": True, "result": {k: v for k, v in r.items() if k != "books"} | {"books": {n: {x: y for x, y in p.items() if x != "targets"} for n, p in (r.get("books") or {}).items()}}}
+        if act == "config":
+            cfg = AP.set_config(self.app, {k: v for k, v in body.items() if k in ("paper_on", "live_requested")})
+            self._audit("autopilot_config", f"가상 {'켬' if cfg['paper_on'] else '끔'} · 실제 계좌 요청 {'켬' if cfg['live_requested'] else '끔'}")
+            return {"ok": True, "config": cfg}
+        if act == "goal":
+            return {"ok": True, "goal": AP.refresh_goal(self.app)}
+        raise ValueError("action 은 run / config / goal")
+
+    def logo_queue(self) -> dict:
+        """v30 로고 큐: 진짜 로고가 없는 종목 목록 (관심·보유 먼저) → 화면에서 한 번에 올리기."""
+        from ..logos import coverage
+        from ..signals2 import _names
+
+        def build():
+            syms = [s for s in self.app.symbols() if s[:1].isdigit()]
+            try:
+                from ..alerts import focus_symbols
+                mine = [s for s in focus_symbols(self.app) if s in syms]
+            except Exception:  # noqa: BLE001
+                mine = []
+            order = list(dict.fromkeys([*mine, *syms]))
+            out = coverage(self.app, order, _names(self.engine, order))
+            out["mine"] = mine
+            return out
+        return self._cached("logo_queue", 60, build)
+
+    def company_view(self, symbol: str, refresh: bool = False) -> dict:
+        """v30 회사 이해: 한 줄 소개 · 재무 5년(DART) · 밸류에이션 · 같은 업종 · 이슈 타임라인 · 초보자 3줄."""
+        from .. import company as CO
+        sym = symbol.strip()
+        sym = sym if sym[:1].isdigit() else sym.upper()
+        if not sym:
+            raise ValueError("symbol 필요")
+        if refresh:
+            CO.financials(self.app, sym, refresh=True)
+            self._risk_cache.pop(f"company:{sym}", None)
+        return self._cached(f"company:{sym}", 300, lambda: CO.view(self.app, sym))
+
     def proof_status(self) -> dict:
         """v29 증명 프로젝트: 규칙 · 성공 기준 · 매일 봉인 기록 · 체인 검증."""
         from .. import proof

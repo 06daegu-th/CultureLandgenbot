@@ -1144,10 +1144,10 @@ function viewSettings(d) {
 const NAV = [
   // v16 메뉴: 홈 · 종목 · 시장 · 뉴스/공시 · AI · 포트폴리오 · 리스크 · 백테스트 · AI 성적표 · 일정 · 투자일지 (+ 신뢰 · 시스템)
   ["핵심", [["dashboard", "home", "홈"], ["action", "bell", "오늘 할 일 (전체)"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["map", "market", "증시 지도"], ["market", "market", "시장 분위기 · 경제지표"], ["news", "news", "뉴스 · 공시"], ["newslist", "news", "뉴스 · 공시 원문 목록"], ["calendar", "bell", "일정 (D-Day)"], ["replay", "review", "그날 다시 보기 (날짜 선택)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
-  ["AI", [["picks", "ai", "AI 추천 (매수·매도 후보)"], ["aitrust", "shield", "AI 신뢰 센터"], ["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI가 틀린 이유 연구"], ["ai", "score", "AI 성적 · 확률 보정"], ["aihealth", "pulse", "AI 상태 점검"], ["power", "learn", "AI 예측력 통계 검정"], ["pead", "evidence", "실적 발표 전략 (실전 기록)"], ["verify", "evidence", "예측 기록장 (봉인)"], ["alpha", "alpha", "AI가 돈을 벌었나 (증명)"], ["graph", "models", "종목 관계도 · 업종"]]],
+  ["AI", [["picks", "ai", "AI 추천 (매수·매도 후보)"], ["autopilot", "auto", "AI 자동매매"], ["aitrust", "shield", "AI 신뢰 센터"], ["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI가 틀린 이유 연구"], ["ai", "score", "AI 성적 · 확률 보정"], ["aihealth", "pulse", "AI 상태 점검"], ["power", "learn", "AI 예측력 통계 검정"], ["pead", "evidence", "실적 발표 전략 (실전 기록)"], ["verify", "evidence", "예측 기록장 (봉인)"], ["alpha", "alpha", "AI가 돈을 벌었나 (증명)"], ["graph", "models", "종목 관계도 · 업종"]]],
   ["포트폴리오 · 리스크", [["proof", "check", "증명 프로젝트 (100만원)"], ["budget", "risk", "내 투자 한도"], ["pos", "portfolio", "내 자산 한눈에"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 설정"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 품질 · 증권사 점검"], ["sheet", "sheet", "국내 주문표 (리밸런싱)"], ["usorder", "sheet", "미국 주식 주문표"]]],
   ["기록 · 연구", [["myjournal", "journal", "내 투자일지 vs AI"], ["profile", "settings", "내 투자 성향"], ["journal", "journal", "AI 판단 일지"], ["research", "research", "과거로 시험하기 (백테스트)"], ["lab", "lab", "모델 실험 · 승격"], ["review", "review", "복기 리포트"], ["reports", "review", "리포트 · 브리핑"], ["models", "models", "모델 목록 · 검증"]]],
-  ["신뢰 · 시스템", [["datahealth", "data", "데이터 상태 · 키 진단"], ["datacheck", "data", "데이터 점검 (수정주가 · 외부 대조)"], ["readiness", "check", "매매해도 되나 (7가지 점검)"], ["truth", "shield", "데이터 사실 확인"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "실시간 감시실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 위험 기록"], ["ops", "ops", "운영 · 작업 기록"], ["settings", "settings", "설정"]]],
+  ["신뢰 · 시스템", [["datahealth", "data", "데이터 상태 · 키 진단"], ["datacheck", "data", "데이터 점검 (수정주가 · 외부 대조)"], ["logoq", "data", "로고 관리 (없는 종목)"], ["readiness", "check", "매매해도 되나 (7가지 점검)"], ["truth", "shield", "데이터 사실 확인"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "실시간 감시실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 위험 기록"], ["ops", "ops", "운영 · 작업 기록"], ["settings", "settings", "설정"]]],
 ];
 function buildNav() {
   // v19: 쉬운 화면 = 자주 쓰는 6개만, 나머지는 '고급 메뉴'로 접는다 (전체 화면이면 모두 펼침)
@@ -1350,8 +1350,11 @@ function renderChrome(d) {
       if (!iss.length) return;
       const worst = iss.some((x) => x.level === "bad");
       sp.classList.toggle("warn", true);
-      sp.innerHTML = `<span class="dot ${worst ? "bad" : "warn"}"></span>점검 필요 ${iss.length}`;
+      // v30: 쉬운 화면에서는 겁주지 않게 — '확인할 것' + 누르면 데이터 상태 화면 (전문가 화면은 그대로)
+      const easy = typeof uiMode === "function" && uiMode() === "easy";
+      sp.innerHTML = `<span class="dot ${worst ? "bad" : "warn"}"></span>${easy ? "확인할 것" : "점검 필요"} ${iss.length}`;
       sp.title = iss.map((x) => `• ${x.text}\n  → ${x.fix}`).join("\n");
+      if (easy) sp.onclick = () => { location.hash = "#datahealth"; };
     }).catch(() => {});
   }).catch(() => { $("#sys-status").innerHTML = `<span class="dot bad"></span>연결 실패`; });
 }

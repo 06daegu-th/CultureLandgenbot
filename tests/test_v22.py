@@ -26,7 +26,7 @@ def test_static_v22_wiring():
     app_js = (STATIC / "app.js").read_text()
     assert '"on-stock"' in app_js and "el.isConnected" in app_js
     assert "body.on-stock .chat-dock:not(.open)" in (STATIC / "style.css").read_text()
-    assert re.search(r"qa-shell-v2\d", (STATIC / "sw.js").read_text())
+    assert re.search(r"qa-shell-v[23]\d", (STATIC / "sw.js").read_text())
 
 
 def test_deemoji_regex_keeps_symbols():

@@ -370,4 +370,33 @@ def prefetch(app, symbols: list[str], force: bool = False, fetch=None) -> dict:
     return {"by_source": out, "missing": missing[:50], "n": sum(out.values())}
 
 
-__all__ = ["get", "prefetch", "monogram", "default_icon", "sanitize_svg", "candidates", "domain_for", "kind_of", "KR_DOMAINS"]
+def coverage(app, symbols: list[str], names: dict | None = None) -> dict:
+    """v30 로고 큐: 종목별 지금 쓰는 로고 출처 (받지 않고 저장된 것만 본다) → 진짜 로고 / 이니셜 / 아직 안 받음."""
+    from .companies import bundled_logo
+    d = _dir(app)
+    custom = {f.stem.upper() for f in (d / "custom").iterdir() if f.is_file()}
+    rows = []
+    for s in symbols:
+        try:
+            sym = _safe(s)
+        except ValueError:
+            continue
+        if sym in custom:
+            src = "custom"
+        elif bundled_logo(sym):
+            src = "bundled"
+        else:
+            mp = d / f"{sym}.json"
+            meta = json.loads(mp.read_text()) if mp.exists() else {}
+            src = meta.get("source", "cache") if meta.get("file") and (d / meta["file"]).exists() else ("failed" if meta.get("failed_at") else "none")
+            if src in ("failed", "none"):
+                rows.append({"symbol": s, "name": (names or {}).get(s, s), "status": src, "why": (meta.get("tried") or [""])[0] if isinstance(meta.get("tried"), list) else meta.get("error")})
+                continue
+        rows.append({"symbol": s, "name": (names or {}).get(s, s), "status": src})
+    real = sum(1 for r in rows if r["status"] not in ("failed", "none"))
+    return {"total": len(rows), "real": real, "share": real / len(rows) if rows else None,
+            "missing": [r for r in rows if r["status"] in ("failed", "none")],
+            "by_source": {k: sum(1 for r in rows if r["status"] == k) for k in {r["status"] for r in rows}}}
+
+
+__all__ = ["coverage", "get", "prefetch", "monogram", "default_icon", "sanitize_svg", "candidates", "domain_for", "kind_of", "KR_DOMAINS"]

@@ -248,4 +248,4 @@ def test_static_shell_lists_toss2():
     idx = (STATIC / "index.html").read_text()
     sw = (STATIC / "sw.js").read_text()
     assert idx.index("/toss.js") < idx.index("/toss2.js") < idx.index("/app.js")
-    assert '"/toss2.js"' in sw and re.search(r'qa-shell-v2[7-9]', sw)
+    assert '"/toss2.js"' in sw and re.search(r'qa-shell-v(2[7-9]|3\d)', sw)

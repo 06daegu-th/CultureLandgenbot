@@ -675,6 +675,41 @@ def cmd_datacheck(args):
     print(f"  가격 조정 이벤트(액면분할·권리락 등) {r['n_adj_events']}건 — 수정주가로 이어 붙임")
 
 
+def cmd_autopilot(args):
+    """v30 AI 자동매매: status (오늘 할 일·관문) · run (지금 한 번) · goal (100만원 → 목표 확률)."""
+    from . import autopilot as AP
+    app = _app(args)
+    if args.action == "goal":
+        g = AP.refresh_goal(app)
+        if g.get("error"):
+            print(g["error"])
+            return
+        s = g["source"]
+        print(f"근거: 보지 않은 기간 {s['from']} ~ {s['to']} ({s['days']}거래일) · 이 규칙 {s['total'] * 100:+.1f}% · 같은 기간 대상 종목 평균 {s['market_total'] * 100:+.1f}%")
+        for h in g["horizons"]:
+            print(f"  {h['months']}개월: 1억 도달 {h['p_target']:.2%} · 두 배 {h['p_double']:.1%} · 이익 {h['p_gain']:.0%} · -15% 정지 {h['p_stop']:.0%} · "
+                  f"중간값 {h['median']:,.0f}원 (10%~90%: {h['p10']:,.0f} ~ {h['p90']:,.0f}) · 필요 월 수익 {h['need_monthly']:+.0%}")
+        print(g["verdict"])
+        return
+    if args.action == "run":
+        r = AP.run(app, force=True)
+        for name, p in (r.get("books") or {}).items():
+            print(f"[{name}] " + " · ".join(f"{a['action']} {a['name']}" for a in p["actions"]) + (f" · 오류 {p['error']}" if p.get("error") else ""))
+        if r.get("skipped"):
+            print(r["skipped"])
+        return
+    s = AP.status(app)
+    pv = s["preview"]
+    print("실제 계좌 연결:", "켜짐" if s["live"] else "꺼짐 (가상 100만원 장부만 자동 운용)")
+    for g in s["gates"]:
+        print(f"  {'✅' if g['ok'] else '·'} {g['title']}: {g['detail']}")
+    if pv.get("error"):
+        print(pv["error"])
+        return
+    for a in pv["actions"]:
+        print(f"  {a['action']:<4} {a['name']} ({a['symbol']}) — {a['reason']}")
+
+
 def cmd_proof_project(args):
     """v29 증명 프로젝트: start (규칙·기준 봉인) · status · record (오늘 기록) · end."""
     from . import proof
@@ -918,6 +953,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("health").set_defaults(fn=cmd_health)
     sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
     sub.add_parser("ops-status", help="운영 상태 (24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패)").set_defaults(fn=cmd_ops_status)
+    ap = sub.add_parser("autopilot", help="AI 자동매매 (신호 엔진 후보로 매일 사고팔기 · 가상 100만원 장부 · 실제 계좌는 관문 5개 통과 + 켬)")
+    ap.add_argument("action", nargs="?", default="status", choices=["status", "run", "goal"])
+    ap.set_defaults(fn=cmd_autopilot)
     pp = sub.add_parser("proof-project", help="증명 프로젝트 (100만원 실계좌 · 규칙·성공 기준 봉인 · 매일 봉인 기록 · 공개 페이지)")
     pp.add_argument("action", nargs="?", default="status", choices=["status", "start", "record", "end"])
     pp.add_argument("--mode", default="live", choices=["live", "paper", "shadow"])

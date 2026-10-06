@@ -779,3 +779,21 @@ a.t-li.on { background: var(--t-hover); }
 .t-chart-src { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--dim); margin-top: 6px; }
 .t-chart-src a { color: inherit; text-decoration: underline; }
 .tsk-chart { touch-action: pan-y; }
+.t2-goal { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 10px 0; }
+.t2-goal-c { background: var(--t-soft); border-radius: 14px; padding: 14px; min-width: 0; }
+.t2-goal-c > b { display: block; font-size: 30px; margin-top: 4px; }
+.t2-goal-c > em { font-style: normal; font-size: 12px; color: var(--dim); }
+@media (max-width: 760px) { .t2-goal { grid-template-columns: 1fr; } }
+.t2-e3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.t2-e3 > div { background: var(--t-soft); border-radius: 14px; padding: 12px 14px; min-width: 0; }
+.t2-e3 ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.55; }
+.t2-fin-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 12px; }
+.t2-fin { display: flex; align-items: flex-end; gap: 6px; height: 120px; margin-top: 6px; }
+.t2-fin-c { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
+.t2-fin-c i { display: block; width: 70%; background: var(--accent); border-radius: 4px 4px 0 0; opacity: .85; }
+.t2-fin-c i.neg { background: var(--down); }
+.t2-fin-c b { font-size: 10px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.t2-fin-c span { font-size: 10px; color: var(--dim); }
+@media (max-width: 760px) { .t2-e3, .t2-fin-g { grid-template-columns: 1fr; } }
+/* v30: 쉬운 화면 위 막대 — 운영용 시계·버전 줄은 숨김 (전체 화면에서는 그대로) */
+body.ui-easy #clock, body.ui-easy .side .ver { display: none; }

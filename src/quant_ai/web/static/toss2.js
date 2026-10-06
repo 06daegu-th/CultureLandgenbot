@@ -950,7 +950,7 @@ TV.datahealth = async (el) => {
   tPaint(L.root, "데이터 상태", `
     ${tHero({ k: `데이터 믿을 만한 정도 · ${esc(h.as_of || "")}`, lv: blocked ? "bad" : h.overall >= 80 ? "good" : "warn", big: `${tN(h.overall, 0)}점 · ${blocked ? "새로 사지 않아요" : "거래해도 돼요"}`, sub: esc(koText(h.block_reason || h.price_delay?.detail || "")),
       body: tProg((h.overall || 0) / 100, blocked ? "bad" : h.overall >= 80 ? "good" : "warn", "데이터 점수"), foot: "주가 점수 50% 미만 · 장중 실시간 가격 15분 이상 늦음 → 신규 매수를 막아요 (팔기·위험 줄이기는 가능)" })}
-    <div class="t-pro" style="margin-top:0"><button class="t-btn ghost" id="dh-re">다시 점검</button><button class="t-btn ghost" data-logo-up="">종목 로고 직접 넣기</button></div><div class="t-gap"></div>
+    <div class="t-pro" style="margin-top:0"><button class="t-btn ghost" id="dh-re">다시 점검</button><button class="t-btn ghost" data-logo-up="">종목 로고 직접 넣기</button><a class="t-btn ghost" href="#logoq">로고 없는 종목</a><a class="t-btn ghost" href="#datacheck">데이터 점검</a></div><div class="t-gap"></div>
     ${tCard("분야별", tList((h.rows || []).map((r) => `<div class="t2-item"><div class="t-li"><span class="t-co"><span class="t-dot-ic">${lvDot(tLv(r.status))}</span><span class="t-co-t"><b>${esc(r.name)}</b><span class="t2-wrap">${esc(koText(r.detail || ""))}</span></span></span><span class="t-li-r t2-w">${r.pct == null ? '<span class="t-sub">해당 없음</span>' : `${tProg(r.pct / 100, tLv(r.status))}<b class="num">${r.pct}%</b>`}</span></div><div class="t2-why">출처: ${esc(r.source || "-")}</div></div>`)))}
     ${sn && !sn.error ? tCard("5분마다 자동 감시", tList((sn.checks || []).map((c) => tStRow(c.title, c.detail, c.status)))) : ""}
     ${g && !g.error && (g.failmode || []).length ? tCard("장애가 나도 돈은 이렇게 지켜요", tList(g.failmode.map((m) => `<div class="t-li"><span class="t-co-t"><b>${esc(m.part)} 이 멈추면</b><span class="t2-wrap">가진 주식 ${esc(m.positions)} · 새로 사기 ${esc(m.new_buys)} · 팔기 ${esc(m.sells)}</span></span></div>`))) : ""}
@@ -1322,6 +1322,7 @@ async function tPicksHome(box) {
   const t = d.calibration?.tier || {};
   const xs = (d.buy || []).slice(0, 3);
   box.innerHTML = tSec("오늘의 매수 후보", `<a class="t-trust t-trust-${t.key === "bad" ? "banned" : t.key === "good" ? "verified" : "checking"}" href="#picks">${lvDot(t.key)}<span><b>신호 엔진 · ${esc(t.label || "")}</b>${esc(t.why || "")}</span>${TI.chev}</a>
+    <a class="t-note" href="#autopilot">AI 자동매매가 이 후보로 가상 100만원을 매일 스스로 사고팔아요 — 결과 보기 ›</a>
     ${xs.length ? `<div class="t-list">${xs.map((r) => tRow(`#picks`, tName(r.symbol, r.name, esc((r.signals || []).filter((s) => s.verified).slice(0, 2).map((s) => s.text).join(" · ")), 40), `${tScore(r.score)}<span class="t-sub num">${tPx(r.last, r.symbol)}</span>`)).join("")}</div>`
       : tEmpty("오늘은 강한 매수 후보가 없어요", "억지로 고르지 않아요")}`, '<a href="#picks">전체 · 비중 축소</a>', "t-card");
 }
@@ -1438,4 +1439,106 @@ TV.proof = async (el) => {
   L.root.querySelector("#pf-amt").onclick = () => act({ action: "public", public: s.public, show_amounts: !a.show_amounts }, "바꿨어요");
   L.root.querySelector("#pf-rec").onclick = () => act({ action: "record" }, "기록했어요 (오늘 이미 있으면 그대로)");
   L.root.querySelector("#pf-end").onclick = () => { const r = prompt("끝내는 이유 (기록에 남아요)"); if (r != null) act({ action: "end", reason: r }, "끝냈어요"); };
+};
+
+// ------------------------------------------------------------ v30 AI 자동매매 (오토파일럿)
+const AP_ACT = { buy: ["사기", "up"], sell: ["팔기", "down"], hold: ["보유", ""] };
+function tGoalCard(g) {
+  if (!g) return tCard("목표 현실성 — 100만원 → 1억", `${tEmpty("아직 계산하지 않았어요", "아래 단추로 계산해요 (몇 초)")}<div class="t-pro"><button class="t-btn ghost" id="ap-goal">지금 계산</button></div>`);
+  if (g.error) return tCard("목표 현실성", `${tEmpty("계산하지 못했어요", g.error)}<div class="t-pro"><button class="t-btn ghost" id="ap-goal">다시 계산</button></div>`);
+  const s = g.source || {};
+  const hz = g.horizons || [];
+  return tCard(`목표 현실성 — ${tWon(g.start)} → ${tWon(g.target)} (${tN(g.multiple)}배)`, `
+    <div class="t-note warn">${esc(g.verdict || "")}</div>
+    <div class="t2-goal">${hz.map((h) => `<div class="t2-goal-c"><span class="t-k">${h.months}개월</span>
+      <b class="num">${h.p_target < 0.0005 ? "0%" : tPr(h.p_target, 1)}</b><em>1억 도달 확률</em>
+      ${tKV([["두 배 이상", tPr(h.p_double, 1)], ["이익으로 끝남", tPr(h.p_gain)], ["-15% 정지에 닿음", tPr(h.p_stop), "down"], ["중간값", tWon(h.median)]])}
+      <div class="t-foot">10%~90% 범위 ${tWon(h.p10)} ~ ${tWon(h.p90)} · 1억에 필요한 수익: 매달 ${tPct(h.need_monthly, 0)}</div></div>`).join("")}</div>
+    <div class="t-foot">근거: 신호 엔진 규칙을 가중치를 정할 때 보지 않은 기간(${esc(s.from || "")} ~ ${esc(s.to || "")}, ${tN(s.days)}거래일)에 그대로 돌린 결과 ${tPct(s.total, 1)} (같은 기간 대상 종목 평균 ${tPct(s.market_total, 1)}) · 그 일별 수익을 20일 묶음으로 다시 뽑아 4,000번 시뮬레이션 · 비용 반영 · 1주 20만원 이하 종목만</div>
+    <ol class="t-ol">${(g.advice || []).map((x, i) => `<li><span class="t-num">${i + 1}</span>${esc(x)}</li>`).join("")}</ol>
+    <div class="t-pro"><button class="t-btn ghost" id="ap-goal">다시 계산</button><a class="t-btn ghost" href="#proof">증명 프로젝트</a></div>`);
+}
+TV.autopilot = async (el) => {
+  const L = await tLoad(el, "autopilot", "AI 자동매매", "t2-ap", () => api("/api/autopilot"));
+  if (!L) return;
+  const s = L.d, c = s.config || {}, p = s.paper || {}, pv = s.preview || {};
+  const nOk = (s.gates || []).filter((g) => g.ok).length;
+  const acts = (pv.actions || []).slice().sort((a, b) => ({ sell: 0, buy: 1, hold: 2 }[a.action] - { sell: 0, buy: 1, hold: 2 }[b.action]));
+  const hold = Object.entries(s.holdings || {});
+  tPaint(L.root, "AI 자동매매", `
+    ${tHero({ k: `${c.paper_on ? "가상 100만원 장부 자동 운용 중" : "가상 장부 꺼짐"} · 실제 계좌 ${s.live ? "연결됨" : `연결 안 됨 (관문 ${nOk}/5)`}`, lv: s.live ? "good" : c.paper_on ? "warn" : "idle",
+      big: p.days ? `<span class="${tCls(p.ret)}">${tPct(p.ret, 2)}</span> <span class="t-sub" style="font-size:.5em">${tWon(p.equity)} · 코스피 대비 ${p.excess == null ? "-" : tPct(p.excess, 1)}</span>` : `${tWon(p.equity || c.principal)} <span class="t-sub" style="font-size:.5em">아직 하루치 기록 전</span>`,
+      sub: s.last_skip ? esc(s.last_skip) : `마지막 결정 ${esc(s.last_run || "아직 없음")} · ${esc(s.rule || "")}`,
+      foot: "AI 가 신호 엔진 점수로 매일 장중 한 번 스스로 사고팔아요. 실제 돈은 아래 관문 5개를 모두 넘고 직접 켜야 움직여요." })}
+    ${(p.curve || []).length > 1 ? tCard("가상 장부 자산 흐름", tSpark(p.curve.map((x) => x[1]), { h: 90, w: 640 }) + `<div class="t-foot">${tN(p.days)}거래일 · 최대 낙폭 ${tPct(p.mdd, 1)}</div>`) : ""}
+    ${tCard(`오늘 AI 가 할 일 ${pv.as_of ? `<span class="t-sub">${esc(pv.as_of)} 일봉 기준 · 자리 ${tN(pv.slots)}개 · 매수 기준 점수 +${pv.buy_min}</span>` : ""}`,
+      pv.error ? tEmpty("계산하지 못했어요", pv.error) : tList(acts.map((a) => `<div class="t2-item">${tSym(a.symbol, a.name, esc(a.reason || ""), `<span class="t-tag ${AP_ACT[a.action][1]}">${AP_ACT[a.action][0]}</span>${a.score != null ? tScore(a.score) : ""}`)}</div>`), "오늘은 할 일이 없어요", "점수 +0.8 이상 후보가 없고 가진 종목도 그대로 둬요")
+      + ((pv.skipped || []).length ? `<div class="t-foot">점수는 높지만 1주 가격이 종목당 상한(${tWon(pv.cap_value)})보다 비싸 못 사는 후보: ${pv.skipped.map((x) => `${esc(x.name)} ${x.score.toFixed(2)}`).join(" · ")}</div>` : "")
+      + `<div class="t-pro"><button class="t-btn primary" id="ap-run">가상 장부로 지금 한 번 실행</button><a class="t-btn ghost" href="#picks">AI 추천 (점수 근거)</a></div>`)}
+    ${tCard("가상 장부 보유 종목", tList(hold.map(([sym, h]) => tSym(sym, h.name || sym, `${tN(h.qty)}주 · 평균 ${tPx(h.avg_price, sym)}${h.entry_date ? ` · ${esc(h.entry_date)} 매수 · ${tN(h.held_days)}거래일` : ""}${h.stop ? ` · 손절선 ${tPx(h.stop, sym)}` : ""}`, "")), "보유 종목 없음", "장중에 AI 가 첫 결정을 하면 채워져요"))}
+    ${tGoalCard(s.goal)}
+    ${tCard(`실제 계좌 연결 관문 ${nOk}/5`, tList((s.gates || []).map((g) => tStRow(g.title, g.detail, g.ok ? "good" : "idle", { label: g.ok ? "통과" : "아직" })))
+      + `<div class="t-pro"><button class="t-btn ${c.live_requested ? "ghost" : "primary"}" id="ap-live">${c.live_requested ? "실제 계좌 연결 요청 취소" : "실제 계좌 연결 요청"}</button><button class="t-btn ghost" id="ap-paper">${c.paper_on ? "가상 자동 운용 멈추기" : "가상 자동 운용 다시 켜기"}</button></div>
+      <div class="t-foot">요청해 두면 관문이 모두 통과되는 날 자동으로 연결돼요 · 연결되면 같은 계좌의 코어 전략 주문은 멈춰요 · 긴급 정지·하루 손실 한도·매매 준비 점검은 그대로 적용돼요</div>`)}
+    ${tCard("봉인된 결정 기록 (최근)", tList((s.log || []).slice().reverse().slice(0, 10).map((d) => `<div class="t-li"><span class="t-co-t"><b class="num">${esc(d.date)}</b><span class="t2-wrap">${(d.actions || []).filter((a) => a.action !== "hold").map((a) => `${AP_ACT[a.action][0]} ${esc(a.symbol)}`).join(" · ") || "변화 없음"}${d.error ? ` · 오류 ${esc(d.error)}` : ""}</span></span><span class="t-li-r t-sub num">${esc(String(d.hash || "").slice(0, 8))}</span></div>`), "아직 기록 없음", "결정할 때마다 이유와 함께 봉인돼요"))}`);
+  const act = async (body, ask, ok) => { if (ask && !confirm(ask)) return; try { await post("/api/autopilot", body); if (ok) toast({ title: ok, level: "good" }); } catch (err) { toast({ title: "실패", body: err.message || String(err), level: "warn" }); } TV.autopilot(el); };
+  L.root.querySelector("#ap-run").onclick = (e) => { e.target.disabled = true; e.target.textContent = "실행 중…"; act({ action: "run" }, "", "가상 장부로 실행했어요"); };
+  L.root.querySelector("#ap-live").onclick = () => act({ action: "config", live_requested: !c.live_requested }, c.live_requested ? "" : "실제 돈으로 AI 가 자동 매매하도록 요청할까요? 관문 5개가 모두 통과되는 날부터 시작되고, 증명 프로젝트 규칙(원금·손실 한도) 안에서만 움직여요.", c.live_requested ? "요청을 취소했어요" : "요청했어요 — 관문 통과 후 시작");
+  L.root.querySelector("#ap-paper").onclick = () => act({ action: "config", paper_on: !c.paper_on }, "", "바꿨어요");
+  const gb = L.root.querySelector("#ap-goal");
+  if (gb) gb.onclick = (e) => { e.target.disabled = true; e.target.textContent = "계산 중…"; act({ action: "goal" }, "", ""); };
+};
+
+// ------------------------------------------------------------ v30 회사 이해 (종목 화면 '회사' 탭)
+function tFinBars(rows, key, sym) {
+  const xs = rows.filter((r) => r[key] != null);
+  if (!xs.length) return '<span class="t-sub">정보 없음</span>';
+  const mx = Math.max(...xs.map((r) => Math.abs(r[key]))) || 1;
+  return `<div class="t2-fin">${xs.map((r) => `<div class="t2-fin-c"><i class="${r[key] < 0 ? "neg" : ""}" style="height:${Math.max(4, Math.abs(r[key]) / mx * 100).toFixed(0)}%"></i><b class="num">${tCap(r[key], sym)}</b><span>${r.year}</span></div>`).join("")}</div>`;
+}
+async function tCompany(body, sym, refresh = false) {
+  let d;
+  try { d = await api(`/api/company-view?symbol=${encodeURIComponent(sym)}${refresh ? "&refresh=1" : ""}`); } catch (e) { body.innerHTML = tErr(e); return; }
+  if (!body.isConnected) return;
+  const v = d.valuation || {}, f = d.financials || {}, rows = f.rows || [], e3 = d.easy3 || {};
+  const KIND = { disclosure: ["공시", TI.doc], news: ["뉴스", TI.news], move: ["주가", ""], event: ["일정", ""] };
+  const last = rows[rows.length - 1] || {};
+  body.innerHTML = `
+    ${tCard("초보자 3줄 요약", `<div class="t2-e3">
+      <div><span class="t-k up">좋은 점</span><ul>${(e3.good || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>
+      <div><span class="t-k down">걱정할 점</span><ul>${(e3.bad || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>
+      <div><span class="t-k">앞으로 볼 일정</span><ul>${(e3.next || []).map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div></div>
+      <div class="t-foot">숫자·공시·신호에서 근거가 있는 것만 적어요 — 근거가 없으면 '없어요'라고 해요</div>`)}
+    ${tCard(`${esc(d.name || sym)}는 어떤 회사?`, `${d.summary ? `<p class="t2-wrap" style="margin:0 0 10px;line-height:1.6">${esc(d.summary).slice(0, 600)}</p>` : '<div class="t-sub" style="margin-bottom:10px">회사 소개 정보가 아직 없어요 — 인터넷이 되면 종목 정보를 받아 채워요</div>'}
+      ${tKV([["업종", esc(d.sector || "-")], ["시가총액", v.market_cap ? tCap(v.market_cap, sym) : "-", "", d.facts_date ? `KRX ${esc(d.facts_date)}` : ""], ["상장주식수", v.shares ? (v.shares >= 1e8 ? `${(v.shares / 1e8).toFixed(1)}억주` : `${tN(v.shares)}주`) : "-"], ["1년 수익률", tPct(d.ret_1y, 0), tCls(d.ret_1y)]])}
+      ${d.website ? `<div class="t-foot"><a href="${esc(d.website)}" target="_blank" rel="noopener">${esc(d.website)}</a>${d.employees ? ` · 직원 ${tN(d.employees)}명` : ""}</div>` : ""}`)}
+    ${tCard("돈은 잘 버나 (재무 5년)", rows.length ? `
+      <div class="t2-fin-g"><div><span class="t-k">매출</span>${tFinBars(rows, "revenue", sym)}</div><div><span class="t-k">영업이익</span>${tFinBars(rows, "op_income", sym)}</div><div><span class="t-k">순이익</span>${tFinBars(rows, "net_income", sym)}</div></div>
+      ${tKV([["영업이익률", last.op_margin == null ? "-" : tPr(last.op_margin, 1), "", `${last.year || ""}년`], ["부채비율", last.debt_ratio == null ? "-" : tPr(last.debt_ratio), last.debt_ratio > 2 ? "down" : "", "부채 ÷ 자본 (200% 넘으면 주의)"]])}
+      <div class="t-foot">${esc(f.source || "")}${f.at ? ` · ${tAgo(f.at)} 받음` : ""}</div>`
+      : tEmpty("재무 정보가 없어요", f.error || "DART 키를 넣으면 5년 재무가 나와요", '<button class="t-btn ghost" id="co-re">다시 받기</button>'))}
+    ${tCard("비싼가 싼가", `${tKV([[tG("PER"), v.per == null ? "-" : `${v.per.toFixed(1)}배`, "", v.per_src || ""], [tG("PBR"), v.pbr == null ? "-" : `${v.pbr.toFixed(2)}배`], ["배당수익률", v.div_yield == null ? "-" : tPr(v.div_yield, 2)], ["외국인 비율", v.foreign_rate == null ? "-" : tPr(v.foreign_rate, 1)]])}
+      ${v.target_mean ? `<div class="t-foot">증권사 목표주가 평균 ${tPx(v.target_mean, sym)}${v.rating ? ` · 의견 ${esc(v.rating)}` : ""} (참고만 — 맞을 때보다 틀릴 때가 많아요)</div>` : ""}`)}
+    ${(d.peers || []).length ? tCard(`같은 업종과 비교 · ${esc(d.sector || "")}`, tList(d.peers.map((p) => tSym(p.symbol, p.name, `${p.self ? "이 종목 · " : ""}시가총액 ${p.market_cap ? tCap(p.market_cap, p.symbol) : "-"}${p.per != null ? ` · PER ${p.per.toFixed(1)}` : ""}`, `<span class="num ${tCls(p.ret_1y)}">${tPct(p.ret_1y, 0)}</span><span class="t-sub">1년</span>`)))) : ""}
+    ${tCard("최근 이슈 타임라인", tList((d.timeline || []).map((x) => { const [lab] = KIND[x.kind] || ["", ""]; const inner = `<span class="t-co-t"><b class="t2-wrap">${esc(x.title)}</b><span>${esc(x.date)} · ${lab}${x.detail ? ` · ${esc(x.detail)}` : ""}</span></span>`; return x.link ? `<a class="t-li" href="${esc(x.link)}">${inner}</a>` : `<div class="t-li">${inner}</div>`; }), "최근 120일 이슈가 없어요", "공시·뉴스는 24시간 운영이 켜져 있을 때 모여요"))}
+    <div class="t-pro"><button class="t-btn ghost" id="co-re2">재무 다시 받기</button></div>`;
+  body.querySelectorAll("#co-re, #co-re2").forEach((b) => b.onclick = () => { b.disabled = true; b.textContent = "받는 중…"; tCompany(body, sym, true); });
+  if (typeof glossify === "function") glossify(body);
+}
+
+// ------------------------------------------------------------ v30 로고 관리 (진짜 로고가 없는 종목 → 한 번에 올리기)
+TV.logoq = async (el) => {
+  const L = await tLoad(el, "logoq", "로고 관리", "t2-logoq", () => api("/api/logo-queue"));
+  if (!L) return;
+  const d = L.d, miss = d.missing || [], mine = new Set(d.mine || []);
+  const SRC = { custom: "직접 넣음", bundled: "기본 제공", failed: "못 받음", none: "아직 안 받음" };
+  tPaint(L.root, "로고 관리", `
+    ${tHero({ k: `국내 ${tN(d.total)}종목`, lv: (d.share || 0) >= 0.8 ? "good" : "warn", big: `진짜 로고 ${tPr(d.share)}`, sub: `이니셜 아이콘으로 보이는 종목 ${tN(miss.length)}개 — 관심·보유 종목부터 보여 줘요`,
+      body: tProg(d.share || 0, (d.share || 0) >= 0.8 ? "good" : "warn", "로고 비율"),
+      foot: "로고는 회사 홈페이지·IR 자료에서 받은 그림을 올리세요 (PNG·JPG·WEBP·SVG · 140KB 이하) — 올린 로고가 모든 출처보다 먼저 쓰여요. 출시용으로는 권리를 확인한 로고만 써야 해요." })}
+    ${tCard(`로고 없는 종목 ${tN(miss.length)}`, tList(miss.slice(0, 80).map((r) => tSym(r.symbol, r.name, `${mine.has(r.symbol) ? "관심·보유 · " : ""}${SRC[r.status] || r.status}${r.why ? ` · ${esc(String(r.why).slice(0, 50))}` : ""}`,
+      `<button class="t-btn ghost" data-logo-up="${esc(r.symbol)}" data-logo-name="${esc(r.name)}">올리기</button>`)), "모든 종목에 진짜 로고가 있어요", "")
+      + (miss.length > 80 ? `<div class="t-foot">외 ${miss.length - 80}개</div>` : ""))}
+    ${tCard("출처별", tKV(Object.entries(d.by_source || {}).map(([k, v]) => [esc(SRC[k] || k), tN(v)])))}
+    <div class="t-pro"><a class="t-btn ghost" href="#datahealth">데이터 상태</a></div>`);
 };

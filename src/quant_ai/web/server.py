@@ -79,6 +79,13 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             self.send_header("Content-Security-Policy", csp or CSP)
             self.end_headers()
             self.wfile.write(body)
+            t0 = getattr(self, "_t0", None)
+            if t0 is not None:
+                import time as _time
+
+                from ..metrics import observe
+                observe(urlparse(self.path).path, (_time.monotonic() - t0) * 1000)
+                self._t0 = None
 
         def _json_cookie(self, obj, cookie: str) -> None:
             body = json.dumps(obj, ensure_ascii=False).encode()
@@ -95,10 +102,18 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             self._send(code, json.dumps(obj, ensure_ascii=False, default=str).encode(), "application/json; charset=utf-8")
 
         def do_GET(self):  # noqa: N802
+            import time as _time
+            self._t0 = _time.monotonic()  # v30: 응답 시간 지표 (/metrics)
             url = urlparse(self.path)
             qs = parse_qs(url.query)
             if not self._host_ok():
                 return self._send(421, b"misdirected request", "text/plain")
+            if url.path == "/metrics":  # v30 관측성: 같은 PC 는 로그인 없이 · 밖에서는 로그인/토큰
+                local = (self.client_address[0] if self.client_address else "") in ("127.0.0.1", "::1")
+                if not (local or self._authorized(qs)):
+                    return self._send(401, b"unauthorized", "text/plain")
+                from ..metrics import render as _metrics
+                return self._send(200, _metrics(api.app).encode(), "text/plain; version=0.0.4; charset=utf-8")
             if url.path == "/api/auth":  # 로그인 화면이 무엇을 물어볼지 (비밀 정보 없음)
                 return self._json(auth.info() | {"role": self._role(qs)})
             if url.path == "/api/health":  # 인증 없이 최소 정보 (로드밸런서/모니터링용)
@@ -252,6 +267,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.datacheck())
                     if url.path == "/api/proof-project":  # v29: 증명 프로젝트
                         return self._json(api.proof_status())
+                    if url.path == "/api/autopilot":  # v30: AI 자동매매
+                        return self._json(api.autopilot())
+                    if url.path == "/api/logo-queue":  # v30: 로고 없는 종목
+                        return self._json(api.logo_queue())
+                    if url.path == "/api/company-view":  # v30: 회사 이해
+                        return self._json(api.company_view(arg("symbol", "")[:12], arg("refresh", "") == "1"))
                     if url.path == "/api/signals2/stock":
                         return self._json(api.signals2_stock(arg("symbol", "")[:12]))
                     if url.path == "/api/t/intraday":  # v27: 하루 안 움직임 (5분봉)
@@ -473,6 +494,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json(api.datacheck(run=True))
                 if url.path == "/api/proof-project":
                     return self._json(api.proof_write(body))
+                if url.path == "/api/autopilot":
+                    return self._json(api.autopilot_write(body))
                 if url.path == "/api/news-extract":
                     return self._json(api.news_extract())
                 if url.path == "/api/news-explain":
@@ -532,12 +555,18 @@ def serve(app, host: str = "127.0.0.1", port: int = 8050) -> None:
 
     def _warm():  # 첫 화면이 기다리지 않게: 전 종목 일봉·대시보드를 미리 계산해 둔다 (실패해도 무시)
         # v26: 처음 여는 화면들(홈·AI 신뢰·목표·사실 확인·감시실)도 미리 — 첫 방문 2~5초 대기 없애기
-        for f in (app.market_data, api.dashboard, api.setup, api.today, api.t_home, lambda: api.home5("paper"), api.ai_trust,
-                  lambda: api.goal({}), api.truth, api.control, api.signals2):
-            try:
-                f()
-            except Exception as e:  # noqa: BLE001
-                log.info("예열 실패 %s: %s", getattr(f, "__name__", f), e)
+        # v30: 켜 둔 동안 4분마다 다시 데워 둔다 (캐시가 식어 '가끔 느린' 첫 화면을 없앰) · AI 자동매매·로고 큐 포함
+        import time as _time
+        while True:
+            for f in (app.market_data, api.dashboard, api.setup, api.today, api.t_home, lambda: api.home5("paper"), api.ai_trust,
+                      lambda: api.goal({}), api.truth, api.control, api.signals2, api.autopilot, api.logo_queue):
+                try:
+                    f()
+                except Exception as e:  # noqa: BLE001
+                    log.info("예열 실패 %s: %s", getattr(f, "__name__", f), e)
+            if os.environ.get("QUANT_WARM_LOOP", "1").lower() in ("0", "false", "off"):
+                return
+            _time.sleep(240)
     import threading
     threading.Thread(target=_warm, name="warm", daemon=True).start()
     print(f"Quant AI 대시보드: http://{host}:{port}" + ("  (토큰: ?token=...)" if token else ""))
