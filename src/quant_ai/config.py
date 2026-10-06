@@ -67,6 +67,14 @@ def _llm_providers(e) -> dict:
         key = e.get(spec.key_env)
         if not key:
             continue
+        if name == "local":  # 주소가 곧 켜기 — 이 컴퓨터(또는 https) 주소만
+            from .analysts.llm_clients import local_url_ok
+            if not local_url_ok(key.strip()):
+                continue
+            out[name] = {"key": e.get("QUANT_LOCAL_LLM_KEY") or "local", "account": key.strip().rstrip("/"),
+                         "models": tuple(m.strip() for m in e.get("QUANT_LOCAL_MODELS", "").split(",") if m.strip()) or spec.models,
+                         "daily": int(e.get("QUANT_LOCAL_DAILY_LIMIT") or spec.daily_requests), "batch": 1}
+            continue
         models = [m.strip() for m in e.get(f"QUANT_{name.upper()}_MODELS", "").split(",") if m.strip()]
         if name == "nvidia" and not models and e.get("QUANT_NVIDIA_MODEL"):
             # 지정 모델을 먼저, 과부하(503)·종료(404) 때 넘어갈 기본 후보를 뒤에
@@ -129,7 +137,7 @@ class Settings:
     kis_env: str = "demo"  # demo(모의투자) / real
     # v13 — 매매 준비 게이트 · 이벤트 게이트 · 슬리피지 자동 보정 · 장부 외부 공증
     readiness_gate: str = "live"  # live(live·shadow 장부) / all / off — NOT READY 면 신규 매수 차단
-    event_gate: str = "reduce"  # reduce(실적 D-1 이내 ×0.5, D-3 이내 ×0.75) / block / off
+    event_gate: str = "smart"  # smart(실적 D-1 이내 매수 보류 ×0, D-3 이내 ×0.75) / reduce(D-1 ×0.5) / block / off
     slippage_autocal: bool = True  # 실측 슬리피지 50건 이상이면 비용·충격 계수를 실측에 맞춘다
     notary: str = "ots"  # ots(OpenTimestamps, 무료·키 없음) / gist / both / off — 장부 봉인 해시 외부 공증
     gist_token: str | None = field(default=None, repr=False)  # QUANT_GIST_TOKEN (gist 권한만) — 선택

@@ -2,7 +2,7 @@
 // 홈 편집(카드 숨기기·순서, 서버 저장) · AI/모델 Health · 외부 알림 설정(종류별 채널 · 조용한 시간)
 /* global $, S, api, post, esc, card, empty, badge, kv, R, P, num, asOf, pill, render, toast, ICONS, CAL_ICON, stockExtras, bindRun */
 
-const ST_ICON = { ok: "🟢", warn: "🟡", bad: "🔴", na: "⚪" };
+const ST_ICON = { ok: lvDot("good"), warn: lvDot("warn"), bad: lvDot("bad"), na: lvDot("idle") };  // v21: 이모지 대신 색 점
 
 // ------------------------------------------------------------ 사용자 설정 (서버)
 async function loadPrefs(force = false) {
@@ -107,7 +107,7 @@ function trustChip(t) {
 function ddayStrip(evs) {
   const box = $("#pf-dday");
   if (!box || !Array.isArray(evs)) return;
-  box.innerHTML = evs.length ? `<div class="dday">${evs.slice(0, 8).map((e) => `<span class="dd ${e.d_day >= 0 && e.d_day <= 1 ? "hot" : ""} ${e.d_day < 0 ? "past" : ""}" title="${esc(e.source || "")}${e.estimated ? " · 추정" : ""}"><b>${esc(e.d_label)}</b> ${CAL_ICON?.[e.kind] || "•"} ${esc(e.title)}${e.scope === "시장" ? ' <span class="xs dim">시장</span>' : ""}${e.estimated ? ' <span class="xs dim">추정</span>' : ""}</span>`).join("")}</div>`
+  box.innerHTML = evs.length ? `<div class="dday">${evs.slice(0, 8).map((e) => `<span class="dd ${e.d_day >= 0 && e.d_day <= 1 ? "hot" : ""} ${e.d_day < 0 ? "past" : ""}" title="${esc(e.source || "")}${e.estimated ? " · 추정" : ""}"><b>${esc(e.d_label)}</b> ${calDot(e.kind)} ${esc(e.title)}${e.scope === "시장" ? ' <span class="xs dim">시장</span>' : ""}${e.estimated ? ' <span class="xs dim">추정</span>' : ""}</span>`).join("")}</div>`
     : '<div class="xs dim">이벤트 캘린더에 이 종목·시장의 가까운 일정 없음</div>';
 }
 
@@ -137,7 +137,8 @@ async function pretradeCard(sym, weight = "", mode = S.ptMode || "paper") {
   box.innerHTML = card("사전 리스크 게이트 <span class='small dim'>지금 이 종목을 사면?</span>", `
     <div class="pt-form"><select id="pt-mode">${["paper", "shadow", "live"].map((m) => `<option ${m === mode ? "selected" : ""}>${m}</option>`).join("")}</select>
       <input id="pt-w" type="number" min="0.5" max="100" step="0.5" placeholder="비중 %" value="${esc(weight)}"><button class="btn-sm primary" id="pt-go">시험</button></div>${body}`);
-  $("#pt-go").onclick = () => { S.ptMode = $("#pt-mode").value; pretradeCard(sym, $("#pt-w").value, S.ptMode); };
+  const q = (id) => box.querySelector(id);  // 늦게 온 응답이면 box 는 이미 화면 밖 — 문서 전체가 아니라 box 안에서 찾는다
+  q("#pt-go").onclick = () => { S.ptMode = q("#pt-mode").value; pretradeCard(sym, q("#pt-w").value, S.ptMode); };
 }
 
 function digestCard(g) {

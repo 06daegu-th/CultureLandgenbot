@@ -16,7 +16,7 @@ function asOf(labelOrTs, status = "fresh", prefix = "기준") {
   const lbl = /KST$|^\d{4}-\d{2}-\d{2}$/.test(labelOrTs) ? labelOrTs : kst(labelOrTs);
   return `<span class="asof s-${esc(status)}" title="이 데이터의 기준 시각">${prefix} ${esc(lbl)}</span>`;
 }
-const GATE_ICON = { green: "🟢", yellow: "🟡", red: "🔴", na: "⚪" };
+const GATE_ICON = { green: lvDot("good"), yellow: lvDot("warn"), red: lvDot("bad"), na: lvDot("idle") };
 const RD_LABEL = { READY: "READY · 매수 가능", CAUTION: "CAUTION · 주의", NOT_READY: "NOT READY · 신규 매수 차단" };
 const RD_CLS = { READY: "rd-ready", CAUTION: "rd-caution", NOT_READY: "rd-not" };
 
@@ -99,7 +99,7 @@ function bindRun(root = document) {
 async function viewReadiness(el) {
   const [r, p] = await Promise.all([api("/api/readiness"), api("/api/pipeline")]);
   const fr = r.freshness || {};
-  const gates = (r.checks || []).map((c) => `<div class="gate g-${esc(c.status)}"><div class="gate-h"><span class="gate-ic">${GATE_ICON[c.status] || ""}</span><b>${esc(c.key)}</b><span class="small muted">${esc(c.title)}</span></div><div class="small">${esc(c.detail)}</div>${(c.items || []).length > 1 ? `<ul class="plain xs muted">${c.items.slice(0, 5).map((x) => `<li>· ${esc(x)}</li>`).join("")}</ul>` : ""}</div>`).join("");
+  const gates = (r.checks || []).map((c) => `<div class="gate g-${esc(c.status)}"><div class="gate-h"><span class="gate-ic">${GATE_ICON[c.status] || ""}</span><b>${esc(c.title || c.key)}</b></div><div class="small">${esc(c.detail)}</div>${(c.items || []).length > 1 ? `<ul class="plain xs muted">${c.items.slice(0, 5).map((x) => `<li>· ${esc(x)}</li>`).join("")}</ul>` : ""}</div>`).join("");
   const rows = Object.values(fr.items || {}).map((v) => `<tr><td>${esc(v.name || v.kind)}</td><td class="mono small">${esc(v.label || "-")}</td><td>${pill(ST_CLS[v.status] || "warn", v.age || "없음")}</td><td class="xs dim">${v.n_symbols ? `${v.n_symbols}종목 · 가장 늦은 ${esc(v.oldest)}` : ""}</td></tr>`).join("");
   const src = (p.sources || []).map((s) => `<tr><td>${esc(s.source)}</td><td>${pill({ ok: "ok", degraded: "warn", down: "bad", none: "none" }[s.status], { ok: "정상", degraded: "간헐 실패", down: "연속 실패", none: "기록 없음" }[s.status])}</td><td class="r num">${s.runs}</td><td class="r num">${s.fails}</td><td class="small mono">${s.last_ok ? kst(s.last_ok) : "-"}</td><td class="xs dim" style="white-space:normal">${esc(s.last_error || "")}</td></tr>`).join("");
   const rec = p.recovery || {};
@@ -137,7 +137,7 @@ function fxCard(fx) {
 }
 
 // ------------------------------------------------------------ 뷰: 이벤트 캘린더 2.0
-const CAL_ICON = { bok: "🇰🇷", fomc: "🏦", cpi: "📈", nfp: "👷", gdp: "📊", pce: "🧾", retail: "🛒", earnings: "💼", ex_div: "💰", div_pay: "💵", options_expiry: "🎯", quad_witching: "🎯", index_rebalance: "⚖️", holiday: "🛑", half_day: "⏰", export: "🚢", disclosure: "📄", peer_earnings: "👥", lockup: "🔓", unknown: "❔", custom: "📌" };
+const CAL_ICON = new Proxy({}, { get: (_, k) => calDot(String(k)) });  // v21: 종류별 색 점 (words.js)
 async function viewCalendar(el) {
   const c = await api("/api/calendar");
   const f = S.calFilter || "all";
@@ -150,28 +150,29 @@ async function viewCalendar(el) {
   const tabs = (id, cur, opts) => `<div class="tabs" id="${id}">${Object.entries(opts).map(([k, v]) => `<button data-k="${k}" class="${cur === k ? "on" : ""}">${v}</button>`).join("")}</div>`;
   const list = Object.entries(byDay).map(([d, xs]) => `<div class="cal-day ${xs[0].d_day === 0 ? "today" : ""}"><div class="cal-date"><b>${esc(d.slice(5))}</b><span class="xs muted">${esc(xs[0].d_label)}</span></div><div class="cal-items">${xs.map((e) => `
       <div class="cal-it imp-${e.importance >= 0.8 ? "h" : e.importance >= 0.5 ? "m" : "l"}"><span class="cal-ic">${CAL_ICON[e.kind] || "•"}</span><span class="chip xs">${esc(e.label)}</span>
-      ${e.symbol ? `<a href="#analysis/${esc(e.symbol)}"><b>${esc(e.title)}</b></a>` : `<b>${esc(e.title)}</b>`}
+      ${e.symbol ? `${stockLogo(e.symbol, "", 18)} <a href="#analysis/${esc(e.symbol)}"><b>${esc(e.title)}</b></a>` : `<b>${esc(e.title)}</b>`}
       <span class="xs dim">${esc(e.market)}${e.time ? " · " + esc(e.time) : ""} · ${esc(e.source)}${e.estimated ? " · <span class='warn-t'>추정</span>" : ""}</span></div>`).join("")}</div></div>`).join("");
-  const risk = (c.risk || []).slice(0, 20).map((r) => `<tr><td><a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name || r.symbol)}</b></a></td><td>${hbar(r.score, 1, r.level === "high" ? "bad" : r.level === "medium" ? "warn" : "")} <span class="num xs">${r.score.toFixed(2)}</span></td>
+  const risk = (c.risk || []).slice(0, 20).map((r) => `<tr><td>${stockLogo(r.symbol, r.name, 18)} <a href="#analysis/${esc(r.symbol)}"><b>${esc(r.name || r.symbol)}</b></a></td><td>${hbar(r.score, 1, r.level === "high" ? "bad" : r.level === "medium" ? "warn" : "")} <span class="num xs">${r.score.toFixed(2)}</span></td>
     <td class="small">${r.next ? `${esc(r.next.title)} <span class="dim">${esc(r.next.d_label)}</span>` : (r.market_events || [])[0] ? `<span class="muted">시장: ${esc(r.market_events[0].title)} <span class="dim">${esc(r.market_events[0].d_label)}</span></span>` : "-"}</td><td class="r num">${r.expected_move ? "±" + R(r.expected_move) : "-"}</td>
     <td>${r.buy_multiplier < 1 ? `<span class="chip warn">매수 ×${r.buy_multiplier}</span> <span class="xs">${esc(r.reason)}</span>` : '<span class="xs dim">제한 없음</span>'}</td></tr>`).join("");
   const im = c.impact || {};
   const mkRows = (im.market_kr || []).map((x) => `<tr><td>${CAL_ICON[x.kind] || ""} ${esc(({ bok_change: "기준금리 변경", fomc: "FOMC", options_expiry: "옵션 만기", quad_witching: "동시만기", nfp: "미국 고용" })[x.kind] || x.kind)}</td><td class="r num">${x.n}</td><td class="r num ${x.vs_normal > 1.2 ? "warn-t" : ""}">×${x.vs_normal ?? "-"}</td><td class="r">${P(x.mean, 2)}</td><td class="r">${P(x.worst, 2)}</td></tr>`).join("");
   const stRows = (im.stock || []).map((x) => `<tr><td>${esc(x.kind)}</td><td class="r num">${x.n}</td><td class="r ${(x.mean || 0) >= 0 ? "up" : "down"}">${P(x.mean, 2)}</td><td class="r num">${R(x.abs_mean, 2)}</td><td class="r num">${x.t ?? "-"}</td><td>${x.significant ? '<span class="chip ok">우연 아님</span>' : '<span class="chip">불확실</span>'}</td></tr>`).join("");
   const pa = im.prediction || {};
-  el.innerHTML = marketVolCard(c) + `
-  ${card(`이벤트 캘린더 <span class="small dim">종목 · 시장 · 경제 · 실적 · 배당 · 공시 · 옵션 만기 · 휴장 — 출처와 '추정' 여부를 함께 표시</span>`,
+  el.innerHTML = `
+  ${card(`다가오는 일정 <span class="small dim">보유·관심 종목 · 경제지표 · 휴장</span>`,
     `<div class="cal-bar">${tabs("cal-f", f, { all: "전체", stock: "종목", macro: "경제", deriv: "만기·지수", mkt: "휴장" })}${tabs("cal-m", mk, { all: "전체 시장", KR: "한국", US: "미국" })}<label class="xs"><input type="checkbox" id="cal-past" ${S.calPast ? "checked" : ""}> 지난 2주 포함</label></div>
     <div class="cal-list">${list || empty("해당 이벤트 없음")}</div>
-    <div class="xs dim" style="margin-top:8px">휴장일: ${esc(c.calendar_source || "")} · FOMC: 연준 공표 일정 · CPI/고용: FRED_API_KEY 가 있으면 공식 발표일(없으면 첫째 금요일 추정) · 사용자 일정: artifacts/events.json</div>`,
+    <div class="xs dim pro-only" style="margin-top:8px">휴장일: ${esc(c.calendar_source || "")} · FOMC: 연준 공표 일정 · CPI/고용: FRED_API_KEY 가 있으면 공식 발표일(없으면 첫째 금요일 추정) · 사용자 일정: artifacts/events.json</div>`,
     `${asOf(c.as_of || c.at)} <button class="btn-sm" data-run="event_calendar">갱신</button>`)}
   ${card(`보유·관심 종목 이벤트 위험 <span class="small dim">가까운 큰 이벤트일수록 점수↑ · 실적 D-1 이내 매수 ×0.5 · D-3 이내 ×0.75 (게이트: ${esc(c.gate || "reduce")})</span>`, risk ? `<div class="scroll"><table class="tight"><thead><tr><th>종목</th><th>위험</th><th>다음 이벤트</th><th class="r">예상 변동</th><th>매수 제한</th></tr></thead><tbody>${risk}</tbody></table></div>` : empty("보유·관심 종목이 없습니다"))}
-  <div class="grid g-2">
+  <div class="grid g-2 pro-only">
     ${card("시장 이벤트의 실제 영향 <span class='small dim'>그날 KOSPI 변동폭 ÷ 평소</span>", mkRows ? `<table class="tight"><thead><tr><th>이벤트</th><th class="r">n</th><th class="r">변동폭</th><th class="r">평균</th><th class="r">최악</th></tr></thead><tbody>${mkRows}</tbody></table>` : empty("지수 이력이 부족합니다"), im.at ? asOf(im.at) : `<button class="btn-sm" data-run="event_impact">계산</button>`)}
     ${card("종목 이벤트 반응 <span class='small dim'>베타 조정 비정상 수익률 [-1,+1]</span>", stRows ? `<div class="scroll"><table class="tight"><thead><tr><th>유형</th><th class="r">n</th><th class="r">평균</th><th class="r">|평균|</th><th class="r">t</th><th></th></tr></thead><tbody>${stRows}</tbody></table></div>` : empty("공시·실적 이력이 부족합니다"))}
   </div>
-  ${card("예측 오차의 이벤트 귀속 <span class='small dim'>보유 기간 안에 큰 이벤트가 끼어 있던 예측 vs 아닌 예측</span>", pa.n ? `<div class="kv-grid">${kv("이벤트 있던 예측 적중", `${R(pa.with_event?.hit_rate)} <span class="xs dim">n=${pa.with_event?.n}</span>`)}${kv("이벤트 없던 예측 적중", `${R(pa.without_event?.hit_rate)} <span class="xs dim">n=${pa.without_event?.n}</span>`)}${kv("빗나간 예측 중 이벤트 낀 비율", R(pa.miss_share_with_event))}</div>
-    ${(pa.by_kind || []).length ? `<div class="small" style="margin-top:8px">${pa.by_kind.map((k) => `${esc(k.kind)} ${R(k.hit_rate)} (n=${k.n})`).join(" · ")}</div>` : ""}` : empty("채점된 예측이 아직 없습니다"))}`;
+  <div class="pro-only">${marketVolCard(c)}</div>
+  <div class="pro-only">${card("예측 오차의 이벤트 귀속 <span class='small dim'>보유 기간 안에 큰 이벤트가 끼어 있던 예측 vs 아닌 예측</span>", pa.n ? `<div class="kv-grid">${kv("이벤트 있던 예측 적중", `${R(pa.with_event?.hit_rate)} <span class="xs dim">n=${pa.with_event?.n}</span>`)}${kv("이벤트 없던 예측 적중", `${R(pa.without_event?.hit_rate)} <span class="xs dim">n=${pa.without_event?.n}</span>`)}${kv("빗나간 예측 중 이벤트 낀 비율", R(pa.miss_share_with_event))}</div>
+    ${(pa.by_kind || []).length ? `<div class="small" style="margin-top:8px">${pa.by_kind.map((k) => `${esc(k.kind)} ${R(k.hit_rate)} (n=${k.n})`).join(" · ")}</div>` : ""}` : empty("채점된 예측이 아직 없습니다"))}</div>`;
   el.querySelectorAll("#cal-f button").forEach((b) => b.onclick = () => { S.calFilter = b.dataset.k; render(); });
   el.querySelectorAll("#cal-m button").forEach((b) => b.onclick = () => { S.calMarket = b.dataset.k; render(); });
   const pc = $("#cal-past");
@@ -217,7 +218,7 @@ async function viewPower(el) {
       <div class="scroll"><table class="tight"><thead><tr><th>구간</th><th class="r">순위 IC</th><th class="r">무작위 대조</th><th class="r">상위 5분위 적중</th><th class="r">비용 후 상위20 초과/20일</th><th class="r">연환산</th></tr></thead><tbody>${part(st.dev, "개발 (선택에 사용)")}${part(st.holdout, "검증 (선택 후 한 번)")}</tbody></table></div>
       <div class="grid g-2" style="margin-top:10px"><div><div class="small muted">검증 구간 10분위 평균 수익 (1=점수 최하 → 10=최상)</div>${dBars(hold.deciles || [], (hold.deciles || []).map((_, i) => i + 1))}</div>
       <div><div class="small muted">연도별 순위 IC</div>${dBars((st.yearly || []).map((y) => y.ic), (st.yearly || []).map((y) => String(y.year).slice(2)), { fmt: (v) => v.toFixed(3) })}</div></div>
-      <div class="xs dim">${esc(st.caveat || "")}</div>` : empty("연구 결과가 없습니다 — quant-ai power-study --marcap-dir <경로>"))}
+      <div class="xs dim">${esc(st.caveat || "")}</div>` : empty("아직 연구 결과가 없어요 — 터미널에서 ./run.sh power-study 를 실행하면 실제 KRX 데이터로 검정합니다"))}
   <div class="grid g-2">
     ${card(`모델 노후 <span class="small dim">CUSUM · 추세 · 모델 나이별 적중</span>`, (dec.consensus || {}).n ? `<div class="small ${dec.status === "decaying" ? "bad-t" : dec.status === "watch" ? "warn-t" : "good"}">${esc(dec.message || "")}</div>
       ${dLine([{ data: decRoll, color: "var(--accent)" }], { bands: [{ y: dec.consensus.reference ?? 0.5, color: "var(--muted)", label: "초기 적중" }], yfmt: (v) => (v * 100).toFixed(0) + "%" })}

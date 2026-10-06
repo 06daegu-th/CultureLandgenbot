@@ -191,6 +191,20 @@ def next_close(cal: MarketCalendar, now: datetime) -> datetime:
     raise RuntimeError("30일 안에 폐장 없음 — 캘린더 확인")
 
 
+US_HOLIDAY_KO = {"New Year's Day": "새해 첫날", "Martin Luther King Jr. Day": "마틴 루서 킹 데이", "Washington's Birthday": "대통령의 날",
+                 "Good Friday": "성금요일", "Memorial Day": "메모리얼 데이", "Juneteenth National Independence Day": "노예해방 기념일",
+                 "Independence Day": "독립기념일", "Labor Day": "노동절", "Thanksgiving Day": "추수감사절", "Christmas Day": "성탄절"}
+
+
+def holiday_ko(name: str | None) -> str | None:
+    """미국 휴장일 이름을 한국어로 ('Independence Day (observed)' → '독립기념일 대체 휴장'). 모르는 이름은 그대로."""
+    if not name:
+        return name
+    base, obs = (name[:-len(" (observed)")], True) if name.endswith(" (observed)") else (name, False)
+    ko = US_HOLIDAY_KO.get(base)
+    return (ko + (" 대체 휴장" if obs else "")) if ko else name
+
+
 def clock_status(now: datetime, markets: dict[str, MarketCalendar] | None = None) -> dict:
     """시장 시계: 시장별 단계 · 현지 시각 · 오늘 세션 · 다음 개장/폐장 · 남은 시간 · 휴장 이름 · 특이사항."""
     from zoneinfo import ZoneInfo
@@ -214,6 +228,12 @@ def clock_status(now: datetime, markets: dict[str, MarketCalendar] | None = None
             "next_open": no.isoformat(), "next_open_kst": no.astimezone(kst).strftime("%m-%d %H:%M KST"),
             "next_close": nc.isoformat(), "next_close_kst": nc.astimezone(kst).strftime("%m-%d %H:%M KST"),
             "next_event": "폐장" if ph is Phase.OPEN else "개장", "seconds_to_next": int((nxt - t).total_seconds()),
+            # v18: 사람이 읽는 상태 · 휴장 안내 · 서머타임
+            "light": "🟢" if ph is Phase.OPEN else "🟡" if trading and sc in ("pre_market", "after_hours", "pre_auction") else "🔴",
+            "notice": None if trading else (f"오늘 {'한국' if key == 'KRX' else '미국'} 증시는 휴장입니다"
+                                            + (f" ({holiday_ko(cal.holiday_name(d))})" if cal.holiday_name(d) else " (주말)")
+                                            + f" · 다음 개장 {no.astimezone(kst).strftime('%m/%d %H:%M')} 한국시간"),
+            "dst": bool(t.dst()) if key != "KRX" else None,
         }
     return {"now": now.isoformat(), "now_kst": now.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S KST"), "markets": out,
             "calendar_source": CALENDAR_SOURCE, "calendar_ok": bool(HOLIDAY_NAMES.get("KRX")) and bool(HOLIDAY_NAMES.get("US"))}

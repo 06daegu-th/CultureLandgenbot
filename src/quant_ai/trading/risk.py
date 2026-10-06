@@ -32,6 +32,7 @@ class RiskEngine:
         self.buy_block: str | None = None  # Trading Readiness 가 NOT READY 면 사유
         self.event_caps: dict[str, tuple[float, str]] = {}  # 종목 → (수량 배수 0~1, 사유) · 실적 발표 직전 등
         self.portfolio_gate = None  # (종목, 수량, 가격, 포트폴리오, 가격들) → (최대 수량, 사유|None) · 업종/묶음/VaR
+        self.max_positions: int | None = None  # v29 증명 프로젝트: 보유 종목 수 한도 (새 종목 매수만 막음)
 
     def start_day(self, day: date, equity: float, orders_so_far: int = 0) -> None:
         """orders_so_far: 오늘 이미 낸 주문 수 (프로세스 재시작/여러 사이클에 걸쳐 한도 유지)."""
@@ -76,6 +77,10 @@ class RiskEngine:
             return RiskDecision(False, None, [f"일 손실 한도 {L.max_daily_loss_pct:.1%} 도달 → 신규 매수 중단"])
         if order.prob_up is not None and order.prob_up < L.min_confidence:
             return RiskDecision(False, None, [f"확률 {order.prob_up:.2f} < 최소 {L.min_confidence:.2f}"])
+        if self.max_positions and portfolio.qty(order.symbol) <= 0:
+            held = sum(1 for p in portfolio.positions.values() if p.qty)
+            if held >= self.max_positions:
+                return RiskDecision(False, None, [f"보유 종목 수 한도 {self.max_positions}종목 (증명 프로젝트 규칙)"])
 
         qty = order.qty
         cur_val = portfolio.qty(order.symbol) * price

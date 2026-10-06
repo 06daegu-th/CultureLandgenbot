@@ -74,7 +74,7 @@ function alertRow(a) {
   const [label, ic0] = ALERT_KINDS[a.kind] || ["알림", "🔔"];
   const ic = a.kind === "price" && dir === "down" ? "📉" : ic0;
   return `<a class="al-it lv-${esc(a.level)} ${a.id > AL.seen ? "new" : ""} ${dir ? "dir-" + dir : ""}" href="${esc(a.link || "#control")}">
-    <span class="al-ic">${ic}</span><div style="min-width:0;flex:1"><div class="al-t"><b>${esc(a.title)}</b></div>
+    <span class="al-ic">${a.symbol ? stockLogo(a.symbol, "", 26) : ic}</span><div style="min-width:0;flex:1"><div class="al-t"><b>${esc(a.title)}</b></div>
     ${a.body ? `<div class="xs muted al-b">${esc(a.body)}</div>` : ""}<div class="xs dim">${esc(label)} · ${ago(a.ts)}</div></div></a>`;
 }
 function renderBellPanel() {

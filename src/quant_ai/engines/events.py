@@ -266,8 +266,10 @@ def event_risk(symbol: str, events: list[dict], today: date, sigma: float | None
             "drivers": [{"title": e["title"], "d_label": e["d_label"], "weight": round(p, 3)} for e, p in sorted(parts, key=lambda x: -x[1])[:5]]}
 
 
-def event_caps(symbols, events: list[dict], today: date, mode: str = "reduce") -> dict[str, tuple[float, str]]:
-    """RiskEngine.event_caps 용. mode: reduce(기본 — 실적 D-1 이내 ×0.5) · block(×0) · off."""
+def event_caps(symbols, events: list[dict], today: date, mode: str = "smart") -> dict[str, tuple[float, str]]:
+    """RiskEngine.event_caps 용. mode:
+    smart (기본, v19) — 실적 발표 D-1 이내는 신규 매수 막음(×0), D-3 이내 ×0.75, FOMC·CPI 당일 고베타 ×0.75
+    reduce — 실적 D-1 이내 ×0.5 · block — 하나라도 걸리면 ×0 · off — 끔."""
     if mode == "off":
         return {}
     # 저장된 캘린더의 D-day 는 만든 날 기준 — 자정이 지나면 하루씩 어긋나므로 주문하는 오늘 기준으로 다시 계산
@@ -276,7 +278,10 @@ def event_caps(symbols, events: list[dict], today: date, mode: str = "reduce") -
     for s in symbols:
         r = event_risk(s, events, today)
         if r["buy_multiplier"] < 1.0:
-            out[s] = (0.0 if mode == "block" else r["buy_multiplier"], r["reason"])
+            m = r["buy_multiplier"]
+            if mode == "block" or (mode == "smart" and m <= 0.5):
+                m = 0.0
+            out[s] = (m, r["reason"] + (" → 신규 매수 보류" if m == 0 else ""))
     return out
 
 

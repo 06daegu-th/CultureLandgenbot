@@ -124,6 +124,47 @@ def build_default_scheduler(app, mode) -> Scheduler:
                 NewsCollector(st.news_feeds).collect(s)
         sch.add("news", news, 300, "open")
         sch.add("news_offhours", news, 1800, "closed")
+
+        def stock_news(now):  # v26: 관심·보유 종목별 뉴스 (덜 알려진 종목도 뉴스가 붙게)
+            from .alerts import focus_symbols
+            from .data.collectors.news import collect_stock_news
+            with session_scope(app.engine) as s:
+                r = collect_stock_news(s, list(focus_symbols(app)))
+            from . import ops as _ops
+            _ops.set_state(app.engine, "stock_news_status", {"at": now.isoformat(), **r})
+        if os.environ.get("QUANT_STOCK_NEWS", "true").lower() != "false":
+            sch.add("stock_news", stock_news, 1800, "always")
+    def signals2_job(now):  # v28: 신호 엔진 2.0 — 새 일봉이 생기면 그날 후보를 계산·봉인 (전진 기록)
+        from . import signals2 as S2
+        S2._CACHE.clear()
+        S2.cached(app, "KR")
+    sch.add("signals2", signals2_job, 3600, "always")
+
+    def datacheck_job(now):  # v29: 하루 한 번 데이터 정합성 점검 (자동 갱신이 멈춰도 '밀림'을 기록)
+        from .datacheck import run as _datacheck
+        _datacheck(app, now=now)
+    sch.add("datacheck", datacheck_job, 24 * 3600, "closed")
+
+    def proof_job(now):  # v29 증명 프로젝트: 장 마감(15:40 KST) 뒤 하루 한 번 봉인 기록
+        from .proof import record_day
+        record_day(app, now)
+    sch.add("proof_day", proof_job, 1800, "always")
+
+    def autopilot_job(now):  # v30 AI 자동매매: 장중 하루 한 번 결정 (가상 장부는 늘 · 실제 계좌는 관문 통과 + 켬)
+        from .autopilot import run as _ap_run
+        _ap_run(app, now)
+    sch.add("autopilot", autopilot_job, 900, "open")
+
+    def autopilot_goal(now):  # 목표 현실성(보지 않은 기간 기반) 하루 한 번 다시 계산
+        from .autopilot import refresh_goal
+        refresh_goal(app)
+    sch.add("autopilot_goal", autopilot_goal, 24 * 3600, "closed")
+
+    def indices(now):  # v27: 진짜 지수 (코스피·코스닥·나스닥·S&P500·다우) — 키 불필요, 실패하면 이전 값 + 대용
+        from .data.collectors.indices import collect_indices
+        collect_indices(app.engine)
+    if os.environ.get("QUANT_INDICES", "true").lower() != "false":
+        sch.add("indices", indices, 1800, "always")
     # 키는 실행 중에 .env 에서 다시 읽힌다 (keys.refresh) → 작업은 항상 등록하고, 키가 없을 때만 건너뛴다
     from .keys import note_error
     from .keys import refresh as _keys_refresh
@@ -189,6 +230,15 @@ def build_default_scheduler(app, mode) -> Scheduler:
             # 국내 정규장 안에서만, 시가 직후 급변(09:00~09:10)과 종가 동시호가(15:20~) 는 피한다
             if krx.phase(now) is not Phase.OPEN or not (KRX_TRADE_START <= local <= KRX_TRADE_END):
                 return
+            if mode is Mode.LIVE:
+                from .autopilot import live_enabled
+                try:
+                    taken = live_enabled(app)  # v30: 실제 계좌를 AI 자동매매가 맡으면 코어 전략은 같은 계좌에 주문하지 않는다
+                except Exception as e:  # noqa: BLE001 - 판단 못 하면 예전처럼 코어 전략 (AI 자동매매는 관문을 못 넘은 것으로 본다)
+                    log.warning("AI 자동매매 연결 여부 확인 실패: %s", e)
+                    taken = False
+                if taken:
+                    return
             app.run_core_satellite(mode, ts=now)
         sch.add("core_satellite", core_satellite, 3600, "open")
 
@@ -202,9 +252,8 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("decide", lambda now: app.decide(), 30 * 60, "always")
 
     # 주가 자동 갱신: 설정이 없어도 ./run.sh data 가 받아 둔 기본 위치가 있으면 쓴다 (없으면 데이터가 낡아 매매 중단)
-    marcap_dir = os.environ.get("QUANT_MARCAP_DIR") or next(
-        (str(p / "data") for p in (Path(os.environ.get("QUANT_HOME") or Path.home() / ".quant-ai") / "data" / "marcap",
-                                   Path("data/marcap")) if (p / ".git").exists()), None)
+    from .data.collectors.marcap import default_dir as _marcap_default
+    marcap_dir = _marcap_default()
     if marcap_dir and mode in (Mode.PAPER, Mode.SHADOW, Mode.LIVE, Mode.RESEARCH, Mode.PREDICT):
         from .data.collectors.marcap import sync_marcap
 
@@ -215,6 +264,11 @@ def build_default_scheduler(app, mode) -> Scheduler:
             except (subprocess.SubprocessError, OSError) as e:  # 네트워크 장애 → 기존 파일로 계속
                 log.warning("marcap 갱신 실패: %s", e)
             app.ingest_krx(marcap_dir, years=3)
+            try:  # v29: 새 일봉을 받으면 바로 정합성 점검 (원천 · 수정주가 · 외부 시세 대조)
+                from .datacheck import run as _datacheck
+                _datacheck(app, now=now)
+            except Exception as e:  # noqa: BLE001 - 점검 실패가 갱신을 막지 않게
+                log.warning("데이터 점검 실패: %s", e)
         sch.add("krx_data", krx_data, 6 * 3600, "closed")
 
         def krx_bootstrap(now):
@@ -273,9 +327,10 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("market_pulse", lambda now: market_pulse(app, now), 3600, "always")
         sch.add("event_reanalyze", lambda now: event_reanalyze(app, now), 600, "always")
         if os.environ.get("QUANT_COMMUNITY", "true").lower() != "false":
-            from .alerts import focus_symbols
             from .data.collectors.community import collect as community
-            sch.add("community", lambda now: community(app.engine, list(focus_symbols(app))), 1800, "always")
+            from .data.collectors.community import symbols_for as community_syms
+            # v27: 관심·보유 + 오늘 많이 움직인 종목 (최대 25)
+            sch.add("community", lambda now: community(app.engine, community_syms(app)), 1800, "always")
         # 야간: 검증 사다리 평가 (승격은 한 칸씩 · 강등은 즉시 Shadow 로) → 다음 사이클부터 적용
         sch.add("ladder", lambda now: app.ladder(), 6 * 3600, "closed")
         # 예측 장부 봉인(매시간) · 결과 매칭(1·5·20일, 장외) · 독립 평가(야간)
@@ -366,6 +421,8 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("retrain_candidate", lambda now: app.auto_retrain(now), 24 * 3600, "closed")
     else:
         sch.add("retrain_candidate", lambda now: app.train_candidate(), 24 * 3600, "closed")
+    from . import goal
+    sch.add("dca", lambda now: goal.dca_run(app, now), 3600, "always")  # v19: 월 적립일이면 한 번 (모의 장부 입금 · 실계좌는 알림)
     from .governance import guard_scheduler
     guard_scheduler(sch, app)  # 상용 모드면 상용 불가 소스(네이버·Yahoo 등) 수집을 실행 시점에 멈춘다
     return sch

@@ -173,6 +173,8 @@ class QuantAI:
             if codes:
                 universe[str(m)] = codes
         ops.set_state(self.engine, "krx_universe", universe)
+        if ds.facts:  # v29: 시가총액 · 상장주식수 · 수정주가 이벤트 (종목 화면 시가총액 · 데이터 점검)
+            ops.set_state(self.engine, "krx_facts", {"at": datetime.now(UTC).isoformat(), "symbols": ds.facts})
         return {"bars": n, "symbols": len(ds.bars), "months": len(universe),
                 "last_date": str(ds.eligible.index.max().date())}
 
@@ -238,6 +240,8 @@ class QuantAI:
             bars, bench, sentiment = self.market_data()
         cfg = config or BacktestConfig(horizon=self.horizon, risk=self.settings.risk, costs=self.settings.costs,
                                        initial_cash=self.settings.initial_cash)
+        from .backtest.backtester import effective_config
+        cfg = effective_config(cfg, bars)  # 종목이 20개 미만이면 순위 모델 대신 '오를까' 모델
         name = name or f"quant-{cfg.model_kind}"
         result = Backtester(cfg).run(bars, bench, sentiment)
         if result.model is None:
@@ -251,11 +255,11 @@ class QuantAI:
         result.metrics["n_trials"] = n_trials
         result.metrics["dsr"] = deflated_sharpe(result.metrics.pop("daily_returns"), n_trials)
         # 최종 모델은 전체(라벨 확정) 데이터로 재학습
-        data = build_dataset(bars, cfg.horizon, regime=regime_series(bench)["score"], sentiment=sentiment)
+        data = build_dataset(bars, cfg.horizon, regime=regime_series(bench)["score"], sentiment=sentiment, target=cfg.target)
         train = data.dropna(subset=["label"])
-        model = Predictor(cfg.model_kind, cfg.horizon).fit(train[feature_columns(data)], train["label"])
+        model = Predictor(cfg.model_kind, cfg.horizon, target=cfg.target).fit(train[feature_columns(data, cfg.target)], train["label"])
         rec = self.registry.register_candidate(model, name, result.metrics, {
-            "horizon": cfg.horizon, "model_kind": cfg.model_kind, "train_window": cfg.train_window,
+            "horizon": cfg.horizon, "model_kind": cfg.model_kind, "train_window": cfg.train_window, "target": cfg.target,
             "min_prob": cfg.min_prob, "train_end": str(train.index.get_level_values(0).max()),
             "embargo": cfg.embargo, "reason": reason,  # 계보: 왜 · 무엇에서 · 어떤 데이터로 만들었나
             "parent": (lambda c: f"{c.name}@{c.version}" if c else None)(self.registry.champion()),
@@ -322,14 +326,14 @@ class QuantAI:
         """연구/예측 모드: 모든 AI 의 독립 의견 → 합의 신호 (주문은 내지 않음). market="US" 면 미국 유니버스."""
         if market == "US":
             from . import global_market
-            bars, bench, sentiment = global_market.market_data(self, as_of)
+            bars, bench, sentiment = global_market.market_data(self, as_of, extra=symbols)
         else:
             bars, bench, sentiment = self.market_data(as_of)
         if not bars:
             return []
         reg = regime_series(bench)
-        data = build_dataset(bars, self.horizon, regime=reg["score"], sentiment=sentiment)
-        feats = feature_columns(data)
+        data = build_dataset(bars, self.horizon, regime=reg["score"], sentiment=sentiment)  # cs_*(순위) 도 함께 — 종목 선택 모델용
+        feats = [c for c in data.columns if c not in ("fwd_ret", "label")]
         model_rec, model = self.active_model()
         challenger_rec, challenger = self._load_model("shadow")
         if model_rec is not None and model_rec.status == "shadow":
@@ -552,11 +556,12 @@ class QuantAI:
 
     def trade(self, decisions: list[Decision], mode: Mode, ts: datetime | None = None,
               quotes: dict[str, MarketQuote] | None = None, signals: list[Signal] | None = None,
-              book: str | None = None) -> list:
+              book: str | None = None, protect: set[str] | None = None) -> list:
         """한 번의 매매 사이클. 같은 장부의 사이클은 동시에 하나만 돈다.
 
         signals 를 주면 합의 신호 대신 그 목표 비중을 쓴다 (코어-위성).
         book 을 주면 별도의 가상 장부(Paper)로 실행한다 (AI 기여도 측정용).
+        protect 의 종목은 이 사이클에서 절대 주문하지 않는다 (예: 사람이 산 적립 ETF — AI 가 팔지 않게).
         """
         if mode not in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
             raise ValueError(f"{mode} 모드는 주문을 내지 않습니다")
@@ -564,7 +569,7 @@ class QuantAI:
             raise ValueError("가상 장부는 PAPER 로만 실행")
         name = book or mode.value
         with ops.trading_lock(self.engine, f"trade-{name}", Path(self.settings.artifacts_dir) / "locks"):
-            return self._trade(decisions, mode, ts or datetime.now(UTC), quotes, signals, book)
+            return self._trade(decisions, mode, ts or datetime.now(UTC), quotes, signals, book, protect)
 
     def _live_capital_capped(self) -> bool:
         """소액 상한(QUANT_LIVE_MAX_CAPITAL)은 실제 돈에만 적용. 모의투자(KIS_ENV=demo)는 계좌 전체로 운용."""
@@ -760,7 +765,7 @@ class QuantAI:
             log.info("미국 일봉 없음: %s", e)
         return build(self.engine, bars, sector_map(self.engine))
 
-    RETRAIN_VARIANTS = (("logistic", 750), ("logistic", 500), ("gbm", 750))
+    RETRAIN_VARIANTS = (("gbm", 750), ("logistic", 750), ("logistic", 500))  # v20: 16년 실데이터에서 GBM 순위 모델이 가장 나음 (RESEARCH_QUANT_V2 6장)
 
     def auto_retrain(self, now: datetime | None = None, force: bool = False, max_variants: int = 2) -> dict:
         """재학습 후보 자동 생성. 트리거: 데이터 드리프트 · champion 전진 성과 하락 · 마지막 후보 7일 경과.
@@ -816,7 +821,8 @@ class QuantAI:
         return KISBroker(pf, KISClient.from_env(st.artifacts_dir), CostModel(st.costs))
 
     def _trade(self, decisions: list[Decision], mode: Mode, ts: datetime, quotes,
-               signals_override: list[Signal] | None = None, book: str | None = None) -> list:
+               signals_override: list[Signal] | None = None, book: str | None = None,
+               protect: set[str] | None = None) -> list:
         st = self.settings
         name = book or mode.value
         pf = self.load_portfolio(name)
@@ -889,6 +895,13 @@ class QuantAI:
             raise
         from .engines.sector import sector_map
         risk.sectors = sector_map(self.engine)  # 업종 한도 (섹터 엔진 · 국내는 WICS 우선)
+        from .proof import apply_risk as _proof_risk
+        _proof_risk(self, name, risk)  # v29 증명 프로젝트 장부면 보유 종목 수 한도
+        if name == "autopilot":  # v30 AI 자동매매 가상 장부: 같은 규칙 (보유 종목 수 · 종목당 상한)
+            from .autopilot import config as _ap_cfg
+            _c = _ap_cfg(self)
+            risk.max_positions = int(_c["max_positions"])
+            risk.limits = replace(risk.limits, max_position_weight=_c["max_position_weight"], max_order_value=float(_c["principal"]) * _c["max_position_weight"] * 1.5)
         if book is None:  # v13 게이트 — 성과 귀속용 장부(book)에는 적용하지 않는다 (비교가 공정해야 함)
             from . import readiness as _rd
             from .desk import event_caps_for, portfolio_gate
@@ -926,7 +939,7 @@ class QuantAI:
             with session_scope(self.engine) as s:
                 risk.adv |= recent_adv(s, missing)
         engine = ExecutionEngine(broker, risk, journal)
-        fills = engine.rebalance(signals, quotes, ts, mult)
+        fills = engine.rebalance(signals, quotes, ts, mult, tradable=(set(quotes) - set(protect)) if protect else None)
         with session_scope(self.engine) as s:
             snap = pf.snapshot(prices)
             s.add(PortfolioSnapshot(mode=name, ts=ts, **snap))
@@ -948,6 +961,12 @@ class QuantAI:
         if fills and mode is not Mode.PAPER:
             self.notifier.send(f"[{mode.value}] 체결 {len(fills)}건: " + ", ".join(
                 f"{f.order.symbol} {'매수' if f.order.side.value == 'buy' else '매도'} {f.qty}@{f.price:,.0f}" for f in fills[:8]))
+        if engine.unknown and mode is Mode.LIVE:
+            # v23: 통신이 끊겨 접수 여부를 모름 → 재시작 복구와 같은 규칙 (신규 매수 중단 + 사람 확인).
+            # 다음 사이클은 증권사 잔고로 장부를 맞춘 뒤 판단하므로 같은 주문이 두 번 나가지 않는다.
+            self.set_kill_switch(True, "통신 끊김 — 주문 접수 여부 불명 (증권사 앱에서 확인 필요)", by="network")
+            self.notifier.send(f"[{mode.value}] 통신 끊김으로 주문 {len(engine.unknown)}건 접수 여부 불명 → 신규 매수 중단(킬스위치). "
+                               f"증권사 앱에서 체결·미체결을 확인한 뒤 킬스위치를 끄세요: {', '.join(engine.unknown[:5])}", "critical")
         if engine.errors:
             self.notifier.send(f"[{mode.value}] 주문 오류 {len(engine.errors)}건: {'; '.join(engine.errors[:3])}", "critical")
         return fills

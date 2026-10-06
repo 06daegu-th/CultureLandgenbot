@@ -3,6 +3,7 @@
   home    홈 화면 구성: 카드 숨기기 · 순서
   theme   다크/라이트 (v16 — 기기 간 동기화)
   widgets 종목 페이지 섹션 숨기기 · 순서 (v16)
+  ui      쉬운 화면(easy, 기본) / 전체 화면(pro) · 시작 안내 숨김 (v19)
   notify  외부 알림: 종류별로 텔레그램/디스코드 · 웹 푸시 켜고 끄기 · 조용한 시간(밤에는 외부 알림 보류, 긴급은 예외)
            설정이 없으면 .env 기본값(QUANT_NOTIFY_KINDS 등)을 그대로 쓴다.
 """
@@ -25,7 +26,7 @@ KST = ZoneInfo("Asia/Seoul")
 def get(engine) -> dict:
     p = ops.get_state(engine, KEY)
     return {"home": p.get("home") or {"hidden": [], "order": []}, "notify": p.get("notify") or {}, "theme": p.get("theme"),
-            "widgets": p.get("widgets") or {}, "at": p.get("at")}
+            "widgets": p.get("widgets") or {}, "ui": {"mode": "easy", "guide_hidden": False} | (p.get("ui") or {}), "at": p.get("at")}
 
 
 def _hhmm(v, default: str) -> str:
@@ -56,6 +57,11 @@ def save(engine, body: dict) -> dict:
         ok = re.compile(r"^pf-[a-z]{2,12}$")
         cur["widgets"] = {"hidden": [x for x in w.get("hidden") or [] if ok.match(str(x))][:30],
                           "order": [x for x in dict.fromkeys(w.get("order") or []) if ok.match(str(x))][:30]}
+    if "ui" in body:  # v19: 쉬운 화면 / 전체 화면
+        u = body["ui"] or {}
+        if u.get("mode", cur["ui"]["mode"]) not in ("easy", "pro"):
+            raise ValueError("ui.mode 는 easy/pro")
+        cur["ui"] = {"mode": u.get("mode", cur["ui"]["mode"]), "guide_hidden": bool(u.get("guide_hidden", cur["ui"]["guide_hidden"]))}
     cur["at"] = datetime.now(KST).isoformat()
     ops.set_state(engine, KEY, cur)
     return cur

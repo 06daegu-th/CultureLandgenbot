@@ -82,7 +82,10 @@ def news_board(app, days: int = 3, only: str | None = None, symbol: str | None =
                           "spark": [round(float(x), 2) for x in b["close"].iloc[-20:]] if b is not None and len(b) else [],
                           "ai": rec.action if rec else None})
         ev = ex.get("event") or (rep["events"] or ["other"])[0]
-        cards.append({"cluster": cid, "title": rep["title"], "summary": ex.get("summary"), "by": ex.get("by", "rule"),
+        from .newsdetail import PRIMARY, level
+        lv = level(max(a["imp"] for a in g), ev, tone, len({a["source"] for a in g}), float(ws.max()),
+                   any(p in (a["source"] or "").lower() for a in g for p in PRIMARY))
+        cards.append({"cluster": cid, "id": rep["id"], "level": lv, "title": rep["title"], "summary": ex.get("summary"), "by": ex.get("by", "rule"),
                       "tone": TONE(tone), "score": round(tone, 2), "confidence": ex.get("confidence"), "event": ev, "event_ko": EVENT_KO.get(ev, ev),
                       "rumor": bool(ex.get("rumor")), "why": ex.get("matched") or [], "n": len(g),
                       "sources": sorted({a["source"] for a in g if a["source"]}), "trust": round(float(ws.max()), 2),

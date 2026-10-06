@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-ai"
-version = "0.17.0"
+version = "0.31.0"
 description = "Self-reviewing quant AI: data collection, regime/news/feature engines, prediction, backtest, paper/shadow/live trading and daily review"
 requires-python = ">=3.11"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
     "defusedxml>=0.7",
     "pyarrow>=15",  # marcap(KRX) parquet 읽기 — 코어 전략의 데이터 원천
     "holidays>=0.50",  # 거래소 휴장일 (XKRX · XNYS) — 시장 캘린더
+    "certifi>=2023.7",  # HTTPS 인증서 묶음 — 시스템 인증서가 없는 파이썬에서도 외부 소스가 열리게 (tls.py)
 ]
 
 [project.optional-dependencies]
@@ -31,7 +32,7 @@ quant-ai = "quant_ai.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-quant_ai = ["web/static/*"]
+quant_ai = ["web/static/*", "web/static/vendor/*", "assets/logos/*", "assets/logos/us/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -285,6 +285,8 @@ def test_event_caps_use_todays_dday_not_stored_one():
     today = date(2026, 10, 6)  # 화요일
     stale = [{"date": "2026-10-07", "kind": "earnings", "title": "실적", "symbol": "005930", "market": "KR", "importance": 0.9,
               "d_day": 2, "d_label": "D-2", "trading_days": 2, "label": "실적"}]  # 어제(10/5) 만든 기록
-    caps = event_caps(["005930"], stale, today)
+    caps = event_caps(["005930"], stale, today, "reduce")
     assert caps["005930"][0] == 0.5 and "D-1" in caps["005930"][1]
+    smart = event_caps(["005930"], stale, today)  # v19 기본: 실적 D-1 이내는 신규 매수 보류
+    assert smart["005930"][0] == 0.0 and "신규 매수 보류" in smart["005930"][1]
     assert stale[0]["d_day"] == 2  # 원본은 건드리지 않음

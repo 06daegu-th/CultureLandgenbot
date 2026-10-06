@@ -3,7 +3,7 @@
 - ``PaperBroker``: 가상매매. 참조가격 + 슬리피지로 즉시 체결.
 - ``ShadowBroker``: 실제 주문 파이프라인을 그대로 타되, 마지막 전송만 하지 않고
   '실제로 냈다면' 받았을 호가(매수=매도1호가, 매도=매수1호가)로 가상 체결해 기록.
-- ``LiveBroker``: 증권사 API 연결부. 여러 안전장치를 통과해야만 생성 가능.
+- ``LiveBroker``: 증권사가 설정되지 않은 LIVE 요청을 안전장치 검사 뒤 거절 (실제 주문은 trading/kis.py 의 KISBroker).
 """
 
 from __future__ import annotations
@@ -103,9 +103,19 @@ class ShadowBroker(PaperBroker):
         return self._fill(order, ref, ts, quote)
 
 
-class LiveBroker(Broker):
-    """실계좌 주문. 구현체는 증권사 API(예: 한국투자증권 KIS Open API)로 작성한다.
+class BrokerNotConfigured(RuntimeError):
+    """실전(LIVE) 모드인데 실제 증권사 연결(QUANT_BROKER=kis)이 설정되지 않음 — 주문을 내지 않는다 (fail-closed)."""
 
+
+class LiveBroker(Broker):
+    """실전 모드의 '안전장치 겸 자리 표시자' — 증권사가 설정되지 않았을 때만 쓰인다.
+
+    책임 분리 (v23 정리):
+      Broker (이 파일)          주문 인터페이스: submit(order, quote, ts) → Fill | None
+      PaperBroker/ShadowBroker  가상 체결 (모의·그림자 장부)
+      KISBroker (trading/kis.py) 실제 증권사 주문: 토큰 → 주문 → 체결 조회 → 잔량 취소 → 잔고 동기화 (실계좌·KIS 모의 모두)
+      LiveBroker (이 클래스)    QUANT_BROKER 가 kis 가 아닐 때 LIVE 를 요청하면 생성된다 — 안전장치를 검사한 뒤
+                                어떤 주문도 내지 않고 BrokerNotConfigured 로 멈춘다.
     생성 시 ``Settings.assert_live_allowed`` 를 강제하며, 총 투입 자본을 live_max_capital 로 제한한다.
     """
 
@@ -120,8 +130,8 @@ class LiveBroker(Broker):
         super().__init__(portfolio)
         self.settings = settings
 
-    def submit(self, order: Order, quote: MarketQuote, ts: datetime) -> Fill | None:  # pragma: no cover
-        raise NotImplementedError(
-            "증권사 주문 API 연동 필요: 토큰 발급 → 주문 전송 → 체결 조회 → Fill 반환. "
-            "Shadow 모드로 충분히 검증한 뒤 구현/활성화하세요."
+    def submit(self, order: Order, quote: MarketQuote, ts: datetime) -> Fill | None:
+        raise BrokerNotConfigured(
+            "실전 주문을 보낼 증권사가 설정되지 않았습니다 — .env 에 QUANT_BROKER=kis 와 KIS 키를 넣으세요 "
+            "(실제 주문은 trading/kis.py 의 KISBroker 가 처리합니다). 이 주문은 보내지 않았습니다."
         )

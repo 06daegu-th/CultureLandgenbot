@@ -704,3 +704,23 @@ def test_conflicts_price_earnings_and_news(app):
     ops.set_state(app.engine, "source_failover", {})
     ops.set_state(app.engine, "profile:000030", {})
     ops.set_state(app.engine, "krcons:000030", {})
+
+
+def test_health_reports_instance_only_to_local_and_run_sh_detects_old_server(app, server):
+    """옛 버전 폴더 서버가 포트를 잡고 있으면 새 .env 의 키가 '없음'으로 보인다 → run.sh 가 버전·폴더로 알아본다."""
+    import hashlib
+    import os
+    import subprocess
+    from pathlib import Path
+
+    from quant_ai import __version__
+    st, body = _req(server, "GET", "/api/health")
+    root = Path(__file__).resolve().parents[1]
+    assert st == 200 and body["version"] == __version__ and body["pid"] == os.getpid()
+    assert body["instance"] == hashlib.sha256(os.path.realpath(root).encode()).hexdigest()[:12]
+    st, setup = _req(server, "GET", "/api/setup")
+    assert setup["server"]["version"] == __version__ and "env_file" in setup["server"]
+    sh = (root / "run.sh").read_text()
+    assert "이미 대시보드가 떠 있어 그대로 씁니다" not in sh  # 예전: 옛 서버를 그대로 재사용
+    assert "running_server_is_mine" in sh and "stop_other_server" in sh and "stop)       cmd_stop" in sh
+    assert subprocess.run(["bash", "-n", str(root / "run.sh")]).returncode == 0

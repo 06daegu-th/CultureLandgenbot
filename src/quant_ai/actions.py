@@ -379,14 +379,26 @@ def add_watch(app, symbol: str) -> None:
 
 
 def analyze_symbol(app, symbol: str, say=None) -> dict:
-    """한 종목을 지금 AI 들이 판단 (주문 없음). 국내 종목만 — 해외는 전략·합의 대상이 아니다."""
+    """한 종목을 지금 AI 들이 판단 (주문 없음). 국내 6자리 코드 · 미국 티커(v19 — 미국 일봉을 받아 같은 AI 합의로)."""
     import re as _re
-    if not _re.fullmatch(r"\d{6}", symbol or ""):
-        raise ValueError("국내 종목코드(6자리)만 AI 합의 분석을 합니다")
+    us = bool(_re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", symbol or ""))
+    if not us and not _re.fullmatch(r"\d{6}", symbol or ""):
+        raise ValueError("국내 종목코드(6자리) 또는 미국 티커(예: NVDA)만 AI 분석을 합니다")
     add_watch(app, symbol)
+    if us:
+        from .data.global_stocks import ensure_many
+        from .global_market import BENCH, market_data
+        if say:
+            say(f"{symbol} 미국 일봉 받는 중…")
+        ensure_many(app.engine, [symbol, BENCH])  # 종목 + 비교 지수 (국면·시장 대비 판단에 필요)
+        bars, bench, _ = market_data(app, extra=[symbol])
+        if symbol not in bars:
+            raise ValueError(f"{symbol} 일봉을 받지 못했습니다 — 인터넷 연결(회사망 방화벽·VPN)을 확인하고 다시 눌러 주세요")
+        if bench is None or not len(bench):
+            raise ValueError(f"미국 지수({BENCH}) 일봉을 받지 못했습니다 — 인터넷 연결을 확인하고 다시 눌러 주세요")
     if say:
         say(f"{symbol} AI 판단 중…")
-    ds = app.decide(symbols=[symbol], scenarios=True)
+    ds = app.decide(symbols=[symbol], scenarios=not us, market="US" if us else "KR")
     if not ds:
         return {"symbol": symbol, "skipped": "주가 데이터가 없는 종목"}
     d = ds[0]

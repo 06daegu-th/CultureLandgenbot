@@ -32,6 +32,7 @@ class ExecutionEngine:
         self.journal = journal
         self.min_trade_weight = min_trade_weight  # 이보다 작은 비중 변화는 거래하지 않음 (회전율 억제)
         self.errors: list[str] = []
+        self.unknown: list[str] = []  # v23: 통신 끊김으로 접수 여부를 모르는 주문 → 신규 매수 중단
 
     def rebalance(self, signals: list[Signal], quotes: dict[str, MarketQuote], ts: datetime,
                   exposure_multiplier: float = 1.0, tradable: set[str] | None = None) -> list[Fill]:
@@ -85,14 +86,31 @@ class ExecutionEngine:
             try:
                 fill = self.broker.submit(approved, quotes[order.symbol], ts)
             except Exception as exc:  # noqa: BLE001 - 한 종목 주문 실패가 나머지를 막으면 안 됨
-                self.journal.order(ts, approved, "error", [*decision.reasons, f"브로커 오류: {exc}"], None)
+                # v23: 통신이 끊기면 증권사가 주문을 받았는지 알 수 없다 → 'error'(확정 실패)가 아니라 'unknown'.
+                # 호출한 쪽이 신규 매수를 멈추고(킬스위치) 사람이 증권사 앱에서 확인하게 한다 (재시작 복구와 같은 규칙).
+                net = is_network_error(exc)
+                self.journal.order(ts, approved, "unknown" if net else "error",
+                                   [*decision.reasons, f"{'통신 끊김 — 주문 접수 여부 불명' if net else '브로커 오류'}: {exc}"], None)
                 self.errors.append(f"{order.symbol}: {exc}")
+                if net:
+                    self.unknown.append(f"{order.symbol} {approved.side.value} {approved.qty:.0f}주")
                 continue
             status = "unfilled" if not fill else "filled" if fill.qty >= approved.qty else "partial"
             self.journal.order(ts, approved, status, decision.reasons, fill)
             if fill:
                 fills.append(fill)
         return fills
+
+
+def is_network_error(exc: Exception) -> bool:
+    """통신 오류(응답을 못 받음) vs 증권사의 명확한 거절. 앞의 것은 주문이 들어갔을 수도 있다."""
+    import http.client
+    import socket
+    import urllib.error
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    return isinstance(exc, (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError, socket.timeout)) \
+        or (isinstance(exc, OSError) and not isinstance(exc, (FileNotFoundError, PermissionError)))
 
 
 def signals_from_probs(probs: dict[str, float], min_prob: float, max_weight: float,

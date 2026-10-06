@@ -65,7 +65,21 @@ def _start_temp_postgres() -> str | None:
     return f"postgresql://postgres@127.0.0.1:{port}/postgres"
 
 
+CORE_DEPS = ("numpy", "pandas", "sqlalchemy", "sklearn", "defusedxml", "pyarrow", "holidays", "certifi")
+
+
+def _missing_core() -> list[str]:
+    import importlib.util
+    return [m for m in CORE_DEPS if importlib.util.find_spec(m) is None]
+
+
 def pytest_configure(config):
+    # v23: 의존성이 빠진 환경(예: pip install -e . 없이 pytest 만 설치)에서는 수백 개가 알 수 없는 오류로 깨지는 대신
+    # 처음에 한 줄로 이유를 말하고 멈춘다
+    miss = _missing_core()
+    if miss:
+        raise pytest.UsageError(f"필수 패키지 없음: {', '.join(miss)} — 먼저 `pip install -e \".[dev]\"` 를 실행하세요 "
+                                "(pyproject.toml 의 dependencies 를 설치합니다)")
     if not os.environ.get("QUANT_TEST_DATABASE_URL") and os.environ.get("QUANT_TEST_NO_TEMP_PG") != "1":
         url = _start_temp_postgres()
         if url:
@@ -115,6 +129,9 @@ def _no_profile_network(monkeypatch):
     monkeypatch.setattr(live_quotes, "fetch_us", lambda syms: {})
     monkeypatch.setattr(community, "fetch_stocktwits", _offline)
     monkeypatch.setattr(community, "fetch_naver_board", _offline)
+    monkeypatch.setattr(community, "fetch_naver_mobile", _offline)
+    monkeypatch.setenv("QUANT_INDICES", "false")  # v27: 진짜 지수 받기 작업도 테스트에서 네트워크를 쓰지 않게
+    monkeypatch.setenv("QUANT_STOCK_NEWS", "false")  # v26: 종목별 뉴스 검색 작업은 테스트에서 네트워크를 쓰지 않게
     from quant_ai.data.collectors import dart_docs, investor_flow
     from quant_ai.engines import sector
     monkeypatch.setattr(investor_flow, "fetch_naver", _offline)

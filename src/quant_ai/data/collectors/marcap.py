@@ -36,7 +36,13 @@ def load_marcap(root: str | Path, start_year: int, end_year: int, columns: list[
         if not p.exists():
             p = root / "data" / f"marcap-{y}.parquet"
         if p.exists():
-            frames.append(pd.read_parquet(p, columns=columns or COLS))
+            if columns:
+                frames.append(pd.read_parquet(p, columns=columns))
+                continue
+            try:  # 상장주식수(Stocks)가 있으면 함께 — 시가총액 = 주식수 × 종가 대조용 (v29)
+                frames.append(pd.read_parquet(p, columns=[*COLS, "Stocks"]))
+            except Exception:  # noqa: BLE001 - 열이 없는 파일 (예전 형식·테스트용)
+                frames.append(pd.read_parquet(p, columns=COLS))
     if not frames:
         raise FileNotFoundError(f"{root} 에 marcap-{start_year}~{end_year}.parquet 없음")
     df = pd.concat(frames, ignore_index=True)
@@ -118,6 +124,39 @@ class KRXDataset:
     benchmark: pd.DataFrame
     names: dict[str, str]
     extra_indices: dict[str, pd.DataFrame] = field(default_factory=dict)  # 화면용 (KOSDAQ 대용)
+    facts: dict[str, dict] = field(default_factory=dict)  # v29: 종목별 시가총액 · 상장주식수 · 수정주가 이벤트 (데이터 점검용)
+
+
+ADJ_EVENT_MIN = 0.02  # 기준가가 전일 종가와 2% 넘게 다르면 '가격 조정 이벤트' (액면분할·병합·무상증자·유상증자 권리락 등)
+
+
+def krx_facts(df: pd.DataFrame, codes) -> dict[str, dict]:
+    """원천 자료 자체의 정합성과 수정주가 이벤트를 종목별로 정리 (화면 · 데이터 점검용).
+
+    - 기준가(Close - Changes) ≠ 전일 종가 → 그날 가격 조정 이벤트 (배율 = 기준가 / 전일 종가, 예: 1/50 액면분할 = 0.02)
+    - 시가총액 ≈ 상장주식수 × 종가 (1% 넘게 다르면 불일치로 센다)"""
+    out: dict[str, dict] = {}
+    sub = df[df["Code"].isin(list(codes))].sort_values("Date")
+    for code, g in sub.groupby("Code"):
+        g = g[g["Close"] > 0]
+        g = g[~g["Date"].duplicated(keep="last")]
+        if g.empty:
+            continue
+        base = g["Close"] - g["Changes"]
+        prev = g["Close"].shift(1)
+        ratio = (base / prev).where((prev > 0) & (base > 0))
+        ev = g[(ratio - 1).abs() > ADJ_EVENT_MIN]
+        events = [{"date": str(d.date()), "factor": round(float(r), 4)} for d, r in zip(ev["Date"], ratio[ev.index], strict=True)]
+        last = g.iloc[-1]
+        rec = {"date": str(last["Date"].date()), "close": float(last["Close"]), "marcap": float(last["Marcap"]),
+               "market": str(last.get("Market", "")), "adj_events": events[-10:], "n_adj_events": len(events), "rows": int(len(g))}
+        if "Stocks" in g and pd.notna(last.get("Stocks")):
+            rec["shares"] = float(last["Stocks"])
+            implied = g["Stocks"].astype(float) * g["Close"].astype(float)
+            ok = implied > 0
+            rec["marcap_mismatch"] = int(((g["Marcap"][ok] / implied[ok] - 1).abs() > 0.01).sum())
+        out[code] = rec
+    return out
 
 
 def build_krx_dataset(root: str | Path, start_year: int, end_year: int, top_n: int = 100,
@@ -134,10 +173,18 @@ def build_krx_dataset(root: str | Path, start_year: int, end_year: int, top_n: i
             extra["KOSDAQ"] = cap_weighted_index(df, "KOSDAQ")
         except (ValueError, ZeroDivisionError) as e:  # 화면용이라 실패해도 적재는 계속
             log.warning("KOSDAQ 대용 지수 계산 실패: %s", e)
-    return KRXDataset(bars, elig, cap_weighted_index(df, "KOSPI"), {c: names.get(c, c) for c in bars}, extra)
+    return KRXDataset(bars, elig, cap_weighted_index(df, "KOSPI"), {c: names.get(c, c) for c in bars}, extra, krx_facts(df, list(bars)))
 
 
 MARCAP_REPO = os.environ.get("QUANT_MARCAP_REPO", "https://github.com/FinanceData/marcap.git")
+
+
+def default_dir() -> str | None:
+    """일봉 자동 갱신에 쓰는 marcap 위치: QUANT_MARCAP_DIR → ./run.sh data 가 받아 둔 기본 위치 (없으면 None = 자동 갱신 불가)."""
+    if os.environ.get("QUANT_MARCAP_DIR"):
+        return os.environ["QUANT_MARCAP_DIR"]
+    home = Path(os.environ.get("QUANT_HOME") or Path.home() / ".quant-ai")
+    return next((str(p / "data") for p in (home / "data" / "marcap", Path("data/marcap")) if (p / ".git").exists()), None)
 
 
 def sync_marcap(data_dir, years: int = 5, today=None, run=None) -> Path:

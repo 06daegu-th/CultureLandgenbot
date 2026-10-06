@@ -43,7 +43,7 @@ QUANT_DISCORD_WEBHOOK=https://...   # 체결·긴급청산·장부불일치·작
 아래는 같은 일을 직접 할 때.
 
 ```bash
-quant-ai collect krx --marcap-dir /data/marcap/data --years 3 --top 100   # 실제 KRX 데이터 적재
+quant-ai collect krx --marcap-dir /data/marcap/data --years 5 --top 100   # 실제 KRX 데이터 적재
 quant-ai kis-check                    # 토큰 → 잔고 → 삼성전자 현재가/호가 (주문 없음)
 quant-ai kis-check --test-order       # 모의 전용: 체결 안 될 가격 1주 주문 → 조회 → 즉시 취소
 quant-ai cycle --mode live --core-only   # 코어 전용 1사이클: 잔고대조 → 팩터 코어 → 리스크 → 주문 → 체결확인

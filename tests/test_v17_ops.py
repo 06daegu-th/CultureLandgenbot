@@ -256,6 +256,6 @@ def test_validation_shows_kis_setup_and_eta(app):
     from quant_ai.validation import progress
     p = progress(app)
     kis = next(i for i in p["items"] if i["key"] == "kis")
-    assert "APP_KEY ✗" in kis["detail"] and len(kis["steps"]) == 5
+    assert "APP_KEY ✗" in kis["detail"] and len(kis["steps"]) == 6 and any("--e2e" in s for s in kis["steps"])
     sl = next(i for i in p["items"] if i["key"] == "slippage")
     assert "예상 완료일 계산 불가" in sl["detail"]

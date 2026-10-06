@@ -41,6 +41,8 @@ REGIME_LABELS = {"bull_quiet": "안정적 상승", "bull_volatile": "변동성 �
                  "bear_quiet": "완만한 하락", "bear_volatile": "변동성 하락", "crisis": "위기"}
 from ..analysts.analysts import ROLE_TITLES as ANALYST_LABELS  # noqa: E402
 
+AI_ICON = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡", "NO_TRADE": "⚪"}
+
 ROLE_DESC = {"primary": "뉴스 · 이벤트 · 선반영", "nvidia": "거시 · 시장 상태 · 해외 연동", "risk": "사지 말아야 할 이유 · 거부권",
              "panel": "공시 · 실적 · 기업 이벤트"}
 
@@ -111,8 +113,23 @@ class DashboardAPI:
         now = time.monotonic()
         if self._cache and now - self._cache[0] < 10:
             return self._cache[1]
+        # v26: 10초~3분 지난 값은 바로 돌려주고 뒤에서 새로 계산 (화면을 열 때마다 1~2초 기다리지 않게)
+        if self._cache and now - self._cache[0] < 180:
+            if not getattr(self, "_dash_busy", False):
+                import threading
+                self._dash_busy = True
+
+                def bg():
+                    try:
+                        self._cache = (time.monotonic(), self._dashboard())
+                    except Exception as e:  # noqa: BLE001 - 다음 요청이 다시 시도
+                        log.info("대시보드 새로 계산 실패: %s", e)
+                    finally:
+                        self._dash_busy = False
+                threading.Thread(target=bg, name="dash-refresh", daemon=True).start()
+            return self._cache[1]
         out = self._dashboard()
-        self._cache = (now, out)
+        self._cache = (time.monotonic(), out)
         return out
 
     def _dashboard(self) -> dict:
@@ -382,6 +399,15 @@ class DashboardAPI:
                               "pnl_pct": _f(px / p["avg_price"] - 1 if p["avg_price"] else 0),
                               "weight": _f(val / last.equity if last.equity else 0)})
         positions.sort(key=lambda x: -(x["value"] or 0))
+        if positions:  # v18: 보유종목 옆 AI 판단 (NVDA 🟢 BUY)
+            held = [p["symbol"] for p in positions]
+            sub = select(ConsensusRecord.symbol, func.max(ConsensusRecord.id).label("mid")).where(
+                ConsensusRecord.symbol.in_(held)).group_by(ConsensusRecord.symbol).subquery()
+            ai = {c.symbol: c for c in s.scalars(select(ConsensusRecord).join(sub, ConsensusRecord.id == sub.c.mid))}
+            for p in positions:
+                c = ai.get(p["symbol"])
+                p["ai"] = None if c is None else {"action": c.action, "icon": AI_ICON.get(c.action, "⚪"),
+                                                  "prob_up": _f(c.prob_up), "at": _ts(c.as_of)}
         first = snaps[0].equity
         return {"cash": _f(last.cash, 0), "equity": _f(last.equity, 0), "ts": _ts(last.ts),
                 "return_pct": _f(last.equity / self.app.settings.initial_cash - 1),
@@ -415,6 +441,15 @@ class DashboardAPI:
             if r.action in ("BUY", "SELL") and ti in tset:
                 out["markers"].append({"time": ti, "action": r.action, "confidence": r.confidence})
         return out
+
+    @staticmethod
+    def _display_name(symbol: str, inst: dict) -> str:
+        """화면에 보일 종목 이름 — 해외 종목은 'NVDA' 대신 '엔비디아'처럼 한글 이름을 먼저."""
+        from ..data.global_stocks import global_name
+        n = inst[symbol].name if symbol in inst else None
+        if not n or n.upper() == symbol.upper() or not re.search(r"[가-힣]", n):
+            n = global_name(symbol) or n
+        return n or symbol
 
     # ------------------------------------------------------------------ 종목 분석
     def analysis(self, symbol: str) -> dict:
@@ -450,7 +485,7 @@ class DashboardAPI:
             b = self._bars(s, [symbol]).get(symbol)
         return {
             "checklist": self._checklist(c, b), "range": self._range(b, (c.payload or {}).get("horizon", 5) if c else 5),
-            "symbol": symbol, "name": inst[symbol].name if symbol in inst else symbol,
+            "symbol": symbol, "name": self._display_name(symbol, inst),
             "market": inst[symbol].market if symbol in inst else "",
             "last": _f(b["close"].iloc[-1], 2) if b is not None and len(b) else None,
             "chg": _f(b["close"].iloc[-1] - b["close"].iloc[-2], 2) if b is not None and len(b) > 1 else None,
@@ -672,10 +707,19 @@ class DashboardAPI:
         with session_scope(self.engine) as s:
             res = search(s, q, 10)
             cons = self._latest_consensus(s)
+        from ..companies import identity
         for r in res:
             c = cons.get(r["symbol"])
             r["action"] = c.action if c else None
+            idt = identity(None, r["symbol"], r.get("name"))  # v23: 검색 결과에도 같은 신분증 (거래소·영문명·로고)
+            r["exchange"], r["name_en"], r["logo"] = idt["exchange"], idt["name_en"], idt["logo"]
         return {"results": res}
+
+    def company(self, symbol: str) -> dict:
+        from ..companies import identity
+        if not symbol:
+            return {"error": "symbol 필요"}
+        return identity(self.app, symbol)
 
     # ------------------------------------------------------------------ 검증실 · 장부 · 드리프트
     def verify(self) -> dict:
@@ -865,7 +909,9 @@ class DashboardAPI:
         from ..keys import refresh
         if refresh(self.app).get("changed"):  # .env 를 고쳤으면 캐시를 버리고 바로 보여준다
             self._risk_cache.pop("setup", None)
-        return self._cached("setup", 15, lambda: setup_status(self.app))
+        out = self._cached("setup", 15, lambda: setup_status(self.app))
+        inst = self.instance()
+        return out | {"server": {k: inst[k] for k in ("version", "root", "env_file")}}
 
     def news_board(self, days: int = 3, only: str = "", symbol: str = "") -> dict:
         from ..board import news_board
@@ -930,10 +976,373 @@ class DashboardAPI:
             raise ValueError("날짜는 YYYY-MM-DD") from None
         return self._cached(f"replay:{dd}", 120, lambda: day(self.app, dd))
 
+    def home5(self, mode: str | None = None) -> dict:
+        from ..center import home5
+        m = self._mode(mode)
+        return self._cached(f"home5:{m}", 60, lambda: home5(self.app, m))
+
+    def verdict(self, symbol: str) -> dict:
+        """종목 첫 화면: AI 최종 판단 하나 + 52주 위치 + 이 종목 시장의 지금 상태."""
+        from ..clock import clock_status
+        from ..explain import verdict
+        sym = symbol.strip().upper()[:12]
+
+        def build():
+            v = verdict(self.app, sym)
+            b = self.app._all_bars()[0].get(sym)
+            if b is None and not sym[:1].isdigit():
+                from .. import global_market
+                b = global_market.market_data(self.app, extra=[sym])[0].get(sym)
+            if b is not None and len(b) >= 20:
+                c = b["close"].astype(float).iloc[-252:]
+                hi, lo, last = float(c.max()), float(c.min()), float(c.iloc[-1])
+                v["range52"] = {"high": round(hi, 2), "low": round(lo, 2), "last": round(last, 2), "n": len(c),
+                                "pos": round((last - lo) / (hi - lo), 3) if hi > lo else None,
+                                "from_high": round(last / hi - 1, 4), "from_low": round(last / lo - 1, 4) if lo else None}
+            m = clock_status(datetime.now(UTC))["markets"]["KRX" if sym[:1].isdigit() else "US"]
+            v["market"] = {"flag": m.get("flag"), "name": m.get("short"), "light": m.get("light"), "notice": m.get("notice"),
+                           "state": "장중" if m["phase"] == "open" else (m["session_label"] if m["trading_day"] else "휴장"),
+                           "local_time": m.get("local_time"), "tz": m.get("tz"), "next": m.get("next_event"),
+                           "next_kst": m.get("next_close_kst") if m.get("next_event") == "폐장" else m.get("next_open_kst"),
+                           "seconds_to_next": m.get("seconds_to_next"), "dst": m.get("dst"),
+                           "holiday": m.get("holiday") if not m["trading_day"] else None}
+            # v23 종목 머리: 기업 신분증 · 실적 D-day · 내 보유 (한 번에 — 화면이 여러 번 묻지 않게)
+            from .. import ux
+            from ..companies import identity
+            v["identity"] = identity(self.app, sym)
+            r = next((x for x in _ops.get_state(self.engine, "event_calendar").get("risk") or [] if x.get("symbol") == sym), None)
+            e = (r or {}).get("earnings") or {}
+            v["earnings"] = {"d_label": e.get("d_label"), "trading_days": e.get("trading_days"), "date": e.get("date"),
+                             "estimated": e.get("estimated"), "timing": e.get("timing")} if e else None
+            try:
+                rows = [x for x in (ux.holdings(self.app, sym).get("rows") or []) if x.get("qty")]
+            except Exception:  # noqa: BLE001 - 보유 정보가 없어도 판단은 보인다
+                rows = []
+            if rows:
+                top = max(rows, key=lambda x: x.get("value") or 0)
+                v["holding"] = {"qty": sum(x["qty"] for x in rows), "avg_price": top.get("avg_price"), "pnl_pct": top.get("pnl_pct"),
+                                "book": top.get("book"), "n_books": len(rows)}
+            return v
+        return self._cached(f"verdict:{sym}", 30, build)
+
+    # ------------------------------------------------------------------ v25 토스식 화면
+    def t_home(self, mode: str = "paper") -> dict:
+        from .. import toss
+        mode = mode if mode in ("paper", "shadow", "live") else "paper"
+        return self._cached(f"t_home:{mode}", 30, lambda: toss.home(self.app, mode))
+
+    def t_stock(self, symbol: str) -> dict:
+        from .. import toss
+        sym = symbol.strip().upper()[:12] if not symbol.strip()[:1].isdigit() else symbol.strip()[:12]
+        if not sym:
+            raise ValueError("symbol 필요")
+        return self._cached(f"t_stock:{sym}", 20, lambda: toss.stock(self.app, sym))
+
+    def t_feed(self, tab: str = "all", region: str = "all", topic: str = "all") -> dict:
+        from .. import toss
+        tab = tab if tab in ("all", "news", "disc", "event") else "all"
+        region = region if region in ("all", "kr", "us") else "all"
+        topic = topic if topic in ("all", "ai", "semi", "mine") else "all"
+        return self._cached(f"t_feed:{tab}:{region}:{topic}", 60, lambda: toss.feed(self.app, tab, region, topic))
+
+    def t_portfolio(self, mode: str = "paper") -> dict:
+        from .. import toss
+        mode = mode if mode in ("paper", "shadow", "live", "us-paper") else "paper"
+        return self._cached(f"t_pf:{mode}", 20, lambda: toss.portfolio(self.app, mode))
+
+    def t_community(self, symbol: str) -> dict:
+        from .. import toss
+        sym = symbol.strip().upper()[:12] if not symbol.strip()[:1].isdigit() else symbol.strip()[:12]
+        if not sym:
+            raise ValueError("symbol 필요")
+        return toss.community(self.app, sym)
+
+    def t_collect(self) -> dict:
+        from .. import toss
+        return self._cached("t_collect", 30, lambda: toss.collect_status(self.app))
+
+    def signals2(self, market: str = "KR") -> dict:
+        """v28 신호 엔진 2.0: 매수 후보 · 비중 축소 후보 · 피할 종목 (+ 신호별 근거 · 점수대별 과거 결과 · 전진 기록)."""
+        from .. import signals2 as S2
+        m = "US" if market.upper() == "US" else "KR"
+        out = S2.cached(self.app, m)
+        return {k: v for k, v in out.items() if k != "_rows"}
+
+    def datacheck(self, run: bool = False) -> dict:
+        """v29 데이터 정합성 점검 (최신성 · 자동 갱신 · 원천 자체 정합성 · 외부 시세 대조). 저장된 결과가 없으면 한 번 실행."""
+        from .. import datacheck as DC
+        from .. import ops as _ops
+        if run:
+            self._audit("datacheck", "데이터 점검 실행")
+            return DC.run(self.app)
+        return _ops.get_state(self.app.engine, DC.STATE_KEY) or DC.run(self.app)
+
+    def signals2_stock(self, symbol: str) -> dict:
+        from .. import signals2 as S2
+        sym = symbol.strip()
+        sym = sym if sym[:1].isdigit() else sym.upper()
+        if not sym:
+            raise ValueError("symbol 필요")
+        return S2.for_symbol(self.app, sym)
+
+    def autopilot(self) -> dict:
+        """v30 AI 자동매매: 오늘의 결정 미리보기 · 관문 · 가상 장부 성적 · 봉인 기록 · 목표 현실성."""
+        from .. import autopilot as AP
+        return self._cached("autopilot", 60, lambda: AP.status(self.app))
+
+    def autopilot_write(self, body: dict) -> dict:
+        from .. import autopilot as AP
+        act = str(body.get("action") or "")
+        self._risk_cache.pop("autopilot", None)
+        if act == "run":
+            self._audit("autopilot_run", "AI 자동매매 지금 실행")
+            r = AP.run(self.app, force=True)
+            return {"ok": True, "result": {k: v for k, v in r.items() if k != "books"} | {"books": {n: {x: y for x, y in p.items() if x != "targets"} for n, p in (r.get("books") or {}).items()}}}
+        if act == "config":
+            cfg = AP.set_config(self.app, {k: v for k, v in body.items() if k in ("paper_on", "live_requested")})
+            self._audit("autopilot_config", f"가상 {'켬' if cfg['paper_on'] else '끔'} · 실제 계좌 요청 {'켬' if cfg['live_requested'] else '끔'}")
+            return {"ok": True, "config": cfg}
+        if act == "goal":
+            return {"ok": True, "goal": AP.refresh_goal(self.app)}
+        raise ValueError("action 은 run / config / goal")
+
+    def logo_queue(self) -> dict:
+        """v30 로고 큐: 진짜 로고가 없는 종목 목록 (관심·보유 먼저) → 화면에서 한 번에 올리기."""
+        from ..logos import coverage
+        from ..signals2 import _names
+
+        def build():
+            syms = [s for s in self.app.symbols() if s[:1].isdigit()]
+            try:
+                from ..alerts import focus_symbols
+                mine = [s for s in focus_symbols(self.app) if s in syms]
+            except Exception:  # noqa: BLE001
+                mine = []
+            order = list(dict.fromkeys([*mine, *syms]))
+            out = coverage(self.app, order, _names(self.engine, order))
+            out["mine"] = mine
+            return out
+        return self._cached("logo_queue", 60, build)
+
+    def company_view(self, symbol: str, refresh: bool = False) -> dict:
+        """v30 회사 이해: 한 줄 소개 · 재무 5년(DART) · 밸류에이션 · 같은 업종 · 이슈 타임라인 · 초보자 3줄."""
+        from .. import company as CO
+        sym = symbol.strip()
+        sym = sym if sym[:1].isdigit() else sym.upper()
+        if not sym:
+            raise ValueError("symbol 필요")
+        if refresh:
+            CO.financials(self.app, sym, refresh=True)
+            self._risk_cache.pop(f"company:{sym}", None)
+        return self._cached(f"company:{sym}", 300, lambda: CO.view(self.app, sym))
+
+    def proof_status(self) -> dict:
+        """v29 증명 프로젝트: 규칙 · 성공 기준 · 매일 봉인 기록 · 체인 검증."""
+        from .. import proof
+        return proof.status(self.app)
+
+    def proof_write(self, body: dict) -> dict:
+        from .. import proof
+        act = str(body.get("action") or "")
+        if act == "start":
+            try:
+                r = proof.start(self.app, str(body.get("mode") or "live"), float(body.get("principal") or 0) or None,
+                                float(body.get("max_loss") or 0) or None, bool(body.get("public")), bool(body.get("show_amounts")))
+            except (TypeError, ValueError) as e:
+                raise ValueError(str(e) or "원금·최대 손실을 숫자로") from None
+            self._risk_cache.clear()
+            self._audit("proof_start", f"{r['id']} · {r['mode']} · 원금 {r['params']['principal']:,.0f}")
+            return {"ok": True, "project": r}
+        if act == "end":
+            r = proof.end(self.app, str(body.get("reason") or "")[:200])
+            self._audit("proof_end", f"{r['id']} · {r.get('end_reason', '')}")
+            return {"ok": True, "project": {k: v for k, v in r.items() if k != "log"}}
+        if act == "public":
+            r = proof.set_public(self.app, bool(body.get("public")), body.get("show_amounts") if "show_amounts" in body else None)
+            self._audit("proof_public", f"공개 {'켬' if r['public'] else '끔'} · 금액 {'공개' if r.get('show_amounts') else '비공개'}")
+            return {"ok": True, "project": r}
+        if act == "record":
+            return {"ok": True, "record": proof.record_day(self.app, force=True)}
+        raise ValueError("action 은 start / end / public / record")
+
+    def logo_upload(self, body: dict) -> dict:
+        """v27: 화면에서 종목 로고 직접 넣기·지우기 (body: symbol, data = base64 또는 data: URL, 비우면 지움)."""
+        import base64
+        import binascii
+
+        from ..logos import save_custom
+        raw = str(body.get("data") or "")
+        if raw.startswith("data:"):
+            raw = raw.split(",", 1)[-1]
+        try:
+            data = base64.b64decode(raw, validate=True) if raw else b""
+        except (binascii.Error, ValueError):
+            raise ValueError("이미지 데이터가 깨졌어요") from None
+        out = save_custom(self.app, str(body.get("symbol") or ""), data)
+        from ..governance import audit
+        audit(self.engine, "logo_upload", f"{out['symbol']} {'삭제' if out.get('removed') else out.get('type')}")
+        return out
+
+    def t_intraday(self, symbol: str) -> dict:
+        """v27: 종목 화면 '1일' — 5분봉 (Yahoo · 1분 저장). 받지 못하면 이유와 함께 빈 목록."""
+        from ..data.collectors.indices import intraday
+        sym = symbol.strip()
+        sym = sym if sym[:1].isdigit() else sym.upper()
+        if not sym:
+            raise ValueError("symbol 필요")
+        market = None
+        if sym.isdigit():
+            from ..companies import master
+            c = master().get(sym)
+            market = getattr(c, "market", None) or getattr(c, "exchange", None)
+        return intraday(sym, market)
+
+    def t_market(self) -> dict:
+        from .. import toss
+        return self._cached("t_market", 60, lambda: toss.market(self.app))
+
+    def t_quotes(self, symbols: str) -> dict:
+        from .. import toss
+        syms = [x.strip().upper() if not x.strip()[:1].isdigit() else x.strip() for x in symbols.split(",") if x.strip()][:20]
+        return self._cached(f"t_q:{','.join(syms)}", 20, lambda: toss.quotes(self.app, syms))
+
+    def t_report(self, symbol: str) -> dict:
+        from .. import toss
+        sym = symbol.strip().upper()[:12] if not symbol.strip()[:1].isdigit() else symbol.strip()[:12]
+        if not sym:
+            raise ValueError("symbol 필요")
+        return self._cached(f"t_rep:{sym}", 30, lambda: toss.report(self.app, sym))
+
+    def t_alerts(self) -> dict:
+        from .. import toss
+        return toss.alerts(self.app)
+
+    def t_alerts_write(self, body: dict) -> dict:
+        from .. import toss
+        self._audit("alert_settings", str({k: body.get(k) for k in ("kind", "on", "symbol", "price_on", "value")})[:200])
+        return toss.alerts_write(self.app, body)
+
+    def ai_trust(self) -> dict:
+        """v24 AI 신뢰 센터 — 한 화면에 모은다: 지금 믿을 만한가(3단계) · 단계(사다리) · 실제 전진 기록 성적 vs 기준선 ·
+        독립 평가 결론 · 예측 장부 봉인 상태 · 자동 강등 · 틀린 이유 Top · 상황별 성적. 각 칸은 실패해도 나머지는 보인다."""
+        def build():
+            from ..center import ai_state
+            out: dict = {}
+
+            def safe(k, fn):
+                try:
+                    out[k] = fn()
+                except Exception as e:  # noqa: BLE001
+                    out[k] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+            safe("state", lambda: ai_state(self.app))
+            safe("ladder", lambda: {k: v for k, v in self.app.ladder(act=False).items() if k in ("stage", "changed", "reasons", "ready", "next")})
+            ev = _ops.get_state(self.engine, "evaluation") or {}
+            out["evaluation"] = {k: ev.get(k) for k in ("verdict", "status", "n", "hit_rate", "best_baseline", "p_value", "sealed_share", "evaluated_at")} if ev else None
+
+            def ledger_():
+                from ..review.ledger import verify as ledger_verify
+                with session_scope(self.engine) as s:
+                    r = ledger_verify(s, sample_limit=5)
+                return {k: r.get(k) for k in ("ok", "sealed", "legacy", "pending")}
+            safe("ledger", ledger_)
+            fl = _ops.get_state(self.engine, "failure_lab") or {}
+            out["failures"] = {"n": fl.get("n"), "findings": (fl.get("findings") or [])[:4], "message": fl.get("message")} if fl else None
+            safe("context", lambda: self.ai_context())
+            return out
+        return self._cached("ai_trust", 120, build)
+
+    def ai_context(self) -> dict:
+        from ..scorecard import by_context
+        return self._cached("ai_context", 300, lambda: by_context(self.app))
+
+    def ai_plain(self, symbol: str = "") -> dict:
+        from ..scorecard import plain
+        sym = symbol.strip().upper()[:12]
+        return self._cached(f"ai_plain:{sym}", 120, lambda: plain(self.app, 100, sym or None))
+
+    def ops_status(self) -> dict:
+        """상단 상태 표시용 — 24시간 운영 · 데이터 날짜 · 뉴스 · 업종 · 작업 실패 (center.ops_status)."""
+        from ..center import ops_status
+        return self._cached("ops_status", 60, lambda: ops_status(self.app))
+
+    def baseline(self, mode: str = "paper") -> dict:
+        """코어(이 시스템) vs '그냥 지수 ETF 를 샀다면' — 16년 연구 + 실제 장부 그림자 비교."""
+        from .. import baseline
+        mode = mode if mode in ("paper", "live", "shadow") else "paper"
+        return self._cached(f"baseline:{mode}", 300, lambda: baseline.compare(self.app, mode))
+
+    def goal(self, q: dict | None = None) -> dict:
+        """저장된 목표(또는 화면에서 바꿔 본 값)로 확률 계획 + 진행률."""
+        from .. import goal
+        g = goal.get(self.app)
+        q = {k: v for k, v in (q or {}).items() if v not in (None, "")}
+        inp = {"principal": 5_000_000, "monthly": 500_000, "goal": 100_000_000, "target_years": 10, "strategy": "core", "raise_pct": 0.0} | \
+              {k: g[k] for k in ("principal", "monthly", "goal", "target_years", "strategy", "raise_pct") if k in g}
+        for k in ("principal", "monthly", "goal", "raise_pct"):
+            if k in q:
+                inp[k] = float(str(q[k]).replace(",", ""))
+        if "target_years" in q:
+            inp["target_years"] = int(q["target_years"])
+        if "strategy" in q:
+            inp["strategy"] = str(q["strategy"])
+        key = "goal:" + ":".join(str(inp[k]) for k in sorted(inp))
+        p = self._cached(key, 600, lambda: goal.plan(**inp))
+        return p | {"saved": g or None, "progress": goal.progress(self.app), "presets": goal.PRESETS, "etfs": goal.ETFS,
+                    "recommended": goal.RECOMMENDED, "ai_cap_max": goal.AI_CAP_MAX}
+
+    def goal_save(self, body: dict) -> dict:
+        from .. import goal
+        if body.get("apply"):  # v31: 추천 계획 한 번에 적용
+            r = goal.apply_recommended(self.app, str(body["apply"]), str(body.get("mode") or "paper"),
+                                       monthly=float(str(body["monthly"]).replace(",", "")) if body.get("monthly") else None)
+            self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5", "autopilot"))}
+            self._audit("goal", f"추천 계획 {body['apply']} 적용 · {r['mode']} · 월 {r['saved']['monthly']:,.0f}")
+            return {"ok": True, **r}
+        g = goal.save(self.app, body)
+        self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5"))}
+        self._audit("goal", f"목표 {g['goal']:,.0f} · 월 {g['monthly']:,.0f}" + (f" · 적립 {'켬' if g.get('dca', {}).get('on') else '끔'}" if g.get("dca") else ""))
+        return {"ok": True, "saved": g}
+
+    def start_guide(self) -> dict:
+        from ..center import start_guide
+        return self._cached("start_guide", 10, lambda: start_guide(self.app))
+
     def oneline(self, mode: str | None = None) -> dict:
         from ..center import oneline
         m = self._mode(mode)
         return self._cached(f"oneline:{m}", 60, lambda: oneline(self.app, m))
+
+    def news_detail(self, news_id: str) -> dict:
+        from ..newsdetail import news_detail
+        try:
+            return news_detail(self.app, int(news_id))
+        except ValueError:
+            raise ValueError("뉴스 번호가 이상합니다") from None
+
+    def news_explain(self, body: dict) -> dict:
+        from ..newsdetail import explain_news
+        self._audit("news_explain", f"뉴스 {body.get('id')}")
+        return explain_news(self.app, int(body.get("id") or 0))
+
+    def disclosure_detail(self, disc_id: str) -> dict:
+        from ..newsdetail import disclosure_detail
+        try:
+            return disclosure_detail(self.app, int(disc_id))
+        except ValueError:
+            raise ValueError("공시 번호가 이상합니다") from None
+
+    def disclosure_explain(self, body: dict) -> dict:
+        from ..newsdetail import explain_disclosure
+        self._audit("disclosure_explain", f"공시 {body.get('id')}")
+        return explain_disclosure(self.app, int(body.get("id") or 0))
+
+    def news_search(self, q: str, days: str = "30") -> dict:
+        from ..newsdetail import search
+        try:
+            d = int(days or 30)
+        except ValueError:
+            d = 30
+        return {"q": q, "days": d, "results": search(self.app, q[:100], d)}
 
     def conflicts(self) -> dict:
         from ..conflicts import detect
@@ -1019,7 +1428,10 @@ class DashboardAPI:
             self._cache = None
             self._risk_cache.clear()
             return start_action(self.app, name, params)
-        return get_action(name)
+        st = get_action(name)
+        if name.startswith("analyze:") and not st.get("running"):  # 분석이 끝나면 종목 첫 화면 판단을 바로 새로
+            self._risk_cache.pop(f"verdict:{name.split(':', 1)[1].upper()}", None)
+        return st
 
     def chat(self, body: dict) -> dict:
         from ..assistant import reply
@@ -1043,6 +1455,19 @@ class DashboardAPI:
                     "kill_switch": self.app.kill_switch_on()}
         except Exception:  # noqa: BLE001
             return {"ok": False, "db": "error"}
+
+    def instance(self) -> dict:
+        """이 서버가 '어느 폴더의 어느 버전' 코드인지 — run.sh 가 옛 버전 서버를 재사용하지 않게 (로컬 요청에만 공개)."""
+        import hashlib
+        import os
+        from pathlib import Path
+
+        from .. import __version__
+        from ..keys import env_file
+        root = Path(__file__).resolve().parents[3]  # src/quant_ai/web/api.py → 프로젝트 폴더
+        f = env_file()
+        return {"version": __version__, "instance": hashlib.sha256(os.path.realpath(root).encode()).hexdigest()[:12],
+                "pid": os.getpid(), "root": str(root), "env_file": str(f) if f else None}
 
     def ops(self) -> dict:
         from ..analysts.guard import llm_usage_summary
@@ -1259,9 +1684,15 @@ class DashboardAPI:
 
     def star(self, body: dict) -> dict:
         from .. import ux
-        syms = ux.set_star(self.app, str(body.get("symbol", ""))[:12], bool(body.get("on", True)))
-        self._risk_cache.pop("watchlist", None)
-        self._risk_cache.pop("today", None)
+        sym = str(body.get("symbol", ""))[:12]
+        syms = ux.set_star(self.app, sym, bool(body.get("on", True)))
+        if body.get("on", True) and sym:  # v19: 관심종목에 담는 순간 로고를 미리 받아 둔다 (화면이 느려지지 않게)
+            import threading
+
+            from ..logos import prefetch
+            threading.Thread(target=lambda: prefetch(self.app, [sym]), daemon=True, name="logo-prefetch").start()
+        self._risk_cache = {k: v for k, v in self._risk_cache.items()
+                            if k not in ("watchlist", "today", "start_guide") and not k.startswith("home5:")}
         return {"ok": True, "starred": syms}
 
     def starred(self) -> dict:
@@ -1415,10 +1846,11 @@ class DashboardAPI:
         from ..lab import lab_status
         return self._cached("ai_lab", 60, lambda: lab_status(self.app))
 
-    def portfolio_os(self, mode: str | None) -> dict:
+    def portfolio_os(self, mode: str | None, source: str = "auto") -> dict:
         from ..portfolio_os import overview
         m = self._mode(mode)
-        return self._cached(f"pos:{m}", 30, lambda: overview(self.app, m))
+        src = source if source in ("auto", "accounts", "system") else "auto"
+        return self._cached(f"pos:{m}:{src}", 30, lambda: overview(self.app, m, src))
 
     def briefing(self, mode: str | None) -> dict:
         from ..portfolio_os import briefing
@@ -1486,9 +1918,9 @@ class DashboardAPI:
         self._risk_cache.clear()
         return out
 
-    def ticket_book(self) -> dict:
+    def ticket_book(self, mode: str = "") -> dict:
         from .. import ticket
-        return ticket.book(self.app)
+        return ticket.book(self.app, ticket.US_MODE if mode == ticket.US_MODE else ticket.MODE)
 
     def reviews(self, limit: int = 10) -> list[dict]:
         with session_scope(self.engine) as s:

@@ -3,7 +3,7 @@
 // 종목 페이지 섹션 숨기기/순서(서버 저장)
 /* global $, S, api, post, esc, card, empty, badge, num, P, R, render, toast, ICONS, loadPrefs, pill, kv, hbar */
 
-const OS_ST = { ok: "🟢", warn: "🟡", bad: "🔴", none: "⚪", na: "⚪" };
+const OS_ST = { ok: lvDot("good"), warn: lvDot("warn"), bad: lvDot("bad"), none: lvDot("idle"), na: lvDot("idle") };  // v21: 이모지 대신 색 점
 const TONE_CLS = { 긍정: "pos", 부정: "neg", 중립: "" };
 
 // ------------------------------------------------------------ 종목 페이지 섹션 (숨기기 · 순서)
@@ -25,14 +25,38 @@ async function osApplyWidgets() {
   osNav(hidden, w.order || []);
 }
 
+// v20: 종목 페이지 탭 — 긴 한 페이지 대신 '전체 / 차트 / 뉴스·공시 / 실적·재무 / AI / 위험·주문 / 내 보유'
+// v21: 처음 열면 '요약'(차트 · 최근 뉴스 · 내 보유)만 — 7,000px 한 페이지를 다 보여 주지 않는다
+const OS_TABS = [["sum", "요약", ["pf-chart", "pf-news", "pf-mine"]], ["news", "뉴스·공시", ["pf-news", "pf-disc", "pf-flow"]],
+  ["earn", "실적·재무", ["pf-earn", "pf-fin"]], ["ai", "AI 근거", ["pf-ai"]], ["risk", "위험·주문", ["pf-risk"]], ["mine", "내 보유", ["pf-mine"]], ["all", "전체", null]];
+function osTab(key, hidden) {
+  const body = $("#pf-body");
+  if (!body) return;
+  if (!$("#pf-nav")?.querySelector(`[data-tab="${key}"]`)) key = "sum";
+  S.stockTab = key;
+  const grp = (OS_TABS.find(([k]) => k === key) || OS_TABS[0])[2];
+  hidden = hidden || S.stockHidden || new Set();
+  body.querySelectorAll(":scope > [data-w]").forEach((e) => { e.style.display = hidden.has(e.dataset.w) || (grp && !grp.includes(e.dataset.w)) ? "none" : ""; });
+  $("#pf-nav")?.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === key));
+  const c = $("#an-chart");  // 숨겨진 채로 그려진 차트는 폭이 0 → 보일 때 다시 맞춤
+  if (c?._chart && c.clientWidth) c._chart.applyOptions({ width: c.clientWidth });
+}
+function osShow(w) {  // 다른 곳(타일·'지금 가장 중요한 것')에서 섹션으로 이동 — 그 섹션이 있는 탭으로 바꾼 뒤 스크롤
+  const t = OS_TABS.find(([, , g]) => g && g.includes(w));
+  const cur = OS_TABS.find(([k]) => k === S.stockTab);
+  if (t && cur && cur[2] && !cur[2].includes(w)) osTab(t[0]);
+  document.querySelector(`#pf-body > [data-w="${w}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 function osNav(hidden, order) {
   const nav = $("#pf-nav");
   if (!nav) return;
-  let list = OS_SECTIONS.filter(([k]) => !hidden.has(k));
-  if (order.length) list = [...list].sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99));
-  nav.innerHTML = list.map(([k, l]) => `<button class="chip" data-w="${k}">${l}</button>`).join("") + '<button class="chip" id="pf-wedit" title="섹션 숨기기·순서 (서버 저장)">⚙</button>';
-  nav.querySelectorAll("[data-w]").forEach((b) => b.onclick = () => document.querySelector(`#pf-body > [data-w="${b.dataset.w}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  S.stockHidden = hidden;
+  const tabs = OS_TABS.filter(([, , g]) => !g || g.some((k) => !hidden.has(k)));
+  nav.innerHTML = `<div class="pf-tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" class="pf-tab" data-tab="${k}">${l}</button>`).join("")}</div>`
+    + '<button class="chip" id="pf-wedit" title="섹션 숨기기·순서 (서버 저장)">⚙</button>';
+  nav.querySelectorAll("[data-tab]").forEach((b) => b.onclick = () => { osTab(b.dataset.tab, hidden); nav.scrollIntoView({ block: "nearest" }); });
   $("#pf-wedit").onclick = osWidgetEditor;
+  osTab(tabs.some(([k]) => k === S.stockTab) ? S.stockTab : "sum", hidden);
 }
 
 async function osWidgetEditor() {
@@ -93,23 +117,33 @@ function osHeader(sym, h, pos) {
   if (!box || !h || h.error) return;
   const n = h.news || {};
   const tile = (label, val, sub = "", cls = "", link = "") => `<div class="os-t ${cls}" ${link ? `data-jump="${link}"` : ""}><div class="xs muted">${label}</div><div class="b">${val}</div>${sub ? `<div class="xs dim">${sub}</div>` : ""}</div>`;
-  const ai = h.ai ? `${badge(h.ai.action)} <span class="num">${R(h.ai.prob_up, 0)}</span>` : '<span class="dim">판단 없음</span>';
-  const tiles = [
-    tile("장 상태", `${esc(h.session?.flag || "")} ${esc(h.session?.label || "-")}`),
-    tile("AI 상승확률", ai, h.ai ? esc(h.ai.as_of) + " 판단" : "", "", "pf-ai"),
-    tile("실적 발표", h.earnings ? `<span class="${/D-Day|D-1$/.test(h.earnings.d_label) ? "warn-t" : ""}">${esc(h.earnings.d_label)}</span>` : '<span class="dim">-</span>', h.earnings ? esc(h.earnings.date) + (h.earnings.estimated ? " 추정" : "") : "일정 없음", "", "pf-earn"),
+  const tiles = [  // v19: 장 상태 · AI 판단은 위 '첫 화면'에 크게 있으므로 여기서는 뺀다
+    tile("실적 발표", h.earnings ? `<span class="${/D-Day|D-1$/.test(h.earnings.d_label) ? "warn-t" : ""}">${esc(h.earnings.d_label)}</span>` : '<span class="dim">-</span>', h.earnings ? esc(h.earnings.date) + (h.earnings.time ? " · " + esc(h.earnings.time) : "") + (h.earnings.estimated ? " 추정" : "") : "일정 없음", "", "pf-earn"),
     tile("뉴스 7일", n.n ? `<span class="up">+${n["긍정"]}</span> · ${n["중립"]} · <span class="down">−${n["부정"]}</span>` : '<span class="dim">없음</span>', "긍정 · 중립 · 부정", "", "pf-news"),
     tile("수급", h.flow?.signal ? esc(h.flow.signal) : '<span class="dim">-</span>', h.flow?.divergence ? esc(h.flow.divergence) : "외국인·기관", "", "pf-flow"),
     tile("밸류에이션", h.valuation ? esc(h.valuation.level) : '<span class="dim">-</span>', h.valuation ? esc(h.valuation.text) : "PER 없음", "", "pf-fin"),
-    tile("위험", h.risk ? `<span class="${h.risk.level === "HIGH" ? "bad-t" : h.risk.level === "MEDIUM" ? "warn-t" : "good"}">${esc(h.risk.level)}</span>` : "-", h.risk ? esc(h.risk.text) : "", "", "pf-risk"),
+    tile("위험", h.risk ? `<span class="${h.risk.level === "HIGH" ? "bad-t" : h.risk.level === "MEDIUM" ? "warn-t" : "good"}">${esc(koRisk(h.risk.level))}</span>` : "-", h.risk ? esc(h.risk.text) : "", "", "pf-risk"),
   ];
   if (pos && pos.total_qty) {
     tiles.push(tile("내 보유", `${num(pos.total_qty)}주 <span class="${pos.pnl_pct >= 0 ? "up" : "down"}">${P(pos.pnl_pct)}</span>`,
       `평단 ${pos.avg_price ? num(pos.avg_price, pos.avg_price < 1000 ? 2 : 0) : "-"}${(pos.rows || []).find((r) => r.weight) ? ` · 비중 ${R((pos.rows || []).find((r) => r.weight).weight, 1)}` : ""}`, "mine", "pf-mine"));
   } else tiles.push(tile("내 보유", '<span class="dim">없음</span>', "계좌 입력 시 표시", "", "pf-mine"));
   const discs = (h.disclosures || []).map((x) => `<span class="chip xs ${x.important ? "warn" : ""}" title="${esc(x.title)}">${x.important ? "⚠ " : ""}${esc(x.date.slice(5))} ${esc(x.title.slice(0, 22))}</span>`).join(" ");
-  box.innerHTML = `<div class="os-grid">${tiles.join("")}</div>${discs ? `<div class="os-disc xs"><span class="muted">최근 공시</span> ${discs}</div>` : ""}`;
-  box.querySelectorAll("[data-jump]").forEach((t) => t.onclick = () => document.querySelector(`#pf-body > [data-w="${t.dataset.jump}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  const LVL = { bad: "neg", warn: "warn", info: "" };
+  const banner = h.earnings_banner ? `<div class="os-banner">${calDot("earnings")}${esc(h.earnings_banner)}</div>` : "";
+  const today = (h.today || []).length ? `<div class="os-today"><span class="xs muted b">오늘 중요한 것</span> ${h.today.map((x) => `<span class="chip ${LVL[x.level] || ""}">${x.icon} ${esc(x.text)}</span>`).join(" ")}</div>`
+    : '<div class="os-today xs dim">오늘 중요한 것: 특이 사항 없음</div>';
+  const hz = (h.horizons || []).some((x) => x.p != null) ? `<div class="os-hz xs"><span class="muted">AI 기간별 상승확률 <span class="dim">(과거 같은 확률대에서 실제로 오른 비율)</span></span> ${h.horizons.map((x) => `<b>${x.label}</b> ${x.p == null ? '<span class="dim">표본 부족</span>' : R(x.p, 0)} <span class="dim">(${x.n})</span>`).join(" · ")}</div>` : "";
+  const fx = h.fx && h.price ? `<div class="os-fx xs"><button class="btn-sm" id="ccy-tg">${S.ccy === "KRW" ? "$ 로 보기" : "₩ 로 보기"}</button>
+    <span id="ccy-val">${S.ccy === "KRW" ? `₩${num(h.price * h.fx.usdkrw)} <span class="dim">($${num(h.price, 2)})</span>` : `$${num(h.price, 2)} <span class="dim">≈ ₩${num(h.price * h.fx.usdkrw)}</span>`}</span>
+    <span class="dim">환율 ${num(h.fx.usdkrw, 1)} · ${esc(h.fx.source)}</span></div>` : "";
+  const t1 = $("#pf-top1");  // v19: 차트 바로 위 '지금 가장 중요한 것' 한 줄
+  if (t1) t1.innerHTML = (h.today || []).length ? `<span class="xs muted b">지금 가장 중요한 것</span> <span class="chip ${LVL[h.today[0].level] || ""}">${h.today[0].icon} ${esc(h.today[0].text)}</span>${h.today.length > 1 ? ` <span class="xs dim">외 ${h.today.length - 1}개</span>` : ""}`
+    : '<span class="xs dim">지금 가장 중요한 것: 특이 사항 없음</span>';
+  box.innerHTML = `${banner}${today}<div class="os-grid">${tiles.join("")}</div>${hz}${fx}${discs ? `<div class="os-disc xs"><span class="muted">최근 공시</span> ${discs}</div>` : ""}`;
+  const tg = $("#ccy-tg");
+  if (tg) tg.onclick = () => { S.ccy = S.ccy === "KRW" ? "USD" : "KRW"; safeSet("qa_ccy", S.ccy); osHeader(sym, h, pos); };
+  box.querySelectorAll("[data-jump]").forEach((t) => t.onclick = () => osShow(t.dataset.jump));
 }
 
 // ------------------------------------------------------------ 신선도 (1초마다 다시 셈)
@@ -159,8 +193,8 @@ function osThesis(sym, t, h) {
       <div class="kv-grid" style="margin-top:8px">${kv("목표", t.target ? num(t.target, t.target < 1000 ? 2 : 0) + (cur ? ` <span class="xs dim">${P(t.target / cur - 1)}</span>` : "") : "-", "up")}
         ${kv("무효화", t.stop ? num(t.stop, t.stop < 1000 ? 2 : 0) + (cur ? ` <span class="xs dim">${P(t.stop / cur - 1)}</span>` : "") : "-", "down")}
         ${kv("점검일", esc(t.review_date || "-"))}${kv("작성", esc((t.updated_at || "").slice(0, 10)))}</div>
-      ${cur && t.target && cur >= t.target ? '<div class="lesson" style="margin-top:8px">🎯 목표 도달 — 이익 실현 또는 논리 갱신</div>' : ""}
-      ${cur && t.stop && cur <= t.stop ? '<div class="veto" style="margin-top:8px">⛔ 무효화 가격 이탈 — 논리가 틀렸다고 정한 가격</div>' : ""}` : '<div class="small muted">아직 적지 않았습니다. 사기 전에 "왜 사는지 · 무엇이 틀리면 팔지"를 적어 두면, 목표·무효화 가격에 닿을 때 알림이 옵니다.</div>';
+      ${cur && t.target && cur >= t.target ? '<div class="lesson" style="margin-top:8px">목표 도달 — 이익 실현 또는 논리 갱신</div>' : ""}
+      ${cur && t.stop && cur <= t.stop ? '<div class="veto" style="margin-top:8px">무효화 가격 이탈 — 논리가 틀렸다고 정한 가격</div>' : ""}` : '<div class="small muted">아직 적지 않았습니다. 사기 전에 "왜 사는지 · 무엇이 틀리면 팔지"를 적어 두면, 목표·무효화 가격에 닿을 때 알림이 옵니다.</div>';
   box.innerHTML = card("투자 논리 <span class='small dim'>Thesis · 30분마다 감시</span>", `${view}
     <details class="th-form" ${t ? "" : "open"} style="margin-top:10px"><summary class="small">${t ? "수정" : "작성"}</summary>
       <div class="form-grid" style="margin-top:8px">
@@ -191,13 +225,13 @@ async function osNews(sym) {
   if (S.symbol && S.symbol !== sym) return;
   const c = d.counts || {};
   const ai = d.ai_summary;
-  const aiBox = ai ? `<div class="ai-sum"><div class="small"><b>🤖 AI 요약</b> <span class="chip xs ${TONE_CLS[ai.tone] || ""}">${esc(ai.tone || "-")}</span> <span class="xs dim">예상 영향 ${ai.impact > 0 ? "+" : ""}${ai.impact} (−2~+2) · ${esc((ai.at || "").slice(0, 16).replace("T", " "))} UTC</span></div>
+  const aiBox = ai ? `<div class="ai-sum"><div class="small"><b>AI 요약</b> <span class="chip xs ${TONE_CLS[ai.tone] || ""}">${esc(ai.tone || "-")}</span> <span class="xs dim">예상 영향 ${ai.impact > 0 ? "+" : ""}${ai.impact} (−2~+2) · ${esc((ai.at || "").slice(0, 16).replace("T", " "))} UTC</span></div>
       <ul class="plain small">${(ai.summary || []).map((x) => `<li>· ${esc(x)}</li>`).join("")}</ul>${(ai.watch || []).length ? `<div class="xs muted">지켜볼 점: ${ai.watch.map(esc).join(" · ")}</div>` : ""}</div>`
     : `<div class="ai-sum dim small">${d.has_llm ? `${d.ai_stale ? "새 뉴스가 있어 요약이 오래됐습니다. " : ""}<button class="btn-sm primary" id="nw-ai">AI 요약 만들기</button> <span class="xs">뉴스·공시 제목만 근거 · 목록에 없는 사실은 만들지 않음</span>` : "LLM 키가 없어 규칙 요약만 표시합니다"}</div>`;
   const items = (d.items || []).map((x) => `<div class="nw-it" data-nid="${x.id}"><div class="nw-h"><span class="chip xs ${TONE_CLS[x.tone] || ""}">${esc(x.tone)}</span>
       <a href="${esc(x.url || "#")}" target="_blank" rel="noopener noreferrer" class="small b">${esc(x.title)}</a></div>
       <div class="xs dim">${esc(x.source || "")} · ${esc(x.at)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>
-      <div class="xs muted">📈 ${esc(x.impact)} <button class="btn-xs" data-imp="${x.id}">영향 분석</button></div></div>`).join("");
+      <div class="xs muted">${esc(x.impact)} <button class="btn-xs" data-imp="${x.id}">영향 분석</button></div></div>`).join("");
   nb.innerHTML = card(`뉴스 <span class="small dim">최근 30일 중요도 순 ${(d.items || []).length}건 · 7일 톤 ${esc(d.overall)}</span>`, `
     <div class="small" style="margin-bottom:8px">${(d.rule_summary || []).map((x) => `<div>· ${esc(x)}</div>`).join("")}</div>${aiBox}
     <div class="tone-bar" title="최근 7일 긍정/중립/부정"><i class="pos" style="flex:${c["긍정"] || 0}"></i><i style="flex:${c["중립"] || 0}"></i><i class="neg" style="flex:${c["부정"] || 0}"></i></div>
@@ -209,11 +243,11 @@ async function osNews(sym) {
     if (r.error) { b.disabled = false; b.textContent = "다시 시도"; toast({ title: "AI 요약 실패", body: r.error, level: "warn" }); return; }
     osNews(sym);
   };
-  nb.querySelectorAll("[data-imp]").forEach((x) => x.onclick = () => osImpact(+x.dataset.imp));
+  nb.querySelectorAll("[data-imp]").forEach((x) => x.onclick = () => openDetail("news", +x.dataset.imp));  // v18: 원문·번역·쉬운 설명·영향
   if (db) {
     const rows = (d.disclosures || []).map((x) => `<div class="nw-it ${x.important ? "imp" : ""}"><div class="nw-h">${x.important ? '<span class="chip xs warn">⚠ 중요</span>' : ""}${x.polarity > 0 ? '<span class="chip xs pos">호재성</span>' : x.polarity < 0 ? '<span class="chip xs neg">악재성</span>' : ""}
-      <a href="${esc(x.url || "#")}" target="_blank" rel="noopener noreferrer" class="small b">${esc(x.title)}</a></div>
-      <div class="xs dim">DART · ${esc(x.date)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>${x.summary ? `<div class="xs muted">${esc(x.summary.slice(0, 220))}</div>` : ""}</div>`).join("");
+      <a href="#" data-disc="${x.id}" class="small b" title="원문·번역·요약·중요한 숫자·주가 영향">${esc(x.title)}</a> <a class="xs" href="${esc(x.url || "#")}" target="_blank" rel="noopener noreferrer">원문 ↗</a></div>
+      <div class="xs dim">${esc(x.source || "DART")} · ${esc(x.date)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>${x.summary ? `<div class="xs muted">${esc(x.summary.slice(0, 220))}</div>` : ""}</div>`).join("");
     db.innerHTML = card(`공시 <span class="small dim">최근 90일 · 중요 공시 강조</span>`, rows || empty(/^\d{6}$/.test(sym) ? "최근 90일 공시 없음 (DART 키 필요)" : "해외 종목 — DART 공시 없음"));
   }
 }
@@ -252,12 +286,33 @@ async function osEarnings(sym) {
     <td class="r ${r.beat ? "up" : r.beat === false ? "down" : ""}">${spct(r.eps_surprise_pct ?? r.base_surprise_pct)}</td>
     <td class="r">${spct(r.revenue_surprise_pct)}</td>
     <td class="r ${r.reaction_1d >= 0 ? "up" : "down"}">${P(r.reaction_1d, 2)}</td><td class="r">${P(r.drift_20d, 1)}</td><td class="xs dim">${esc(r.source)}</td></tr>`).join("");
+  const trend = earnTrend(e.rows || []);
   const up = e.upcoming || (e.kr_upcoming ? { date: e.kr_upcoming.date || e.kr_upcoming, estimated: true } : null);
   box.innerHTML = card(`실적 <span class="small dim">예상 vs 실제 · 서프라이즈 · 발표 후 반응(시장 대비)</span>`, `
     <div class="kv-grid">${kv("다음 발표", up ? esc(String(up.date).slice(0, 10)) + (up.estimated ? " (추정)" : "") : "-")}${kv("예상 EPS", up?.eps_estimate != null ? num(up.eps_estimate, 2) : "-")}
       ${kv("상회 비율", R(e.beat_rate, 0))}${kv("상회 시 반응", P(e.avg_reaction_beat, 2))}${kv("하회 시 반응", P(e.avg_reaction_miss, 2))}${kv("매출 YoY", P(e.revenue_yoy, 1))}</div>
+    ${trend}
     ${rows ? `<div class="scroll" style="margin-top:8px"><table class="tight"><thead><tr><th>발표</th><th class="r">EPS 예상</th><th class="r">EPS 실제</th><th class="r">EPS 서프</th><th class="r">매출 서프</th><th class="r">다음날</th><th class="r">20일</th><th>출처</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty("실적 이력 없음 — 종목 상세·국내 컨센서스 수집 후 채워집니다")}
     <div class="xs muted" style="margin-top:6px">가이던스: ${esc(e.guidance)}</div><div class="xs dim">${esc(e.note)} · 출처 ${(e.sources || []).map(esc).join(", ")}</div>`);
+}
+
+// v18: 최근 실적 추세 — 분기별 EPS 예상(회색) vs 실제(상회 초록 · 하회 빨강) 막대
+function earnTrend(rows) {
+  const xs = rows.filter((r) => r.eps_actual != null).slice(0, 12).reverse();
+  if (xs.length < 2) return "";
+  const vals = xs.flatMap((r) => [r.eps_actual, r.eps_estimate ?? r.eps_actual]);
+  const hi = Math.max(0, ...vals), lo = Math.min(0, ...vals), span = hi - lo || 1;
+  const W = 560, H = 140, pad = 18, bw = (W - pad * 2) / xs.length;
+  const y = (v) => pad + (hi - v) / span * (H - pad * 2);
+  const bar = (x, v, w, c) => { const a = y(Math.max(v, 0)), b = y(Math.min(v, 0)); return `<rect x="${x.toFixed(1)}" y="${a.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(1, b - a).toFixed(1)}" fill="${c}" rx="2"/>`; };
+  const bars = xs.map((r, i) => {
+    const x = pad + i * bw, w = bw * 0.36;
+    const c = r.beat === false ? "var(--down)" : r.beat ? "var(--up)" : "#64748b";
+    return (r.eps_estimate != null ? bar(x + bw * 0.1, r.eps_estimate, w, "rgba(148,163,184,.55)") : "") + bar(x + bw * 0.1 + w + 2, r.eps_actual, w, c)
+      + `<text x="${(x + bw / 2).toFixed(1)}" y="${H - 3}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".6">${esc(String(r.period || r.date || "").slice(0, 7))}</text>`;
+  }).join("");
+  return `<div class="earn-trend"><div class="xs muted">최근 실적 추세 — <span style="color:#94a3b8">■</span> EPS 예상 · <span class="up">■</span> 실제(상회) · <span class="down">■</span> 실제(하회)</div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="분기별 EPS 예상 대비 실제"><line x1="${pad}" x2="${W - pad}" y1="${y(0).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="currentColor" opacity=".25"/>${bars}</svg></div>`;
 }
 
 // ------------------------------------------------------------ 종목 리스크
@@ -285,11 +340,14 @@ async function osOverlay(sym) {
     const el = $("#an-chart");
     if (!el || el.dataset.sym !== sym || !el._series) { await new Promise((r) => setTimeout(r, 150)); continue; }
     const s = el._series;
-    (o.lines || []).filter((l) => l.kind === "support" || l.kind === "resistance").forEach((l) =>
-      s.createPriceLine({ price: l.price, color: l.kind === "support" ? "#14b8a6" : "#f472b6", lineWidth: 1, lineStyle: 1, axisLabelVisible: true, title: l.title }));
+    const LC = { support: ["#14b8a6", 1], resistance: ["#f472b6", 1], avg_cost: ["#facc15", 0], high52: ["#94a3b8", 3], low52: ["#94a3b8", 3],
+      range_hi: ["#60a5fa", 2], range_lo: ["#60a5fa", 2] };
+    const LP = { avg_cost: 9, support: 5, resistance: 5, range_hi: 4, range_lo: 4, high52: 3, low52: 3 };
+    (o.lines || []).filter((l) => LC[l.kind]).forEach((l) =>
+      chartLine(el, { price: l.price, color: LC[l.kind][0], width: l.kind === "avg_cost" ? 2 : 1, style: LC[l.kind][1], title: l.title, pri: LP[l.kind] }));
     const times = el._times || [];
     const at = (d) => { const t = Date.parse(d + "T00:00:00Z") / 1000; return times.find((x) => x >= t); };
-    const seen = new Set(), mk = [...(el._markers || [])];
+    const seen = new Set(), mk = (el._markers || []).map((m) => ({ ...m }));
     (o.marks || []).forEach((m) => {
       const t = at(m.date);
       if (t == null) return;
@@ -298,15 +356,18 @@ async function osOverlay(sym) {
       seen.add(key);
       if (m.kind === "earnings") mk.push({ time: t, position: "aboveBar", shape: "square", color: "#a855f7", text: "실적" });
       else if (m.kind === "disclosure" && m.important) mk.push({ time: t, position: "aboveBar", shape: "square", color: "#f59e0b", text: "공시" });
+      else if (m.kind === "volume") mk.push({ time: t, position: "belowBar", shape: "circle", color: "#a78bfa", text: `거래량 ${m.ratio}배` });
+      else if (m.kind === "macro") mk.push({ time: t, position: "aboveBar", shape: "square", color: "#38bdf8", text: { fomc: "FOMC", cpi: "CPI", nfp: "고용", pce: "PCE" }[m.event] || "지표" });
       else if (m.kind === "move") mk.push({ time: t, position: m.chg > 0 ? "aboveBar" : "belowBar", shape: m.chg > 0 ? "arrowUp" : "arrowDown", color: m.chg > 0 ? "#f0474f" : "#3b8cff", text: `${m.chg > 0 ? "+" : ""}${(m.chg * 100).toFixed(0)}%` });
-      else if (m.kind === "ai_change") mk.push({ time: t, position: "belowBar", shape: "arrowUp", color: m.to === "BUY" ? "#22c55e" : m.to === "SELL" ? "#ef4444" : "#94a3b8", text: `AI ${m.to}` });
-      else if (m.kind === "news" && m.tone !== "중립") mk.push({ time: t, position: "belowBar", shape: "circle", color: m.tone === "긍정" ? "#22c55e" : "#ef4444", text: "" });
+      else if (m.kind === "ai_change") mk.push({ time: t, position: m.to === "SELL" ? "aboveBar" : "belowBar", shape: m.to === "SELL" ? "arrowDown" : m.to === "BUY" ? "arrowUp" : "circle",
+        color: m.to === "BUY" ? "#f04452" : m.to === "SELL" ? "#3182f6" : "#94a3b8", text: `AI ${{ BUY: "매수", SELL: "매도", HOLD: "관망", NO_TRADE: "쉼" }[m.to] || m.to}` });
+      else if (m.kind === "news" && m.tone !== "중립") mk.push({ time: t, position: "belowBar", shape: "circle", color: m.tone === "긍정" ? "#f04452" : "#3182f6", text: "" });  // v23: 좋은 뉴스 빨강 · 나쁜 뉴스 파랑 (국내 관례)
     });
     mk.sort((a, b) => a.time - b.time);
-    try { s.setMarkers(mk); } catch { /* 표시 실패는 무시 */ }
+    try { s.setMarkers(declutterMarkers(mk, times)); } catch { /* 표시 실패는 무시 */ }
     const leg = document.createElement("div");
     leg.className = "chart-legend xs";
-    leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#22c55e">● 긍정</span>/<span style="color:#ef4444">●</span> 부정 뉴스 <span style="color:#f0474f">▲</span>/<span style="color:#3b8cff">▼</span> 급등락 <span style="color:#94a3b8">↑ AI 신호 변화</span> <span class="dim">· ${esc(o.note)}</span>`;
+    leg.innerHTML = `<span style="color:#14b8a6">┈ 지지</span> <span style="color:#f472b6">┈ 저항</span> <span style="color:#a855f7">■ 실적</span> <span style="color:#f59e0b">■ 중요 공시</span> <span style="color:#f04452">● 긍정</span>/<span style="color:#3182f6">●</span> 부정 뉴스 <span style="color:#f0474f">▲</span>/<span style="color:#3b8cff">▼</span> 급등락 <span style="color:#f04452">↑</span>/<span style="color:#3182f6">↓</span> AI 매수·매도 신호 <span style="color:#a78bfa">● 거래량 급증</span> <span style="color:#38bdf8">■ FOMC·CPI·고용</span> <span style="color:#facc15">━ 내 평균 매수가</span> <span style="color:#60a5fa">┄ 5일 보통 범위</span> <span style="color:#94a3b8">┄ 52주 고/저</span> <span class="dim">· ${esc(o.note)}</span>`;
     el.parentElement?.appendChild(leg);
     return;
   }

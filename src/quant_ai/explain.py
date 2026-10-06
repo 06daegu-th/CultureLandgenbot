@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .ensemble.engine import EnsembleConfig
 
 CODE_KO = {"veto": "Risk AI 거부권", "few_responders": "방향 의견을 낸 AI 부족", "high_conflict": "AI 간 의견 충돌 높음",
@@ -148,4 +150,153 @@ def for_symbol(app, symbol: str) -> dict | None:
     return out | {"id": rec.id, "as_of": label(rec.as_of), "sealed": bool(rec.row_hash)}
 
 
-__all__ = ["explain", "for_symbol"]
+ROLE_SHORT = {"primary": "News", "nvidia": "Macro", "panel": "Earnings", "quant": "Quant", "regime": "Regime", "risk": "Risk", "challenger": "Challenger"}
+FINAL_ICON = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡", "NO_TRADE": "⚪"}
+VOL_MAX = 0.05  # 하루 평균 움직임(20일 σ)이 5% 이상이면 새로 사지 않는다 (연 80% 수준)
+MIN_BARS = 60  # 일봉이 이보다 적으면 판단 근거 부족
+STALE_MIN = 20  # 장중 가격이 20분 넘게 안 바뀌면 지연으로 본다
+STALE_DAYS = 3  # 판단이 3일 넘게 묵었으면 새로 판단하기 전까지 거래하지 않는다
+
+
+def _view(c: dict, cfg: EnsembleConfig) -> str:
+    if c.get("veto"):
+        return "NO TRADE"
+    pu = c.get("prob_up")
+    if pu is None:
+        return "통과" if c.get("analyst") == "risk" else "기권"
+    return "BUY" if pu >= cfg.buy_prob else "SELL" if pu <= cfg.sell_prob else "HOLD"
+
+
+def _market_open(symbol: str, now) -> bool:
+    from .clock import clock_status
+    m = clock_status(now)["markets"]["KRX" if symbol[:1].isdigit() else "US"]
+    return m.get("phase") == "open"
+
+
+def verdict(app, symbol: str, now=None) -> dict:
+    """종목 하나의 'AI 최종 판단' — 크게 하나: BUY / HOLD / SELL / NO TRADE.
+
+    AI 별 의견(News·Macro·Quant·Risk…)은 표로 보여 주되 사용자가 비교할 필요 없이 FINAL 하나로.
+    NO TRADE 를 적극적으로: 데이터 부족 · 판단이 오래됨 · 장중 가격 지연 · 실적 발표 임박 · 변동성 과다 ·
+    AI 강등 · 매매 준비 미달 · 데이터 품질 — 하나라도 걸리면 BUY 를 실행하지 않는다 (판단 기록은 그대로).
+    """
+    from datetime import UTC, datetime
+
+    import pandas as pd
+
+    from . import ops
+    from .asof import label
+    from .pipeline import latest_consensus
+    now = now or datetime.now(UTC)
+    cfg = EnsembleConfig()
+    rec = latest_consensus(app.engine, symbol)
+    if rec is None:
+        why = ("해외 종목은 매일 판단 대상이 아닙니다 — '지금 AI 분석'을 누르면 바로 판단합니다 (주문 없음)" if not symbol[:1].isdigit()
+               else "아직 이 종목 AI 판단 기록이 없습니다 — '지금 AI 분석'을 누르면 바로 판단합니다 (주문 없음)")
+        return {"symbol": symbol, "final": None, "label": "AI 판단 없음", "icon": "⚪", "why_none": why, "can_analyze": True}
+    ex = for_symbol(app, symbol) or {}
+    p = rec.payload or {}
+    ev = p.get("evidence") or {}
+    bars = (app._all_bars()[0] or {}).get(symbol)
+    blocks: list[str] = list(ex.get("blocks") or [])
+    extra: list[str] = []
+    n_bars = 0 if bars is None else len(bars)
+    if n_bars < MIN_BARS:
+        extra.append(f"데이터 부족 — 일봉 {n_bars}일치 (최소 {MIN_BARS}일)")
+    at = pd.Timestamp(rec.as_of)
+    at = at.tz_localize("UTC") if at.tzinfo is None else at
+    age_d = (pd.Timestamp(now) - at).total_seconds() / 86400
+    if age_d > STALE_DAYS:
+        extra.append(f"판단이 오래됨 — {age_d:.0f}일 전 판단 (새로 판단하기 전까지 거래하지 않음)")
+    if _market_open(symbol, now):
+        q = (ops.get_state(app.engine, "live_quotes").get(symbol) or {})
+        qa = pd.Timestamp(q["at"]) if q.get("at") else None
+        if qa is not None and qa.tzinfo is None:
+            qa = qa.tz_localize("UTC")
+        mins = None if qa is None else (pd.Timestamp(now) - qa).total_seconds() / 60
+        if mins is None or mins > STALE_MIN:
+            extra.append("장중인데 실시간 가격 없음 — 일봉 종가 기준" if mins is None else f"가격 지연 — 마지막 시세 {mins:.0f}분 전 (기준 {STALE_MIN}분)")
+    vol = ((ev.get("price") or {}).get("vol_20"))
+    if vol is None and bars is not None and n_bars > 21:
+        vol = float(bars["close"].pct_change().iloc[-20:].std())
+    if vol is not None and vol >= VOL_MAX:
+        extra.append(f"변동성 과다 — 하루 평균 ±{vol:.1%} 움직임 (기준 {VOL_MAX:.0%})")
+    r = next((x for x in ops.get_state(app.engine, "event_calendar").get("risk") or [] if x.get("symbol") == symbol), None)
+    earn = (r or {}).get("earnings") or {}
+    if earn and earn.get("trading_days", 99) <= 1:
+        extra.append(f"실적 발표 임박 — {earn.get('d_label', '')} (발표 뒤 방향을 보고 다시 판단)")
+    trust = None
+    try:
+        from .center import ai_state
+        st = ai_state(app)
+        trust = {k: st[k] for k in ("key", "icon", "label")}
+        if st["key"] == "banned" and not st.get("demoted"):
+            extra.append("AI 성적 기준 미달 (🔴 사용 금지) — AI BUY 는 참고만")
+    except Exception:  # noqa: BLE001
+        trust = None
+    raw = ex.get("effective_action") or rec.action
+    final = raw
+    if raw == "BUY" and extra:
+        final = "NO_TRADE"
+    all_blocks = list(dict.fromkeys(blocks + extra))
+    votes = [{"role": ROLE_SHORT.get(c.get("analyst"), c.get("analyst")), "label": LABELS.get(c.get("analyst"), c.get("analyst")),
+              "view": _view(c, cfg), "prob_up": None if c.get("prob_up") is None else round(c["prob_up"], 3),
+              "weight": round(float(c.get("weight") or 0), 3), "summary": (c.get("summary") or "")[:100]}
+             for c in p.get("contributions") or []]
+    junk = ("휴리스틱", "국면 ", "기권")
+    pro = [f"{x['ai']}: {x['summary']}" if x.get("summary") and not any(j in x["summary"] for j in junk) else f"{x['ai']} 상승 확률 {x['prob_up']:.0%}"
+           for x in (ex.get("for") or [])] if rec.prob_up >= 0.5 else []
+    regime_ko = {"bull_quiet": "안정적 상승", "bull_volatile": "변동성 상승", "sideways": "횡보", "bear_quiet": "완만한 하락",
+                 "bear_volatile": "변동성 하락", "crisis": "위기"}
+
+    def _ko(w: str) -> str:  # '[primary] 20일 모멘텀 상승' → '뉴스 AI: 20일 모멘텀 상승' · 'sideways' → '횡보'
+        m = re.match(r"^\[(\w+)\]\s*(.*)$", w or "")
+        if m:
+            lab, body = LABELS.get(m.group(1), m.group(1)), m.group(2)
+            w = body if body.startswith(lab) else f"{lab}: {body}"
+        for k, v in regime_ko.items():
+            w = w.replace(k, v)
+        return w
+    why_buy = [_ko(w) for w in list(p.get("reasons") or []) + pro if w and not any(j in w for j in junk)][:3]
+    why_not = (all_blocks + list(p.get("risks") or []) + [x["summary"] for x in (ex.get("against") or []) if x.get("summary")])
+    why_not = [_ko(w) for w in dict.fromkeys(why_not) if w and "휴리스틱" not in w][:3]
+    from .scorecard import verify_now
+    warn = None
+    try:
+        vn = verify_now(app, symbol, rec.prob_up)
+        if (vn.get("similar_n") or 0) >= 20 and vn.get("similar_up") is not None:
+            hit = vn["similar_up"] if rec.prob_up >= 0.5 else 1 - vn["similar_up"]
+            if hit < 0.45:
+                warn = f"주의: 과거 비슷한 판단(상승 {rec.prob_up:.0%} 근처) {vn['similar_n']}회에서 AI 가 맞은 비율 {hit:.0%} — 이런 상황에서 자주 틀렸습니다"
+        fl = ops.get_state(app.engine, "failure_lab")
+        for f in fl.get("findings") or []:
+            if f.get("tag") == "earnings" and earn:
+                warn = (warn + " · " if warn else "") + "AI 는 실적 발표가 낀 예측에서 약했습니다 (" + f["text"].split("—")[-1].strip()[:60] + ")"
+    except Exception:  # noqa: BLE001, S110 - 경고는 보조 정보
+        pass
+    news = ev.get("news") or []
+    discs = ev.get("disclosures") or []
+    macro = ev.get("macro") or {}
+
+    def _last(items, key="at"):
+        ts = [str(x.get(key) or x.get("published_at") or x.get("date") or "") for x in items if isinstance(x, dict)]
+        ts = [t for t in ts if t]
+        return max(ts) if ts else None
+    used = {"judged_at": label(rec.as_of), "price": (ev.get("price") or {}).get("last_bar"),
+            "news": {"n": len(news), "last": _last(news)}, "disclosures": {"n": len(discs), "last": _last(discs)},
+            "macro": {"n": len(macro) if isinstance(macro, dict) else 0, "last": (macro.get("as_of") if isinstance(macro, dict) else None)},
+            "regime": (ev.get("regime") or {}).get("regime"), "sealed": bool(rec.row_hash)}
+    if used["price"]:
+        used["price"] = label(used["price"], with_time=False)
+    shown = "NO TRADE" if final == "NO_TRADE" else final
+    return {"symbol": symbol, "final": final, "raw": rec.action, "label": shown, "icon": FINAL_ICON.get(final, "⚪"),
+            "prob_up": round(rec.prob_up, 3), "confidence": round(rec.confidence, 1), "horizon": int(p.get("horizon") or 5),
+            "big": f"{FINAL_ICON.get(final, '⚪')} {shown}" + (f" {rec.prob_up:.0%}" if final in ("BUY", "SELL", "HOLD") else ""),
+            "changed_by_gate": final != rec.action, "headline": ex.get("headline"), "plain": ex.get("plain") or [],
+            "votes": votes, "why_buy": why_buy, "why_not": why_not, "no_trade": all_blocks, "warn": warn, "used": used,
+            "expected_return": p.get("expected_return"), "plan": {k: (p.get("plan") or {}).get(k) for k in ("stop", "target", "stop_pct")},
+            "trust": trust, "as_of": label(rec.as_of), "id": rec.id,
+            "note": "FINAL = 여러 AI 의견을 성적 가중으로 합친 뒤, 거래하면 안 되는 이유(NO TRADE)를 먼저 검사한 결과"}
+
+
+__all__ = ["explain", "for_symbol", "verdict"]

@@ -19,7 +19,7 @@ from ..engines.features import build_dataset, feature_columns
 from ..engines.prediction import Predictor, classification_metrics
 from ..engines.regime import EXPOSURE_MULTIPLIER, Regime, equal_weight_index, regime_series
 from ..trading.broker import MarketQuote, PaperBroker
-from ..trading.execution import ExecutionEngine, signals_from_probs
+from ..trading.execution import ExecutionEngine, Signal, signals_from_probs
 from ..trading.journal import Journal
 from ..trading.portfolio import CostModel, Portfolio
 from ..trading.risk import RiskEngine
@@ -30,6 +30,9 @@ from .stats import bootstrap_sharpe_ci, calibration_table, probabilistic_sharpe
 class BacktestConfig:
     horizon: int = 5
     model_kind: str = "logistic"  # 기본은 보정이 잘 되는 로지스틱, "gbm" 선택 가능
+    # v20: 무엇을 맞히나 — excess(같은 날 다른 종목보다 더 오를까 · 종목 선택) / up(오를까 · 시장 방향이 섞임)
+    target: str = "excess"
+    rank_k: int = 10  # excess: 리밸런스마다 점수 상위 rank_k 종목을 같은 비중으로 보유 (현금으로 쉬지 않는다)
     train_window: int | None = 750  # 학습에 쓰는 최근 날짜 수 (None = 전체 누적)
     min_train_dates: int = 250
     retrain_every: int = 20
@@ -41,6 +44,15 @@ class BacktestConfig:
     delist_haircut: float = 0.30  # 상장폐지 보유분 강제 청산 시 할인 (정리매매 등 보수적 가정)
     risk: RiskLimits = field(default_factory=RiskLimits)
     costs: CostModelConfig = field(default_factory=CostModelConfig)
+
+
+def effective_config(cfg: BacktestConfig, bars_by_symbol: dict) -> BacktestConfig:
+    """종목 선택(excess) 모델은 같은 날 비교할 종목이 MIN_CROSS 개 이상일 때만 의미가 있다 → 적으면 '오를까'(up) 로."""
+    from ..engines.features import MIN_CROSS
+    if cfg.target == "excess" and len(bars_by_symbol) < MIN_CROSS:
+        from dataclasses import replace as _replace
+        return _replace(cfg, target="up")
+    return cfg
 
 
 @dataclass
@@ -83,15 +95,16 @@ class Backtester:
         """eligible: index=일자, columns=종목, bool. 그 시점에 실제로 투자 대상이었던 종목만
         학습·예측·신규매수에 쓴다 (생존편향·선택편향 제거). None 이면 전 종목."""
         cfg = self.cfg
+        cfg = effective_config(cfg, bars_by_symbol)
         bench = benchmark if benchmark is not None else equal_weight_index(bars_by_symbol)
         reg = regime_series(bench)
         data = build_dataset(bars_by_symbol, cfg.horizon,
-                             regime=reg["score"] if cfg.use_regime else None, sentiment=sentiment)
+                             regime=reg["score"] if cfg.use_regime else None, sentiment=sentiment, target=cfg.target)
         if eligible is not None:
             stacked = eligible.stack()
             ok = stacked[stacked].index
             data = data[data.index.isin(ok)]
-        feats = feature_columns(data)
+        feats = feature_columns(data, cfg.target)
         last_bar = {s: b.index.max() for s, b in bars_by_symbol.items()}
         data_end = max(last_bar.values())
         delisted_exits = 0
@@ -121,7 +134,7 @@ class Backtester:
                 lo = 0 if cfg.train_window is None else max(0, cutoff - cfg.train_window)
                 train = data.loc[dates[lo]:dates[cutoff]].dropna(subset=["label"])
                 if train["label"].nunique() == 2:
-                    model = Predictor(cfg.model_kind, cfg.horizon).fit(train[feats], train["label"])
+                    model = Predictor(cfg.model_kind, cfg.horizon, target=cfg.target).fit(train[feats], train["label"])
                     last_train = i
             if model is None:
                 continue
@@ -136,7 +149,23 @@ class Backtester:
             # ---- t+1 시가 체결
             mult = EXPOSURE_MULTIPLIER[Regime(regime_label)] if (cfg.use_regime and regime_label) else 1.0
             prob_map = {sym: float(p) for (_, sym), p in zip(today.index, probs)}
-            signals = signals_from_probs(prob_map, cfg.min_prob, cfg.risk.max_position_weight, cfg.top_k)
+            if cfg.target == "excess":
+                # 종목 선택 모델: horizon 일마다 점수 상위 rank_k 종목을 같은 비중으로 (그 사이엔 그대로 보유 — 회전·비용 절약)
+                if (i - start) % cfg.horizon != 0:
+                    marks = mark.loc[t_next].dropna().to_dict()
+                    for sym, pos in pf.positions.items():
+                        if pos.qty and sym not in marks:
+                            marks[sym] = pos.avg_price
+                    equity_points[t_next] = pf.equity(marks)
+                    exposures.append(pf.market_value(marks) / equity_points[t_next] if equity_points[t_next] > 0 else 0.0)
+                    continue
+                top = sorted(prob_map, key=lambda s_: -prob_map[s_])[:cfg.rank_k]
+                w = min(1.0 / max(len(top), 1), cfg.risk.max_position_weight)
+                # 순위로 고르는 모델이라 '확률 0.55 이상' 검사는 하지 않는다 (코어와 같음 — 확률은 0.5 근처가 정상)
+                signals = [Signal(s_, w, None, f"상위 점수 {prob_map[s_]:.3f}") for s_ in top] + \
+                          [Signal(s_, 0.0, None, "상위 밖") for s_, pos in pf.positions.items() if pos.qty and s_ not in top]
+            else:
+                signals = signals_from_probs(prob_map, cfg.min_prob, cfg.risk.max_position_weight, cfg.top_k)
             for s in signals:
                 s.target_weight *= mult
             open_px = opens.loc[t_next]

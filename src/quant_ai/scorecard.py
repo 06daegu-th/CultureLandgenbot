@@ -168,4 +168,157 @@ def public_report(app, n: int = 1000) -> dict:
                       "Net Alpha = 오른다고 본 것만 샀을 때 − 전부 샀을 때 (판단 1건당, 비용 전) · MDD = 그 차이를 날마다 누적한 곡선의 최대 낙폭 (근사)"}
 
 
-__all__ = ["scorecard", "verify_now", "public_report", "WINDOWS"]
+REGIME_GROUP = {"bull_quiet": "상승장", "bull_volatile": "상승장", "sideways": "횡보장", "bear_quiet": "하락장", "bear_volatile": "하락장",
+                "crisis": "하락장"}
+
+
+def _roundtrip_cost(app, sym: str) -> float:
+    """왕복 비용 (수익률). 국내: 수수료×2 + 미끄러짐×2 + 매도세 · 미국: 수수료×2 + 미끄러짐×2 (환전은 제외)."""
+    import os
+    c = app.settings.costs
+    if sym[:1].isdigit():
+        return (2 * c.commission_bps + 2 * c.slippage_bps + c.sell_tax_bps) / 1e4
+    try:
+        us = float(os.environ.get("QUANT_US_COMMISSION_BPS") or 25)
+    except ValueError:
+        us = 25.0
+    return (2 * us + 2 * c.slippage_bps) / 1e4
+
+
+def plain(app, n: int = 100, symbol: str | None = None) -> dict:
+    """일반 사용자용 성적표: '최근 100회 중 63회 맞음' · 'AI 가 BUY 한 것만 샀다면 비용 뒤 +1.2% · 같은 기간 지수 +0.8%' ·
+    틀린 사례(예상 → 실제 · 원인 후보) · 상승장/횡보장/하락장별 적중."""
+    from . import ops
+    from .data.db import session_scope
+    from .data.models import ConsensusRecord, Instrument
+    from .engines.features import forward_return
+    q = select(ConsensusRecord.id, ConsensusRecord.as_of, ConsensusRecord.symbol, ConsensusRecord.action, ConsensusRecord.prob_up,
+               ConsensusRecord.realized_return, ConsensusRecord.correct, ConsensusRecord.payload).where(ConsensusRecord.realized_return.is_not(None))
+    if symbol:
+        q = q.where(ConsensusRecord.symbol == symbol)
+    with session_scope(app.engine) as s:
+        rows = s.execute(q.order_by(ConsensusRecord.as_of.desc()).limit(n)).all()
+        names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_({r.symbol for r in rows} or {""})))}
+    if not rows:
+        return {"n": 0, "headline": "아직 채점된 AI 판단이 없습니다 — 판단 뒤 5거래일이 지나야 맞았는지 알 수 있습니다"}
+    _, benches = app._all_bars()
+    bfwd: dict[tuple[str, int], pd.Series] = {}
+
+    def bench_ret(sym, as_of, h):
+        key = ("KR" if sym[:1].isdigit() else "US", h)
+        if key not in bfwd:
+            b = benches.get(key[0])
+            if b is None or not len(b):
+                bfwd[key] = None
+            else:
+                b = b if "open" in b else b.assign(open=b["close"])
+                bfwd[key] = forward_return(b, h).dropna()
+        ser = bfwd[key]
+        if ser is None or ser.empty:
+            return None
+        ts = pd.Timestamp(as_of)
+        ts = ts.tz_localize("UTC") if ts.tz is None else ts.tz_convert("UTC")
+        idx = ser.index if ser.index.tz is not None else ser.index.tz_localize("UTC")
+        k = int(idx.searchsorted(ts, side="right")) - 1
+        return float(ser.iloc[k]) if k >= 0 else None
+    hits = sum(1 for r in rows if r.correct)
+    ups = sum(1 for r in rows if r.realized_return > 0)
+    picks = [r for r in rows if r.action == "BUY"] or [r for r in rows if r.prob_up >= 0.5]
+    pick_kind = "BUY 라고 한" if any(r.action == "BUY" for r in rows) else "'오른다'고 본"
+    money = None
+    if picks:
+        raw = [r.realized_return for r in picks]
+        net = [r.realized_return - _roundtrip_cost(app, r.symbol) for r in picks]
+        bm = [bench_ret(r.symbol, r.as_of, int((r.payload or {}).get("horizon") or 5)) for r in picks]
+        pairs = [(a, b) for a, b in zip(net, bm, strict=True) if b is not None]
+        avg_b = float(np.mean([b for _, b in pairs])) if pairs else None
+        excess = float(np.mean([a - b for a, b in pairs])) if pairs else None
+        money = {"kind": pick_kind, "n": len(picks), "avg_raw": round(float(np.mean(raw)), 4), "avg_net": round(float(np.mean(net)), 4),
+                 "avg_bench": None if avg_b is None else round(avg_b, 4), "excess": None if excess is None else round(excess, 4),
+                 "win": round(sum(1 for x in net if x > 0) / len(net), 3),
+                 "text": (f"AI 가 {pick_kind} {len(picks)}번을 그대로 샀다면: 평균 {np.mean(raw):+.1%} → 비용 뒤 {np.mean(net):+.1%}"
+                          + (f" · 같은 기간 지수 {avg_b:+.1%} → 지수보다 {excess * 100:+.1f}%p" if excess is not None else " · 지수 비교 불가 (지수 데이터 없음)")),
+                 "earned": None if excess is None else excess > 0}
+    lab = {x["id"]: x for x in (ops.get_state(app.engine, "failure_lab").get("losses") or [])}
+    wrong = sorted([r for r in rows if not r.correct], key=lambda r: -abs(r.realized_return))[:3]
+    fails = []
+    for r in wrong:
+        p = r.payload or {}
+        h = int(p.get("horizon") or 5)
+        why = list((lab.get(r.id) or {}).get("why") or [])
+        if not why:
+            b = bench_ret(r.symbol, r.as_of, h)
+            if b is not None and abs(b) >= 0.02 and np.sign(b) == np.sign(r.realized_return):
+                why.append(f"시장 전체 {'하락' if b < 0 else '상승'} ({b:+.1%})")
+            why = why or ["뚜렷한 외부 원인 없음 — 모델 자체 오류 가능성"]
+        exp = p.get("expected_return")
+        fails.append({"id": r.id, "symbol": r.symbol, "name": names.get(r.symbol, r.symbol), "at": label(r.as_of, with_time=False),
+                      "action": r.action, "expected": exp, "actual": round(r.realized_return, 4), "why": why[:3],
+                      "text": (f"예상 {exp:+.1%}" if isinstance(exp, (int, float)) else f"{r.action} (상승 {r.prob_up:.0%})")
+                              + f" → 실제 {r.realized_return:+.1%} · 원인 후보: {', '.join(why[:2])}"})
+    by_regime = {}
+    for r in rows:
+        g = REGIME_GROUP.get((r.payload or {}).get("regime"))
+        if g:
+            by_regime.setdefault(g, []).append(bool(r.correct))
+    regimes = [{"regime": g, "n": len(v), "hit": round(sum(v) / len(v), 3)} for g, v in by_regime.items()]
+    regimes.sort(key=lambda x: -x["hit"])
+    good = [x for x in regimes if x["n"] >= 10]
+    strong = good[0] if good and good[0]["hit"] >= 0.55 else None
+    weak = good[-1] if good and good[-1]["hit"] < 0.5 and good[-1] is not strong else None
+    alpha = None
+    xs = [((r.payload or {}).get("outcomes") or {}).get("excess") for r in rows]
+    pairs = [(r.prob_up >= 0.5, float(x)) for r, x in zip(rows, xs, strict=True) if x is not None]
+    if pairs:  # v20: 시장 대비 채점 — '지수보다 더 오른다' 를 맞혔나 (시장 방향 덕분의 적중을 걷어낸다)
+        ahit = sum(1 for up, x in pairs if up == (x > 0))
+        abase = sum(1 for _, x in pairs if x > 0)
+        alpha = {"n": len(pairs), "hits": ahit, "base_hits": abase, "hit_rate": round(ahit / len(pairs), 3),
+                 "beat_base": ahit > max(abase, len(pairs) - abase),
+                 "text": f"시장 대비로 채점하면 {len(pairs)}회 중 {ahit}회 적중 (그냥 '지수보다 더 오른다'고만 했으면 {abase}회 · "
+                         f"반대로만 했으면 {len(pairs) - abase}회)"}
+    by_mkt = {}
+    for r in rows:
+        by_mkt.setdefault("한국" if r.symbol[:1].isdigit() else "미국", []).append(bool(r.correct))
+    return {"n": len(rows), "hits": hits, "base_hits": ups, "hit_rate": round(hits / len(rows), 3), "base_rate": round(ups / len(rows), 3),
+            "headline": f"최근 {len(rows)}회 중 {hits}회 방향 적중" + (f" (그냥 '오른다'고만 했으면 {ups}회)" if ups else ""),
+            "beat_base": hits > ups, "money": money, "alpha": alpha, "failures": fails, "regimes": regimes,
+            "strong": None if not strong else f"{strong['regime']}에서 잘함 — 적중 {strong['hit']:.0%} ({strong['n']}회)",
+            "weak": None if not weak else f"{weak['regime']}에서 약함 — 적중 {weak['hit']:.0%} ({weak['n']}회)",
+            "markets": [{"market": k, "n": len(v), "hit": round(sum(v) / len(v), 3)} for k, v in by_mkt.items()],
+            "from": label(rows[-1].as_of, with_time=False), "to": label(rows[0].as_of, with_time=False),
+            "note": "방향 = 상승 확률 50% 이상이면 '오른다' · 비용 = 수수료·미끄러짐·세금 왕복 · 지수 = 같은 기간 시장 (코스피 대용 / 미국 지수)"}
+
+
+
+def by_context(app, n: int = 500, min_n: int = 10) -> dict:
+    """상황별 AI 성적 — 뉴스 유형별 · 실적 발표 전후 · 종목별 (채점 끝난 실제 전진 기록만, 표본 min_n 미만은 '표본 부족').
+    근거는 판단 당시 저장된 증거(payload.evidence) — 지금 다시 계산하지 않는다 (사후 끼워 맞추기 방지)."""
+    from collections import defaultdict
+
+    from .data.db import session_scope
+    from .data.models import ConsensusRecord, Instrument
+    from .news_llm import EVENT_KO
+    with session_scope(app.engine) as s:
+        rows = s.execute(select(ConsensusRecord.symbol, ConsensusRecord.correct, ConsensusRecord.realized_return, ConsensusRecord.payload)
+                         .where(ConsensusRecord.correct.is_not(None)).order_by(ConsensusRecord.as_of.desc()).limit(n)).all()
+        names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_({r.symbol for r in rows} or {""})))}
+    groups: dict[str, dict[str, list]] = {"news": defaultdict(list), "earnings": defaultdict(list), "symbol": defaultdict(list)}
+    for r in rows:
+        ev = (r.payload or {}).get("evidence") or {}
+        cats = [e for it in ev.get("news") or [] for e in (it.get("events") or []) if e != "other"]
+        top = max(set(cats), key=cats.count) if cats else None
+        groups["news"][EVENT_KO.get(top, top) if top else "관련 뉴스 없음"].append(bool(r.correct))
+        disc_e = any("earnings" in (d.get("events") or []) for d in ev.get("disclosures") or [])
+        cal_e = any("실적" in str(e.get("title", e)) for e in ev.get("events") or [] if isinstance(e, dict | str))
+        groups["earnings"]["실적 발표 전후" if (disc_e or cal_e or top == "earnings") else "평소"].append(bool(r.correct))
+        groups["symbol"][names.get(r.symbol, r.symbol)].append(bool(r.correct))
+
+    def table(g, k=8):
+        out = [{"key": key, "n": len(v), "hit": round(sum(v) / len(v), 3), "enough": len(v) >= min_n} for key, v in g.items() if v]
+        return sorted(out, key=lambda x: -x["n"])[:k]
+    return {"n": len(rows), "min_n": min_n, "news": table(groups["news"]), "earnings": table(groups["earnings"]),
+            "symbol": table(groups["symbol"], 10),
+            "note": f"채점 끝난 최근 {len(rows)}건 · 표본 {min_n}건 미만은 우연일 수 있어 흐리게 표시 · 판단 당시 저장된 증거로 분류"}
+
+
+__all__ = ["scorecard", "verify_now", "public_report", "plain", "by_context", "WINDOWS"]

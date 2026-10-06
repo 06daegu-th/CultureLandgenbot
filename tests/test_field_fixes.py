@@ -173,9 +173,12 @@ def test_doctor_ai_is_fast_and_dedupes_providers(app, monkeypatch, capsys):
     class C(SlowLLM):
         timeout, retries, min_interval, max_tokens = 60.0, 2, 7.5, 8192
 
+    me = threading.current_thread()
+
     def fake_make(settings, prov):
         c = C(prov, delay=0.0, fail=prov == "groq")
-        made.append(c)
+        if threading.current_thread() is me:  # 앞 테스트가 띄운 백그라운드 분석 작업이 같은 함수를 불러도 세지 않는다
+            made.append(c)
         return c
     monkeypatch.setattr(an, "assign_roles", lambda st: {"primary": "gemini", "nvidia": "nvidia", "risk": "gemini",
                                                          "panel": "groq"})

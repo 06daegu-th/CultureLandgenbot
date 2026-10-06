@@ -287,6 +287,8 @@ function setupBanner(s) {
     <button class="btn-sm primary" id="warmup-btn" ${act.running ? "disabled" : ""}>${act.running ? "채우는 중…" : "지금 채우기"}</button></div>
     <div class="setup-steps">${s.steps.map((x) => `<div class="ss ${x.done ? "done" : x.optional ? "opt" : ""}"><span class="ssi">${x.done ? "✓" : x.optional ? "○" : "!"}</span><div><b>${esc(x.label)}</b>${x.optional ? ' <span class="xs dim">선택</span>' : ""}<div class="xs muted">${esc(x.detail)}</div>${x.done ? "" : `<div class="xs" style="color:var(--accent-3)">${x.link ? `<a href="${esc(x.link)}">${esc(x.fix)}</a>` : esc(x.fix)}</div>`}</div></div>`).join("")}</div>
     ${keyHelp(s)}
+    ${s.server ? `<div class="xs dim" style="margin-top:6px">이 화면을 보내는 서버: 버전 ${esc(s.server.version)} · 폴더 ${esc(s.server.root)} · 읽는 .env: ${esc(s.server.env_file || "못 찾음")}
+      — 키를 넣은 .env 와 다르면 옛 서버가 떠 있는 것입니다: 터미널에서 <code>./run.sh stop</code> 후 새 폴더에서 <code>./run.sh</code></div>` : ""}
     <div class="small dim" id="warmup-msg">${act.running ? esc(act.progress || "") : act.error ? "실패: " + esc(act.error) : act.finished_at ? "마지막 채우기 " + time(act.finished_at, true) : ""}</div></div>`;
 }
 
@@ -372,7 +374,7 @@ function md(text) {
 function chatMsgHtml(m) {
   if (m.role === "user") return `<div class="msg user"><div class="bubble">${esc(m.content)}</div></div>`;
   const tools = (m.tools || []).map((t) => `<span class="tchip ${t.ok === false ? "bad" : ""}">${TOOL_LABEL[t.tool] || esc(t.tool)}${t.args?.symbol ? " · " + esc(t.args.symbol) : ""}</span>`).join("");
-  const cards = (m.cards || []).map((c) => `<a class="stock-card" href="#analysis/${esc(c.symbol)}"><div><b>${esc(c.name)}</b> <span class="xs dim">${esc(c.symbol)}</span><div class="num">${c.currency === "USD" ? "$" + num(c.last, 2) : num(c.last) + "원"} <span class="${sgn(c.ret_1d)}">${pp(c.ret_1d)}</span></div><div class="xs dim">${esc(c.date || "")} 종가</div></div><div class="sc-spark">${spark(c.spark, 120, 36)}</div></a>`).join("");
+  const cards = (m.cards || []).map((c) => `<a class="stock-card" href="#analysis/${esc(c.symbol)}"><div>${stockLogo(c.symbol, c.name, 20)} <b>${esc(c.name)}</b> <span class="xs dim">${esc(c.symbol)}</span><div class="num">${c.currency === "USD" ? "$" + num(c.last, 2) : num(c.last) + "원"} <span class="${sgn(c.ret_1d)}">${pp(c.ret_1d)}</span></div><div class="xs dim">${esc(c.date || "")} 종가</div></div><div class="sc-spark">${spark(c.spark, 120, 36)}</div></a>`).join("");
   const acts = (m.actions || []).map((a) => `<button class="act-btn ${a.danger ? "danger" : ""}" data-act="${esc(a.action)}" data-sym="${esc(a.symbol || "")}" title="${esc(a.reason || "")}">▶ ${esc(a.label)}</button>`).join("");
   const links = (m.links || []).map((l) => `<a class="chip xs" href="${esc(l.href)}">↗ ${esc(l.label)}</a>`).join(" ");
   const fol = (m.followups || []).map((q) => `<button class="fol-q">${esc(q)}</button>`).join("");
@@ -453,11 +455,21 @@ function initChatWidget() {
   w.innerHTML = `<button class="chat-fab" id="chat-fab" title="AI 어시스턴트">${ICONS.chat}<span>AI 에게 묻기</span></button>${chatShell("chat-pop")}`;
   document.body.appendChild(w);
   let mounted = false;
-  $("#chat-fab").onclick = () => {
+  const toggle = () => {
     w.classList.toggle("open");
     if (!mounted) { mountChat($("#chat-pop")); mounted = true; }
     if (w.classList.contains("open")) setTimeout(() => $("#chat-pop textarea")?.focus(), 50);
   };
+  $("#chat-fab").onclick = toggle;
+  // v27: PC 에서는 떠 있는 버튼이 카드 끝(숫자·단추)을 가려서 → 위 막대의 'AI' 단추로 옮긴다 (휴대폰은 아래 버튼 그대로)
+  const th = $("#theme-btn");
+  if (th && !$("#ai-top-btn")) {
+    const b = document.createElement("button");
+    b.id = "ai-top-btn"; b.className = "icon-btn ai-top-btn"; b.title = "AI 에게 묻기"; b.setAttribute("aria-label", "AI 에게 묻기");
+    b.innerHTML = `${ICONS.chat}<span>AI 에게 묻기</span>`;
+    b.onclick = toggle;
+    th.parentElement.insertBefore(b, th);
+  }
   window.askAI = (q) => {
     w.classList.add("open");
     if (!mounted) { mountChat($("#chat-pop")); mounted = true; }
@@ -485,14 +497,27 @@ function initSearch() {
       let res = [];
       try { res = (await api(`/api/search?q=${encodeURIComponent(q)}`)).results; } catch { res = []; }
       if (my !== seq) return;
-      box.innerHTML = res.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${w.market === "GLOBAL" ? "🌐 " : ""}${esc(w.name)} <span class="dim small">${esc(w.symbol)}</span></span>${w.market === "GLOBAL" ? '<span class="chip">해외</span>' : badge(w.action)}</a>`).join("")
+      const none = res.length ? "" : `<div class="sr-none small muted">'${esc(q)}' 종목을 찾지 못했습니다 — 종목코드(예: 005930)·티커(NVDA)·영문명으로도 찾을 수 있습니다.
+        국내 종목이 하나도 안 나오면 아직 주가 데이터를 받지 않은 것입니다 (홈의 '처음이라면' ①).</div>`;
+      box.innerHTML = none + res.map((w) => `<a data-sym="${esc(w.symbol)}"><span>${coId(w.symbol, w.name, { size: 30, ex: w.exchange || (w.market === "GLOBAL" ? "미국" : ""), link: false, tail: w.name_en && w.name_en !== w.name ? ` · ${esc(w.name_en)}` : "" })}</span>${w.market === "GLOBAL" ? '<span class="chip">해외</span>' : badge(w.action)}</a>`).join("")
         + `<a data-ask="${esc(q)}" class="ask"><span>${ICONS.chat} AI 에게 “${esc(q)}” 물어보기</span></a>`;
       box.classList.add("open");
       box.querySelectorAll("a[data-sym]").forEach((a) => a.onclick = () => { box.classList.remove("open"); input.value = ""; location.hash = `#analysis/${a.dataset.sym}`; });
       box.querySelector("a[data-ask]").onclick = () => { box.classList.remove("open"); input.value = ""; window.askAI?.(`${q} 어때?`); };
     }, 180);
   }, true);
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") box.querySelector("a")?.click(); });
+  // v24: Enter = 첫 결과의 올인원 종목 화면 — 검색 결과가 아직 안 왔어도 바로 찾아서 이동
+  input.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    const first = box.querySelector("a[data-sym]");
+    if (first) { first.click(); return; }
+    const q = input.value.trim();
+    if (!q) return;
+    try {
+      const r = (await api(`/api/search?q=${encodeURIComponent(q)}`)).results || [];
+      if (r[0]) { box.classList.remove("open"); input.value = ""; location.hash = `#analysis/${encodeURIComponent(r[0].symbol)}`; }
+    } catch { /* 검색 실패는 결과 상자에 표시됨 */ }
+  });
 }
 
 
@@ -535,7 +560,7 @@ function evDate(iso) {
   const dt = new Date(Date.UTC(y, m - 1, d));
   return `${m}월 ${d}일 (${WD[dt.getUTCDay()]})`;
 }
-const EV_ICON = { earnings: "📊", earnings_prelim: "📊", ex_div: "✂️", div_pay: "💰", dividend: "💰", ir: "🎤", agm: "🏛️", report: "📑", offering: "⚠️", buyback: "🔁" };
+const EV_ICON = new Proxy({ earnings: "earnings", earnings_prelim: "earnings", ex_div: "ex_div", div_pay: "div_pay", dividend: "div_pay" }, { get: (t, k) => calDot(t[k] || "disclosure") });  // v21: 색 점
 const safeUrl = (u) => /^https?:\/\//i.test(u || "") ? esc(u) : null;
 
 function pfEvents(p) {

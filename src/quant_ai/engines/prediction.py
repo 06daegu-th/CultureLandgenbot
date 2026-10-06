@@ -46,11 +46,12 @@ def direction_of(prob_up: float, band: float = 0.03) -> str:
 
 
 class Predictor:
-    def __init__(self, kind: str = "logistic", horizon: int = 5):
+    def __init__(self, kind: str = "logistic", horizon: int = 5, target: str = "up"):
         if kind not in MODEL_FACTORIES:
             raise ValueError(f"알 수 없는 모델: {kind}")
         self.kind = kind
         self.horizon = horizon
+        self.target = target  # up: P(오른다) · excess: P(같은 날 다른 종목들보다 더 오른다) — v20
         self.model = MODEL_FACTORIES[kind]()
         self.features: list[str] = []
         self._mean: pd.Series | None = None
@@ -59,6 +60,11 @@ class Predictor:
 
     @staticmethod
     def _fit_est(est, X, y, sample_weight):
+        if not hasattr(est, "steps") and isinstance(X, pd.DataFrame):
+            # GBM 은 값이 하나도 없는 열(예: 학습 초기 구간의 12개월 모멘텀)에서 구간 나누기가 실패한다 → 그 열만 0
+            empty = [c for c in X.columns if X[c].notna().sum() == 0]
+            if empty:
+                X = X.assign(**{c: 0.0 for c in empty})
         if sample_weight is None:
             est.fit(X, y)
         elif hasattr(est, "steps"):  # Pipeline 은 마지막 단계 이름으로 전달해야 함

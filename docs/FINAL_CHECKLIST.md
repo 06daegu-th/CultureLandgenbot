@@ -48,6 +48,7 @@
 | ✓ rebalance | KOSPI200 정기변경 · MSCI 리뷰 · S&P 분기 | `engines/events.py` | `test_event_calendar_builds_every_kind_with_sources` |
 | ✓ estimated flag | 규칙으로 추정한 날짜는 '추정' 표시 | `engines/events.py` | `test_event_calendar_builds_every_kind_with_sources` |
 | ✓ event risk | 이벤트 위험 점수 · 실적 D-1 매수 ×0.5 · 금통위/FOMC 고베타 ×0.75 | `engines/events.py · risk.py` | `test_risk_engine_gates_block_and_shrink_buys_only` |
+| ✓ Exchange status · holiday notice | 🟢장중/🟡시간외/🔴장마감 · '오늘 미국 증시는 휴장입니다 (독립기념일)' · 서머타임 | `clock.clock_status` | `test_clock_light_holiday_notice_and_dst` |
 | ✓ Weekly holdings schedule | 이번 주 보유·관심 종목 일정 + 월요일 알림 · 동종업체 실적 · 락업 공시 | `center.py` | `test_weekly_schedule_alert_and_lockup_strip` |
 
 ## AI
@@ -70,6 +71,10 @@
 | ✓ AI Lab | 여러 AI → 합의 → Risk Gate → 최종 · 모델 단계 Research→Challenger→Shadow→Champion | `lab.py` | `test_lab_validation_portfolio_personal_failure` |
 | ✓ Daily AI trust + auto demotion | 적중·Brier·ECE·알파 매일 기록 → 3일 연속 UNTRUSTED 면 주문에서 제외 | `aitrack.py` | `test_ai_track_trust_and_auto_demotion` |
 | ✓ Event strategy forward ledger | 실적 서프라이즈(PEAD) 신호를 결과 전에 봉인 · 전진/사후 분리 채점 · 주문엔 안 씀 | `pead.py` | `test_pead_forward_ledger_seal_and_scoring` |
+| ✓ Final verdict · NO TRADE first | AI 별 의견 → FINAL 하나 · 데이터 부족/오래됨/장중 가격 20분 지연/실적 D-1/변동성 과다/AI 사용 금지면 BUY 막음 · 판단에 쓴 데이터 시각 | `explain.verdict` | `test_verdict_final_votes_no_trade_gates_and_data_used` |
+| ✓ Plain scorecard | 최근 100회 중 n회 적중 · 비용 뒤 · 지수 대비 초과수익 · 틀린 사례(원인 후보) · 상승/횡보/하락장별 | `scorecard.plain` | `test_plain_scorecard_counts_money_vs_index_failures_and_regimes` |
+| ✓ Quant v2 rank model | '시장보다 더 오를까'(excess) 라벨 · 날짜별 순위 피처(cs_*) · 장기 팩터(12-1·6-1·3-1 모멘텀·52주 고점·변동성·비유동성) · 비교 종목 20개 미만이면 기권 | `engines/features · analysts.QuantAnalyst` | `test_quant_analyst_excess_wording_and_small_universe` |
+| ✓ Alpha scoring for 🟢 | AI 적중을 시장 대비로 다시 채점 · 종목 선택력이 증명 안 되면 🟢 실전 가능을 주지 않음 | `center.ai_state · scorecard.plain` | `test_ai_state_needs_alpha_for_green` |
 
 ## MODEL
 
@@ -99,6 +104,13 @@
 | ✓ Position sizing | 반켈리 · 변동성 목표 · 한도 × 이벤트 × 준비 상태 | `trading/trade_plan.py` | `test_trade_plan_sizing_entry_and_invalidation` |
 | ✓ Thesis | 왜 샀나·무엇이 틀리면 판다·목표·무효화·점검일 → 30분마다 감시·알림 | `thesis.py` | `test_thesis_validation_breach_and_alert` |
 | ✓ Portfolio OS | 내 자산·주식/현금·업종 집중·최대 위험 한 문장 · 전략·위기 시뮬레이션 | `portfolio_os.py` | `test_lab_validation_portfolio_personal_failure` |
+| ✓ Holdings × AI | 보유종목 옆 AI 마지막 판단 (🟢 BUY 64%) | `web/api._portfolio` | `test_portfolio_rows_show_ai_badge` |
+| ✓ Themes · same bet | 테마 집중도('반도체·AI 집중 43% — 사실상 같은 베팅') · 보유 종목 AI·중요 뉴스·실적 D-day | `portfolio_os.themes/holding_extras` | `test_portfolio_themes_and_holding_extras` |
+| ✓ Core vs index ETF baseline | 16년 연구(코어 vs KOSPI) + 실제 장부 vs 같은 돈·같은 입금의 'ETF 그림자 장부' · 고정 규칙 권고 | `baseline.py` | `test_baseline_compare_and_route` |
+| ✓ Goal plan · monthly DCA | 목표(예: 500만→1억)를 몬테카를로 확률로 · 방식별/적립액별 비교 · 필요한 월 적립 · 월 적립 자동 입금(모의)/알림(실계좌) | `goal.py` | `test_goal_plan_honesty_and_compare` |
+| ✓ Tax accounts in plan | 같은 돈·같은 방식을 일반/ISA/연금저축에 넣었을 때 목표 확률 (세금·세액공제 반영 · 연금은 개별 종목 불가 · 55세 전 해지 경고) | `goal.tax_compare` | `test_tax_compare_accounts_rules` |
+| ✓ ETF monthly DCA book | 월 적립을 지수 ETF 로 — 코어 장부와 분리한 'ETF 적립 장부'에서 원금부터 · 가격을 못 받으면 현금으로 기다렸다 다음 거래일 매수 · 실계좌는 주문표(몇 주) 알림 | `goal.etf_buy · dca_run` | `test_etf_dca_book_buys_and_waits_for_price` |
+| ✓ Accounts vs system book | 내 자산: 입력한 계좌 / 시스템 모의 장부 전환 | `portfolio_os.overview(source)` | `test_portfolio_overview_source_toggle` |
 
 ## TRADING
 
@@ -135,6 +147,7 @@
 | ✓ Budget → limits | 원금·최대 손실 → 모든 한도 자동 · 누적 손실이 한도에 닿으면 전체 정지(11번째 조건) | `budget.py` | `test_budget_plan_apply_and_total_loss_guard` |
 | ✓ Login · MFA · read-only | 비밀번호(scrypt)·TOTP·5회 실패 잠금 · 읽기 전용 토큰은 POST 403 | `auth.py` | `test_login_mfa_session_and_viewer_rbac` |
 | ✓ Budget replay | 과거 데이터로 '이 한도였으면 연 몇 번 정지했나' · 권장 한도 · 입출금 반영 손실 · 정지 후 처리 | `budget.py` | `test_budget_replay_counts_triggers_and_stop_sheet` |
+| ✓ Earnings gate (smart) | 실적 발표 D-1 이내 신규 매수 보류(×0) · D-3 이내 ×0.75 | `engines/events.event_caps` | `test_event_caps_use_todays_dday_not_stored_one` |
 
 ## OPERATIONS
 
@@ -149,6 +162,10 @@
 | ✓ Alerts | 토스트·알림센터·텔레그램·웹 푸시 | `alerts.py · ops.Notifier · webpush.py` | `test_alert_routing_to_external_channels` |
 | ✓ Validation tracker | KIS 모의·WebSocket·실측 슬리피지·Forward·장기 — 진행률과 다음 할 일 | `validation.py` | `test_lab_validation_portfolio_personal_failure` |
 | ✓ Sentinel | 데이터 수집·AI 작업·스케줄러·DB·증권사 5분 감시 · 나빠짐/회복 알림 | `sentinel.py` | `test_sentinel_and_briefing_text` |
+| ✓ Offline · local chart lib | 서버 연결 실패 안내 화면(자동 재연결) · 차트 라이브러리 서버 직접 제공 · 2단계 인증 설정 오류 표시 | `easy.js · web/static/vendor` | `test_totp_without_password_is_warned_and_assets_are_local` |
+| ✓ Always-on service · ops status | ./run.sh install-service(launchd/systemd 자동 재시작) · status · update · 24시간 운영 꺼짐·데이터 밀림·뉴스 0건·업종 미분류를 '오늘 할 일' 맨 위에 | `run.sh · center.ops_status` | `test_ops_status_flags_stopped_scheduler_and_stale_data` |
+| ✓ Honest status pill | DB 만 살아 있으면 '시스템 정상' 이던 상단 표시 → 24시간 운영·데이터 날짜·뉴스·업종까지 보고 '점검 필요 n' | `center.ops_status · /api/ops-status` | `test_ops_status_route_and_home_numbers` |
+| ✓ Shareable check report | ./run.sh report — 키·계좌번호·금액 없이 운영·데이터·외부 연결·실패 작업·검증 진행을 한 글로 (마지막에 키 모양 문자열 한 번 더 지움) | `report.py` | `test_report_has_facts_but_no_secrets` |
 
 ## UX
 
@@ -179,3 +196,11 @@
 | ✓ Manual paper ticket | 검색→종목→[모의 주문] 3탭 · 같은 리스크 엔진 · 전략 장부와 분리 | `ticket.py` | `test_manual_ticket_fail_closed_and_place` |
 | ✓ News board · market map | 같은 소식 한 장·톤 색·뉴스 이후 주가 · 업종별 지도(거래대금 크기·등락 색) | `board.py` | `test_market_map_tiles_sectors_and_movers` |
 | ✓ Day replay | 날짜를 고르면 그날 알 수 있던 가격·뉴스·AI 판단만 (나중 결과는 따로) | `replay.py` | `test_replay_day_only_knows_that_day` |
+| ✓ Company logos | 검색·관심·포트폴리오·종목 상세·뉴스 칩에 회사 로고 · 직접 넣은 파일 > 공개 이미지 > 이니셜 · 7일 실패 캐시 | `logos.py` | `test_logo_sources_cache_fallback_and_safety` |
+| ✓ News/disclosure detail | 원문·출처·발행 시각(ET/KST) · 번역 · 쉬운 설명 · 용어 풀이 · 중요 숫자 · 🔴🟠🟡⚪ · 영향 종목 · AI 판단 변화 · 전후 주가 | `newsdetail.py` | `test_news_detail_times_terms_level_chain_and_explain` |
+| ✓ Stock today · earnings banner | 오늘 중요한 것 · 실적 D-Day(장전/장후) 최상단 · AI 1/5/20일 확률 · 평단·예상 범위·52주·거래량 급증·FOMC/CPI 표시 | `stockplus.header/overlay` | `test_stock_today_banner_horizons_and_chart_extras` |
+| ✓ Home 5 · AI state | 오늘 시장·내 자산·AI 상태(🟢검증됨/🟡검증 중/🔴사용 금지)·중요한 뉴스·오늘 할 일 | `center.home5` | `test_home5_sections_and_route` |
+| ✓ Easy mode · start guide | 쉬운 화면(메뉴 6개 + 고급 접기) · 처음 안내(데이터→한도→관심 3개→오늘 할 일) · 홈 맨 위 '오늘 할 일 3개' | `center.today3/start_guide · easy.js` | `test_today3_priorities_and_start_guide` |
+| ✓ US stock AI | 미국 종목도 일봉+지수를 받아 같은 AI 합의로 분석 (주문 없음) | `actions.analyze_symbol` | `test_us_ticker_can_be_analyzed` |
+| ✓ Plain words · status dots | 쉬운 화면은 우리말(매수·관망·쉬어가기 · 뉴스/경제/차트·통계) · 상태 이모지 대신 색 점 · 전문가용 카드는 '전체' 화면이나 펼치기로 · 홈은 내 자산+목표가 주인공 | `words.js · easy.js` | `test_ui_words_and_calm_layout_static` |
+| ✓ Stock tabs · chart declutter | 종목 페이지 탭(전체·차트·뉴스·공시·실적·재무·AI·위험·내 보유) · 차트 가격 라벨 겹침 정리 · 표시 글자 겹침 정리 · 홈 자산 미니 차트 | `os.js · app.js · easy.js` | `test_stock_tabs_and_chart_declutter_static` |
