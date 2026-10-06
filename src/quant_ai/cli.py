@@ -675,6 +675,32 @@ def cmd_datacheck(args):
     print(f"  가격 조정 이벤트(액면분할·권리락 등) {r['n_adj_events']}건 — 수정주가로 이어 붙임")
 
 
+def cmd_goal_plan(args):
+    """v31 목표 계획: show (지금 계획·진행) · apply (추천 계획 한 번에 — 예: 200만원 + 매달 100만원 → 1억)."""
+    from . import goal
+    app = _app(args)
+    if args.action == "apply":
+        r = goal.apply_recommended(app, args.plan, args.mode, monthly=args.monthly, principal=args.principal, day=args.day, etf=args.etf)
+        g = r["saved"]
+        print(f"저장: {g['principal']:,.0f}원에서 매달 {g['monthly']:,.0f}원 · 목표 {g['goal']:,.0f}원 · {g['target_years']}년 · "
+              f"{goal.PRESETS[g['strategy']]['name']} · AI 비중 상한 {g.get('ai_cap', 0):.0%} · {g['target_years']}년 안 확률 {g['p_target']:.0%}")
+        print(r["next"])
+        return
+    g = goal.get(app)
+    if not g.get("goal"):
+        print("저장된 목표가 없어요 — quant goal-plan apply  (200만원 + 매달 100만원 → 1억)")
+        return
+    pr = goal.progress(app)
+    print(f"계획: {g['principal']:,.0f}원 + 매달 {g['monthly']:,.0f}원 → {g['goal']:,.0f}원 ({g['target_years']}년 · 시작 {g['start']}) · "
+          f"AI 비중 상한 {(g.get('ai_cap') or 0):.0%}")
+    print(f"지금: {pr['text']} ({pr['source']})")
+    if pr.get("band"):
+        b = pr["band"]
+        print(f"  {pr['months']}개월째 정상 범위 {b['p10']:,.0f} ~ {b['p90']:,.0f}원 (중간 {b['p50']:,.0f}) → {pr['band_text']}")
+    for c in (g.get("checkpoints") or [])[: g["target_years"]]:
+        print(f"  {c['year']}년 뒤: 넣은 돈 {c['paid']:,.0f} · 보통 {c['p50']:,.0f} (하위 10% {c['p10']:,.0f} · 상위 10% {c['p90']:,.0f})")
+
+
 def cmd_autopilot(args):
     """v30 AI 자동매매: status (오늘 할 일·관문) · run (지금 한 번) · goal (100만원 → 목표 확률)."""
     from . import autopilot as AP
@@ -953,6 +979,15 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("health").set_defaults(fn=cmd_health)
     sub.add_parser("db-ping", help="DB 연결·데이터 유무 확인 (run.sh 용)").set_defaults(fn=cmd_db_ping)
     sub.add_parser("ops-status", help="운영 상태 (24시간 운영 · 데이터 날짜 · 뉴스 · 작업 실패)").set_defaults(fn=cmd_ops_status)
+    gp = sub.add_parser("goal-plan", help="목표 계획 (show: 진행·해마다 점검표 · apply: 추천 계획 — 200만원 + 매달 100만원 → 1억)")
+    gp.add_argument("action", nargs="?", default="show", choices=["show", "apply"])
+    gp.add_argument("--plan", default="m100")
+    gp.add_argument("--mode", default="paper", choices=["paper", "live"], help="paper: 모의 ETF 장부로 연습 · live: 실계좌 (알림 + 주문표, 돈은 직접 옮김)")
+    gp.add_argument("--monthly", type=float, default=None)
+    gp.add_argument("--principal", type=float, default=None)
+    gp.add_argument("--day", type=int, default=None)
+    gp.add_argument("--etf", default=None, choices=["069500", "360750"])
+    gp.set_defaults(fn=cmd_goal_plan)
     ap = sub.add_parser("autopilot", help="AI 자동매매 (신호 엔진 후보로 매일 사고팔기 · 가상 100만원 장부 · 실제 계좌는 관문 5개 통과 + 켬)")
     ap.add_argument("action", nargs="?", default="status", choices=["status", "run", "goal"])
     ap.set_defaults(fn=cmd_autopilot)

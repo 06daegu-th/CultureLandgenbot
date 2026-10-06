@@ -273,12 +273,19 @@ def run(app, now: datetime | None = None, force: bool = False, full: dict | None
             prices.setdefault(s, p.avg_price)
         equity = pf.equity(prices)
         hold = _holdings(app, name, k.date())
-        pl = plan(full, hold, pf.cash, equity, cfg, today)
-        sigs = [Signal(s, w, reason="AI 자동매매: " + next((a["reason"] for a in pl["actions"] if a["symbol"] == s), "")[:150])
+        protect, scale = set(), 1.0
+        if name == "live":  # 실제 계좌: AI 가 산 종목만 · 목표 계획의 AI 비중까지만 (사람이 산 적립 ETF 는 건드리지 않는다)
+            sc = live_scope(app, pf, prices, hold)
+            protect, hold = sc["protect"], {s: h for s, h in hold.items() if s not in sc["protect"]}
+            pl = plan(full, hold, max(0.0, sc["budget"] - sc["ai_value"]), sc["budget"], cfg, today)
+            scale, pl["scope"] = sc["scale"], {k2: v for k2, v in sc.items() if k2 != "protect"} | {"protect": sorted(protect)}
+        else:
+            pl = plan(full, hold, pf.cash, equity, cfg, today)
+        sigs = [Signal(s, w * scale, reason="AI 자동매매: " + next((a["reason"] for a in pl["actions"] if a["symbol"] == s), "")[:150])
                 for s, w in pl["targets"].items()]
         fills = []
         try:
-            fills = app.trade([], mode, ts=now, signals=sigs, book=book) or []
+            fills = app.trade([], mode, ts=now, signals=sigs, book=book, protect=protect or None) or []
         except Exception as e:  # noqa: BLE001 - 한 장부 실패가 다른 장부를 막지 않게 (기록)
             pl["error"] = f"{type(e).__name__}: {e}"[:200]
         _update_meta(app, name, pl, fills, today)
@@ -287,6 +294,32 @@ def run(app, now: datetime | None = None, force: bool = False, full: dict | None
         _seal(app, name, pl, now)
     _set_state(app, {"last_run": today, "last_skip": None, "last": {n: {k2: v for k2, v in p.items() if k2 != "targets"} for n, p in out["books"].items()}})
     return out
+
+
+def live_scope(app, pf, prices: dict[str, float], hold: dict[str, dict]) -> dict:
+    """실제 계좌에서 AI 가 굴릴 범위.
+
+    · AI 가 직접 산 종목(meta 에 기록된 것)만 팔거나 바꾼다 — 나머지(적립 ETF·사람이 산 종목)는 protect
+    · 굴리는 돈 = 계좌 평가금액 × 목표 계획의 AI 비중(ai_cap, 예: 15%) · 실제 돈이면 소액 상한(live_cap)도 넘지 않게
+    · scale: 위 예산 기준 비중 → 계좌 기준 비중 (파이프라인이 다시 곱하는 소액 상한 비율을 미리 나눠 둔다)
+    """
+    meta = (ops.get_state(app.engine, STATE).get("meta") or {}).get("live") or {}
+    equity = pf.equity(prices)
+    protect = {s for s, p in pf.positions.items() if p.qty and s not in meta}
+    cap = None
+    try:
+        from .goal import get as goal_get
+        cap = goal_get(app).get("ai_cap")
+    except Exception:  # noqa: BLE001, S110 - 목표가 없으면 AI 비중 제한 없이 (소액 상한은 그대로)
+        pass
+    budget = equity * float(cap) if cap else equity
+    capped = app._live_capital_capped()
+    if capped:
+        budget = min(budget, app.live_cap())
+    br = min(1.0, app.live_cap() / equity) if capped and equity > 0 else 1.0
+    ai_value = sum(h["qty"] * prices.get(s, h["avg_price"]) for s, h in hold.items() if s not in protect)
+    return {"equity": round(equity), "budget": round(budget), "ai_cap": cap, "ai_value": round(ai_value), "protect": protect,
+            "scale": (budget / (br * equity)) if equity > 0 and br > 0 else 0.0}
 
 
 def _set_state(app, patch: dict) -> None:
@@ -345,7 +378,14 @@ def status(app) -> dict:
     lg = ops.get_state(app.engine, LOG)
     perf = paper_performance(app)
     hold = _holdings(app, BOOK, _kst(datetime.now(UTC)).date())
-    return {"config": cfg, "gates": g, "live": all(x["ok"] for x in g), "preview": pv, "paper": perf,
+    try:
+        from .goal import get as goal_get
+        ai_cap = goal_get(app).get("ai_cap")
+    except Exception:  # noqa: BLE001
+        ai_cap = None
+    return {"config": cfg, "gates": g, "live": all(x["ok"] for x in g), "preview": pv, "paper": perf, "ai_cap": ai_cap,
+            "live_rule": (f"실제 계좌에서는 계좌 평가금액의 {ai_cap:.0%} 까지만 · AI 가 직접 산 종목만 사고팔아요 (적립 ETF 등 나머지는 손대지 않음)"
+                          if ai_cap else "실제 계좌에서는 AI 가 직접 산 종목만 사고팔아요 (나머지는 손대지 않음) · 목표 계획에서 AI 비중 상한을 정할 수 있어요"),
             "holdings": hold, "last_run": st.get("last_run"), "last_skip": st.get("last_skip"),
             "log": (lg.get(BOOK) or [])[-20:], "log_live": (lg.get("live") or [])[-20:],
             "goal": st.get("goal"), "rule": "하루 한 번 장중(09:10~15:10) · 점수 +0.8 이상 매수 · 점수 0 이하·손절선·20거래일 경과 시 매도 · 최대 5종목 · 종목당 18% · 현금 10% 남김"}
@@ -435,4 +475,4 @@ def refresh_goal(app) -> dict:
     return slim
 
 
-__all__ = ["run", "plan", "gates", "status", "preview", "backtest", "goal_odds", "refresh_goal", "live_enabled", "BOOK", "set_config"]
+__all__ = ["run", "plan", "gates", "status", "preview", "backtest", "goal_odds", "refresh_goal", "live_enabled", "live_scope", "BOOK", "set_config"]

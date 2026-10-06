@@ -202,9 +202,18 @@ def save(app, body: dict) -> dict:
         except ValueError:
             raise ValueError(f"{k} 는 숫자로") from None
     cur = get(app)
+    today = datetime.now(KST).date().isoformat()
     g = {"principal": num("principal", 5_000_000), "monthly": num("monthly", 0), "goal": num("goal", 100_000_000),
          "target_years": int(num("target_years", 10)), "strategy": str(body.get("strategy") or "core"), "raise_pct": num("raise_pct", 0),
-         "start": cur.get("start") or datetime.now(KST).date().isoformat()}
+         "start": today if body.get("restart") else (cur.get("start") or today)}
+    ai_cap = body.get("ai_cap", cur.get("ai_cap"))
+    if ai_cap not in (None, ""):
+        ai_cap = num("ai_cap", ai_cap) if "ai_cap" in body else float(ai_cap)
+        if not 0 <= ai_cap <= AI_CAP_MAX:
+            raise ValueError(f"AI 비중은 0~{AI_CAP_MAX:.0%}")
+        g["ai_cap"] = ai_cap
+    if body.get("preset") or cur.get("preset"):
+        g["preset"] = str(body.get("preset") or cur.get("preset"))
     d = body.get("dca") or {}
     if d or cur.get("dca"):
         day = int(d.get("day", (cur.get("dca") or {}).get("day", 25)))
@@ -222,7 +231,9 @@ def save(app, body: dict) -> dict:
             raise ValueError(f"ETF 는 {', '.join(ETFS)} 중 하나")
         g["dca"] = {"on": bool(d.get("on", prev.get("on", False))), "day": day, "mode": mode, "target": target, "etf": etf,
                     "amount": float(d.get("amount", g["monthly"]) or g["monthly"]), "last": prev.get("last")}
-    plan(g["principal"], g["monthly"], g["goal"], g["target_years"], g["strategy"], g["raise_pct"])  # 검증
+    pl = plan(g["principal"], g["monthly"], g["goal"], g["target_years"], g["strategy"], g["raise_pct"])  # 검증
+    g["checkpoints"] = pl["sim"]["yearly"][: g["target_years"] + 3]  # 해마다 '이쯤이면 정상' 범위 (진행률 판정용으로 저장)
+    g["p_target"] = pl["p_target"]
     g["at"] = datetime.now(UTC).isoformat()
     ops.set_state(app.engine, KEY, g)
     dd = g.get("dca") or {}
@@ -259,10 +270,93 @@ def progress(app, now: datetime | None = None) -> dict:
         g["monthly"] * (1 + p["mu"]) ** ((months - k) / 12) for k in range(months))
     pct = total / g["goal"] if g["goal"] else 0
     ahead = total - exp
-    return {"set": True, "goal": g["goal"], "total": round(total), "source": src, "pct": round(min(pct, 9.99), 4),
-            "months": months, "expected": round(exp), "ahead": round(ahead), "on_track": ahead >= -0.05 * exp,
-            "text": f"목표 {g['goal'] / 1e8:,.2f}억 중 {pct:.1%} · 계획보다 {'앞섬' if ahead >= 0 else '뒤처짐'} {abs(ahead) / 1e4:,.0f}만원",
-            "dca": g.get("dca"), "as_of": label(now)}
+    out = {"set": True, "goal": g["goal"], "total": round(total), "source": src, "pct": round(min(pct, 9.99), 4),
+           "months": months, "expected": round(exp), "ahead": round(ahead), "on_track": ahead >= -0.05 * exp,
+           "text": f"목표 {g['goal'] / 1e8:,.2f}억 중 {pct:.1%} · 계획보다 {'앞섬' if ahead >= 0 else '뒤처짐'} {abs(ahead) / 1e4:,.0f}만원",
+           "dca": g.get("dca"), "ai_cap": g.get("ai_cap"), "preset": g.get("preset"), "as_of": label(now)}
+    cps = g.get("checkpoints") or []
+    if cps:
+        out |= band_check(g, cps, months, total, start)
+    return out
+
+
+def band_at(g: dict, cps: list[dict], months: int) -> dict:
+    """시작 뒤 months 개월째 '정상 범위' (하위 10% · 중간 · 상위 10%) — 해마다 값 사이를 직선으로 잇는다."""
+    pts = [{"m": 0, "p10": g["principal"], "p50": g["principal"], "p90": g["principal"], "paid": g["principal"]}] + \
+          [{"m": 12 * c["year"], **{k: c[k] for k in ("p10", "p50", "p90", "paid")}} for c in cps]
+    months = max(0, min(months, pts[-1]["m"]))
+    for a, b in zip(pts, pts[1:], strict=False):
+        if a["m"] <= months <= b["m"]:
+            f = (months - a["m"]) / (b["m"] - a["m"])
+            return {k: round(a[k] + (b[k] - a[k]) * f) for k in ("p10", "p50", "p90", "paid")}
+    return {k: pts[-1][k] for k in ("p10", "p50", "p90", "paid")}
+
+
+def band_check(g: dict, cps: list[dict], months: int, total: float, start: date) -> dict:
+    b = band_at(g, cps, months)
+    if months < 1:
+        lv, msg = "start", "이제 시작 — 한 달 뒤부터 '정상 범위' 안에 있는지 보여 드려요"
+    elif total >= b["p90"]:
+        lv, msg = "great", "상위 10% 보다 앞서는 중 — 운이 좋은 구간일 수 있어요, 적립은 그대로"
+    elif total >= b["p50"]:
+        lv, msg = "good", "계획의 중간보다 앞서는 중"
+    elif total >= b["p10"]:
+        lv, msg = "ok", "정상 범위 안 (중간보다는 뒤) — 하락장에선 흔한 일, 적립만 멈추지 않으면 돼요"
+    else:
+        lv, msg = "low", "하위 10% 아래 — 적립을 빼먹었는지 먼저 확인하고, 계속 이러면 적립액이나 기간을 다시 보세요"
+    nxt = next((c for c in cps if 12 * c["year"] > months), None)
+    y = start.year + (nxt["year"] if nxt else 0)
+    return {"band": b, "band_level": lv, "band_text": msg,
+            "next_check": {"year": nxt["year"], "date": f"{y}-{start.month:02d}", "p10": nxt["p10"], "p50": nxt["p50"], "paid": nxt["paid"]} if nxt else None}
+
+
+# ------------------------------------------------------------------ v31 추천 계획
+AI_CAP_MAX = 0.30  # AI 자동매매에 맡길 수 있는 최대 비중 (검증 전 AI 에 큰 돈을 맡기지 않게)
+RECOMMENDED = {
+    "m100": {"title": "200만원 + 매달 100만원 → 1억", "principal": 2_000_000, "monthly": 1_000_000, "goal": 100_000_000,
+             "target_years": 7, "strategy": "kospi", "raise_pct": 0.0, "ai_cap": 0.15,
+             "dca": {"on": True, "day": 25, "target": "etf", "etf": "069500"},
+             "why": ["돈의 대부분은 수익이 아니라 매달 넣는 100만원에서 나와요 (7년 동안 넣는 돈 약 8,600만원)",
+                     "본체(85%)는 KODEX 200 에 매달 적립 — 검증이 필요 없는, 가장 싸고 확실한 방법",
+                     "AI 자동매매는 관문 5개를 다 넘은 뒤에만 실제 계좌에서, 그것도 전체의 15% 까지만",
+                     "중간에 −30% 넘게 빠지는 구간이 거의 확실히 와요 — 그때 적립을 멈추지 않는 게 계획의 절반"]},
+}
+
+
+def order_sheet(app, etf: str, amount: float) -> str:
+    lc = last_close(app, etf)
+    if not lc:
+        return f"{ETFS.get(etf, etf)} ({etf}) {amount / 1e4:,.0f}만원어치 시장가 (가격을 못 받아 주 수는 증권사 앱에서)"
+    return f"{ETFS.get(etf, etf)} ({etf}) {int(amount // (lc[0] * 1.001))}주 시장가 ({lc[1]} 종가 {lc[0]:,.0f}원 기준)"
+
+
+def apply_recommended(app, key: str = "m100", mode: str = "paper", monthly: float | None = None, principal: float | None = None,
+                      day: int | None = None, etf: str | None = None) -> dict:
+    """추천 계획을 한 번에 저장 (시작일 = 오늘). mode: paper = 모의 ETF 장부로 연습 · live = 실계좌 (알림 + 주문표, 돈은 사람이 옮김)."""
+    if key not in RECOMMENDED:
+        raise ValueError(f"추천 계획은 {', '.join(RECOMMENDED)} 중 하나")
+    if mode not in ("paper", "live"):
+        raise ValueError("장부는 paper/live")
+    r = RECOMMENDED[key]
+    body = {k: r[k] for k in ("principal", "monthly", "goal", "target_years", "strategy", "raise_pct", "ai_cap")}
+    if monthly is not None:
+        body["monthly"] = float(monthly)
+    if principal is not None:
+        body["principal"] = float(principal)
+    d = dict(r["dca"]) | {"mode": mode, "amount": body["monthly"]}
+    if day is not None:
+        d["day"] = int(day)
+    if etf:
+        d["etf"] = etf
+    g = save(app, body | {"dca": d, "preset": key, "restart": True})
+    out = {"saved": g, "plan": key, "mode": mode}
+    if mode == "live":
+        out["start_sheet"] = order_sheet(app, d["etf"], body["principal"])
+        out["next"] = (f"오늘 할 일: 증권 계좌(가능하면 ISA)에 {body['principal'] / 1e4:,.0f}만원을 넣고 {out['start_sheet']} · "
+                       f"매달 {d['day']}일에 {body['monthly'] / 1e4:,.0f}만원 알림과 주문표가 와요")
+    else:
+        out["next"] = f"모의 ETF 장부에 {body['principal'] / 1e4:,.0f}만원으로 시작했어요 · 매달 {d['day']}일에 {body['monthly'] / 1e4:,.0f}만원씩 자동으로 넣고 사요"
+    return out
 
 
 # ------------------------------------------------------------------ 월 적립식
@@ -406,8 +500,7 @@ def dca_run(app, now: datetime | None = None) -> dict:
         r = deposit(app, "paper", amt)
         msg = f"모의 장부에 {amt / 1e4:,.0f}만원 적립 — 다음 리밸런싱 때 코어 전략대로 투자됩니다"
     else:
-        lc = last_close(app, etf) if d.get("target") == "etf" else None
-        sheet = f" · 주문표: {ETFS.get(etf, etf)} ({etf}) {int(amt // (lc[0] * 1.001))}주 시장가 (어제 종가 {lc[0]:,.0f}원 기준)" if lc else ""
+        sheet = f" · 주문표: {order_sheet(app, etf, amt)}" if d.get("target") == "etf" else ""
         r = {"mode": "live", "amount": amt, "sheet": sheet.strip(" ·")}
         msg = f"오늘은 적립일 — 증권 계좌로 {amt / 1e4:,.0f}만원을 옮기고 사세요{sheet} (프로그램은 돈을 옮기지 않습니다)"
     d["last"] = today.isoformat()
@@ -416,5 +509,5 @@ def dca_run(app, now: datetime | None = None) -> dict:
     return {"done": True, **r, "message": msg}
 
 
-__all__ = ["PRESETS", "ACCOUNTS", "ETFS", "ETF_BOOK", "simulate", "required_monthly", "plan", "tax_compare", "get", "save", "progress",
+__all__ = ["PRESETS", "ACCOUNTS", "ETFS", "ETF_BOOK", "RECOMMENDED", "AI_CAP_MAX", "apply_recommended", "band_at", "order_sheet", "simulate", "required_monthly", "plan", "tax_compare", "get", "save", "progress",
            "deposit", "etf_buy", "last_close", "dca_due", "dca_run"]

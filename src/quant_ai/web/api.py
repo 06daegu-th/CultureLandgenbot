@@ -1287,10 +1287,17 @@ class DashboardAPI:
             inp["strategy"] = str(q["strategy"])
         key = "goal:" + ":".join(str(inp[k]) for k in sorted(inp))
         p = self._cached(key, 600, lambda: goal.plan(**inp))
-        return p | {"saved": g or None, "progress": goal.progress(self.app), "presets": goal.PRESETS, "etfs": goal.ETFS}
+        return p | {"saved": g or None, "progress": goal.progress(self.app), "presets": goal.PRESETS, "etfs": goal.ETFS,
+                    "recommended": goal.RECOMMENDED, "ai_cap_max": goal.AI_CAP_MAX}
 
     def goal_save(self, body: dict) -> dict:
         from .. import goal
+        if body.get("apply"):  # v31: 추천 계획 한 번에 적용
+            r = goal.apply_recommended(self.app, str(body["apply"]), str(body.get("mode") or "paper"),
+                                       monthly=float(str(body["monthly"]).replace(",", "")) if body.get("monthly") else None)
+            self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5", "autopilot"))}
+            self._audit("goal", f"추천 계획 {body['apply']} 적용 · {r['mode']} · 월 {r['saved']['monthly']:,.0f}")
+            return {"ok": True, **r}
         g = goal.save(self.app, body)
         self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5"))}
         self._audit("goal", f"목표 {g['goal']:,.0f} · 월 {g['monthly']:,.0f}" + (f" · 적립 {'켬' if g.get('dca', {}).get('on') else '끔'}" if g.get("dca") else ""))

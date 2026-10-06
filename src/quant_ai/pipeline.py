@@ -556,11 +556,12 @@ class QuantAI:
 
     def trade(self, decisions: list[Decision], mode: Mode, ts: datetime | None = None,
               quotes: dict[str, MarketQuote] | None = None, signals: list[Signal] | None = None,
-              book: str | None = None) -> list:
+              book: str | None = None, protect: set[str] | None = None) -> list:
         """한 번의 매매 사이클. 같은 장부의 사이클은 동시에 하나만 돈다.
 
         signals 를 주면 합의 신호 대신 그 목표 비중을 쓴다 (코어-위성).
         book 을 주면 별도의 가상 장부(Paper)로 실행한다 (AI 기여도 측정용).
+        protect 의 종목은 이 사이클에서 절대 주문하지 않는다 (예: 사람이 산 적립 ETF — AI 가 팔지 않게).
         """
         if mode not in (Mode.PAPER, Mode.SHADOW, Mode.LIVE):
             raise ValueError(f"{mode} 모드는 주문을 내지 않습니다")
@@ -568,7 +569,7 @@ class QuantAI:
             raise ValueError("가상 장부는 PAPER 로만 실행")
         name = book or mode.value
         with ops.trading_lock(self.engine, f"trade-{name}", Path(self.settings.artifacts_dir) / "locks"):
-            return self._trade(decisions, mode, ts or datetime.now(UTC), quotes, signals, book)
+            return self._trade(decisions, mode, ts or datetime.now(UTC), quotes, signals, book, protect)
 
     def _live_capital_capped(self) -> bool:
         """소액 상한(QUANT_LIVE_MAX_CAPITAL)은 실제 돈에만 적용. 모의투자(KIS_ENV=demo)는 계좌 전체로 운용."""
@@ -820,7 +821,8 @@ class QuantAI:
         return KISBroker(pf, KISClient.from_env(st.artifacts_dir), CostModel(st.costs))
 
     def _trade(self, decisions: list[Decision], mode: Mode, ts: datetime, quotes,
-               signals_override: list[Signal] | None = None, book: str | None = None) -> list:
+               signals_override: list[Signal] | None = None, book: str | None = None,
+               protect: set[str] | None = None) -> list:
         st = self.settings
         name = book or mode.value
         pf = self.load_portfolio(name)
@@ -937,7 +939,7 @@ class QuantAI:
             with session_scope(self.engine) as s:
                 risk.adv |= recent_adv(s, missing)
         engine = ExecutionEngine(broker, risk, journal)
-        fills = engine.rebalance(signals, quotes, ts, mult)
+        fills = engine.rebalance(signals, quotes, ts, mult, tradable=(set(quotes) - set(protect)) if protect else None)
         with session_scope(self.engine) as s:
             snap = pf.snapshot(prices)
             s.add(PortfolioSnapshot(mode=name, ts=ts, **snap))

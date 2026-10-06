@@ -1122,8 +1122,10 @@ TV.goal = async (el) => {
     ${tHero({ k: `${tMoney(i.principal)}에서 매달 ${tMoney(i.monthly)}씩 · ${esc(g.assumption?.name || "")}`, lv: p >= 0.7 ? "good" : p >= 0.4 ? "warn" : "bad", big: `${i.target_years}년 안에 ${tMoney(i.goal)}, 될 확률 ${tPr(p)}`,
       body: `${tProg(p, p >= 0.7 ? "good" : p >= 0.4 ? "warn" : "bad", "달성 확률")}${tKV([["보통이면", yrs(sim.median_years), "", "절반의 미래에서 이 안에"], ["확률 80% 가 되려면", `매달 ${tMoney(g.need_monthly?.p80)}`], ["중간에 크게 빠질 때", tPct(sim.mdd_p50, 0), "down", `30% 넘게 빠질 확률 ${tPr(sim.p_mdd30)}`]])}`,
       foot: esc(g.assumption?.source || "") })}
-    ${pr.set ? tCard("지금까지", typeof goalBar === "function" ? goalBar(pr) : "") : ""}
-    ${(g.honest || []).length ? `<div class="t-note warn">${g.honest.map((x) => esc(koText(x))).join("<br>")}</div>` : ""}
+    ${goalRecCard(g)}
+    ${pr.set ? tCard("지금까지", (typeof goalBar === "function" ? goalBar(pr) : "") + goalBandLine(pr)) : ""}
+    ${goalCheckCard(g)}
+    ${(g.honest || []).length ? `<div class="t-note warn" style="grid-column:1/-1;align-self:start">${g.honest.map((x) => esc(koText(x))).join("<br>")}</div>` : ""}
     ${tCard("목표 바꿔 보기", `<div class="t-form">
       ${tField("지금 원금 (원)", `<input id="g-principal" class="t-in" inputmode="numeric" value="${num(i.principal)}">`)}
       ${tField("매달 적립 (원)", `<input id="g-monthly" class="t-in" inputmode="numeric" value="${num(i.monthly)}">`)}
@@ -1159,8 +1161,51 @@ TV.goal = async (el) => {
     if (!r.error) { S.goalQ = null; setTimeout(() => TV.goal(el), 600); }
   };
   L.root.querySelector("#g-save").onclick = () => save();
+  L.root.querySelectorAll("[data-gapply]").forEach((b) => { b.onclick = async () => {
+    const live = b.dataset.mode === "live";
+    if (live && !confirm("실제 계좌 계획으로 시작할까요?\n\n프로그램은 돈을 옮기지 않아요. 매달 적립일에 알림과 주문표가 오면 증권사 앱에서 직접 이체하고 사요.\nAI 자동매매는 관문 5개를 다 넘기 전까지 실제 계좌에 손대지 않아요.")) return;
+    b.disabled = true; b.textContent = "적용 중…";
+    const r = await post("/api/goal", { apply: b.dataset.gapply, mode: b.dataset.mode }).catch((e) => ({ error: e.message }));
+    if (r.error) { toast({ title: "적용하지 못했어요", body: r.error, level: "bad" }); b.disabled = false; return; }
+    S.goalQ = null; S.goalApplied = r;
+    toast({ title: "계획을 저장했어요", body: r.next, level: "good" });
+    TV.goal(el);
+  }; });
   L.root.querySelector("#d-save").onclick = () => save({ dca: { on: L.root.querySelector("#d-on").checked, day: Number(val("#d-day")), amount: Number(val("#d-amount")), mode: L.root.querySelector("#d-mode").value, target: L.root.querySelector("#d-target").value, etf: L.root.querySelector("#d-etf").value } });
 };
+// v31: 추천 계획 — 한 번에 적용 + 적용 뒤에는 '오늘 할 일'
+function goalRecCard(g) {
+  const recs = g.recommended || {}, sv = g.saved || {}, ap = S.goalApplied;
+  return Object.entries(recs).map(([k, r]) => {
+    const on = sv.preset === k;
+    const head = `${tMoney(r.principal)}에서 매달 ${tMoney(r.monthly)} · ${r.target_years}년 · ${esc((g.presets || {})[r.strategy]?.name || r.strategy)} · AI 최대 ${Math.round(r.ai_cap * 100)}%`;
+    const why = `<div class="t2-wrap" style="margin-top:8px">${r.why.map((x) => `<div class="t-sub">· ${esc(x)}</div>`).join("")}</div>`;
+    if (on) {
+      const d = sv.dca || {};
+      return tCard(`적용한 계획 — ${esc(r.title)}`, `${tKV([["시작", esc(sv.start || "-")], ["장부", d.mode === "live" ? "실제 계좌" : "모의 ETF 장부", "", d.mode === "live" ? "알림 + 주문표 · 돈은 직접" : "매달 자동으로 넣고 삼"], ["매달", `${d.day}일 ${tMoney(d.amount)}`], [`${sv.target_years}년 안 확률`, tPr(sv.p_target)], ["AI 자동매매 상한", `${Math.round((sv.ai_cap || 0) * 100)}%`, "", "관문 5개를 넘은 뒤 실제 계좌에서만"]])}
+        ${ap?.start_sheet ? `<div class="t-note">오늘 할 일: 증권 계좌(가능하면 ISA)에 ${tMoney(sv.principal)} 넣고 — ${esc(ap.start_sheet)}</div>` : ""}
+        <div class="t-pro">${d.mode !== "live" ? `<button class="t-btn ghost" data-gapply="${k}" data-mode="live">실제 계좌로 바꾸기</button>` : `<button class="t-btn ghost" data-gapply="${k}" data-mode="paper">모의로 바꾸기</button>`}<a class="t-btn ghost" href="#autopilot">AI 자동매매 관문</a></div>`);
+    }
+    return tCard(`추천 계획 — ${esc(r.title)}`, `<div class="t-sub b">${head}</div>${why}
+      <div class="t-pro"><button class="t-btn primary" data-gapply="${k}" data-mode="paper">모의로 먼저 시작</button><button class="t-btn ghost" data-gapply="${k}" data-mode="live">실제 계좌로 시작</button></div>
+      <div class="t-sub" style="margin-top:6px">모의: 가상 장부가 매달 자동으로 넣고 ETF 를 사요 · 실제: 돈은 직접 옮기고, 적립일마다 알림과 주문표가 와요</div>`);
+  }).join("");
+}
+function goalBandLine(pr) {
+  if (!pr.band) return "";
+  const b = pr.band, lv = { great: "good", good: "good", ok: "warn", low: "bad", start: "idle" }[pr.band_level] || "idle";
+  const nc = pr.next_check;
+  return `<div class="t-note ${lv === "bad" ? "warn" : ""}" style="margin-top:10px"><b>${esc(pr.band_text)}</b>${pr.months >= 1 ? `<br><span class="t-sub">${pr.months}개월째 정상 범위 ${tMoney(b.p10)} ~ ${tMoney(b.p90)} (보통 ${tMoney(b.p50)})</span>` : ""}
+    ${nc ? `<br><span class="t-sub">다음 점검 ${esc(nc.date)} (${nc.year}년째): 넣은 돈 ${tMoney(nc.paid)} · 보통이면 ${tMoney(nc.p50)} · ${tMoney(nc.p10)} 아래면 계획을 다시 봐요</span>` : ""}</div>`;
+}
+function goalCheckCard(g) {
+  const ys = (g.sim?.yearly || []).slice(0, Math.min(30, (g.inputs?.target_years || 10) + 2));
+  if (!ys.length) return "";
+  const goalV = g.inputs.goal;
+  return tCard("해마다 점검표 — 이쯤이면 정상", `<div class="t2-scroll"><table class="t-table"><thead><tr><th>해</th><th class="r">넣은 돈</th><th class="r">하위 10%</th><th class="r">보통</th><th class="r">상위 10%</th></tr></thead><tbody>
+    ${ys.map((y) => `<tr${y.year === g.inputs.target_years ? ' class="acc"' : ""}><td>${y.year}년</td><td class="r num">${tMoney(y.paid)}</td><td class="r num down">${tMoney(y.p10)}</td><td class="r num b${y.p50 >= goalV ? " up" : ""}">${tMoney(y.p50)}</td><td class="r num">${tMoney(y.p90)}</td></tr>`).join("")}</tbody></table></div>
+    <div class="t-sub" style="margin-top:6px">3,000가지 미래 중 같은 해 자산의 분포예요 · 하위 10% 아래로 떨어지면 적립을 빼먹었는지 먼저 보세요 · 수익률은 가정이지 약속이 아니에요</div>`);
+}
 TV.myjournal = async (el) => {
   const L = await tLoad(el, "myjournal", "내 투자일지", "t2-mj", () => api("/api/myjournal"));
   if (!L) return;
@@ -1477,7 +1522,7 @@ TV.autopilot = async (el) => {
       + `<div class="t-pro"><button class="t-btn primary" id="ap-run">가상 장부로 지금 한 번 실행</button><a class="t-btn ghost" href="#picks">AI 추천 (점수 근거)</a></div>`)}
     ${tCard("가상 장부 보유 종목", tList(hold.map(([sym, h]) => tSym(sym, h.name || sym, `${tN(h.qty)}주 · 평균 ${tPx(h.avg_price, sym)}${h.entry_date ? ` · ${esc(h.entry_date)} 매수 · ${tN(h.held_days)}거래일` : ""}${h.stop ? ` · 손절선 ${tPx(h.stop, sym)}` : ""}`, "")), "보유 종목 없음", "장중에 AI 가 첫 결정을 하면 채워져요"))}
     ${tGoalCard(s.goal)}
-    ${tCard(`실제 계좌 연결 관문 ${nOk}/5`, tList((s.gates || []).map((g) => tStRow(g.title, g.detail, g.ok ? "good" : "idle", { label: g.ok ? "통과" : "아직" })))
+    ${tCard(`실제 계좌 연결 관문 ${nOk}/5`, tList((s.gates || []).map((g) => tStRow(g.title, g.detail, g.ok ? "good" : "idle", { label: g.ok ? "통과" : "아직" }))) + (s.live_rule ? `<div class="t-sub" style="margin-top:8px">${esc(s.live_rule)} · <a href="#goal">목표 계획</a></div>` : "")
       + `<div class="t-pro"><button class="t-btn ${c.live_requested ? "ghost" : "primary"}" id="ap-live">${c.live_requested ? "실제 계좌 연결 요청 취소" : "실제 계좌 연결 요청"}</button><button class="t-btn ghost" id="ap-paper">${c.paper_on ? "가상 자동 운용 멈추기" : "가상 자동 운용 다시 켜기"}</button></div>
       <div class="t-foot">요청해 두면 관문이 모두 통과되는 날 자동으로 연결돼요 · 연결되면 같은 계좌의 코어 전략 주문은 멈춰요 · 긴급 정지·하루 손실 한도·매매 준비 점검은 그대로 적용돼요</div>`)}
     ${tCard("봉인된 결정 기록 (최근)", tList((s.log || []).slice().reverse().slice(0, 10).map((d) => `<div class="t-li"><span class="t-co-t"><b class="num">${esc(d.date)}</b><span class="t2-wrap">${(d.actions || []).filter((a) => a.action !== "hold").map((a) => `${AP_ACT[a.action][0]} ${esc(a.symbol)}`).join(" · ") || "변화 없음"}${d.error ? ` · 오류 ${esc(d.error)}` : ""}</span></span><span class="t-li-r t-sub num">${esc(String(d.hash || "").slice(0, 8))}</span></div>`), "아직 기록 없음", "결정할 때마다 이유와 함께 봉인돼요"))}`);
