@@ -59,15 +59,21 @@ def watchlist(app) -> dict:
     st = ops.get_state(app.engine, "starred")
     star = starred(app)
     groups = st.get("groups") or {}
-    recent = [x for x in ops.get_state(app.engine, "watch_symbols").get("symbols", []) if x not in star][::-1][:20]
-    syms = list(dict.fromkeys(star + recent))
+    from . import tenancy
+    member = tenancy.scoped()  # v34: 회원은 자기 별표·보유만 (운영자의 '최근 본 종목'·AI 장부를 섞지 않는다)
+    recent = [] if member else [x for x in ops.get_state(app.engine, "watch_symbols").get("symbols", []) if x not in star][::-1][:20]
     bars, _ = app._all_bars()
     held = set()
-    for m in ("live", "shadow", "paper", "us-paper"):
+    for m in (("manual", "us-manual") if member else ("live", "shadow", "paper", "us-paper")):
         try:
             held |= {s_ for s_, p in app.load_portfolio(m).positions.items() if p.qty}
         except Exception:  # noqa: BLE001, S112
             continue
+    if member:
+        from . import accounts as _acc
+        held |= {str(h.get("symbol")) for a in _acc.load(app.engine) for h in (a.get("holdings") or []) if h.get("symbol")}
+        recent = [x for x in sorted(held) if x not in star]  # 보유했지만 별표 안 한 종목도 보이게
+    syms = list(dict.fromkeys(star + recent))
     live = ops.get_state(app.engine, "live_quotes")
     with session_scope(app.engine) as s:
         names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_(syms or [""])))}
@@ -82,7 +88,7 @@ def watchlist(app) -> dict:
         cur, prev = (pr[0] if pr else None), (pr[1] if len(pr) > 1 else None)
         change = f"{prev.action}→{cur.action}" if cur and prev and cur.action != prev.action else None
         rows.append({"symbol": sym, "name": names.get(sym, sym), "type": market_type(sym, names.get(sym)), "starred": sym in star,
-                     "group": groups.get(sym) or ("최근 본 종목" if sym not in star else "기본"), "held": sym in held,
+                     "group": groups.get(sym) or ("기본" if sym in star else "보유" if member else "최근 본 종목"), "held": sym in held,
                      "last": last, "chg_pct": chg, "price_src": "실시간" if q.get("price") else "일봉 종가",
                      "ai": cur.action if cur else None, "prob_up": round(cur.prob_up, 3) if cur else None, "ai_at": label(cur.as_of) if cur else None,
                      "change": change, "change_dir": (1 if cur.action == "BUY" else -1 if cur.action in ("SELL",) or prev.action == "BUY" else 0) if change else 0})
@@ -417,12 +423,17 @@ def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3, in
 
     def add(pri, icon, text, link, why="", symbol=None, kind="", name=None):
         items.append({"pri": pri, "icon": icon, "text": text, "link": link, "why": why, "symbol": symbol, "kind": kind, "name": name})
-    if ops.halted(app.engine):
+    from . import service, tenancy
+    member = tenancy.is_member()  # v34: 회원에게는 운영 상태(긴급 정지·서버 점검)를 할 일로 띄우지 않는다
+    advice = service.advice_on(app)
+    if member:
+        pass
+    elif ops.halted(app.engine):
         add(100, "⛔", "자동 정지 중 — 이유를 확인하세요", "#safety", "안전장치가 모든 신규 매수를 막았습니다", kind="halt")
     elif ops.kill_switch_on(app.engine):
         add(90, "⏸️", "긴급 정지(수동) 켜져 있음 — 계속 둘지 확인", "#safety", "신규 매수가 멈춰 있습니다", kind="kill")
     try:
-        for it in (ops_status(app, now)["issues"] if include_ops else []):  # v23: 홈은 시스템 점검을 따로 한 줄로
+        for it in (ops_status(app, now)["issues"] if include_ops and not member else []):  # v23: 홈은 시스템 점검을 따로 한 줄로
             if it["level"] == "bad":
                 add(95 if it["key"] == "scheduler" else 92, "🔌" if it["key"] == "scheduler" else "🗓️", it["text"], "#server", it["fix"], kind="ops_" + it["key"])
     except Exception:  # noqa: BLE001, S110 - 상태 확인 실패가 할 일을 막지 않게
@@ -471,7 +482,7 @@ def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3, in
                 add(50, "🏛️", f"{e['title']} {_d_word(e['d_day'])}", "#calendar", "시장 전체가 크게 움직일 수 있는 일정", kind="macro")
     except Exception:  # noqa: BLE001, S110 - 일정 계산 실패가 할 일 전체를 막지 않게
         pass
-    for c in a.get("signal_changes") or []:
+    for c in (a.get("signal_changes") or []) if advice else []:
         to = "NO TRADE" if c["to"] == "NO_TRADE" else c["to"]
         fr = "NO TRADE" if c["from"] == "NO_TRADE" else c["from"]
         add(65 if c["held"] else 45, "🤖", f"{c['name']} AI 신호 변경 {fr} → {to}", f"#analysis/{c['symbol']}",
@@ -553,10 +564,13 @@ def start_guide(app) -> dict:
     투자 한도는 AI 자동매매·증명 프로젝트를 쓸 때 필요한 선택 단계다."""
     from sqlalchemy import func
 
+    from . import tenancy
     from .budget import get as budget_get
     from .data.db import session_scope
     from .data.models import PriceBar
     from .ux import starred
+    if tenancy.is_member():
+        return member_guide(app)
     with session_scope(app.engine) as s:
         has_bars = (s.scalar(select(func.count()).select_from(select(PriceBar.id).limit(1).subquery())) or 0) > 0
     from .goal import get as goal_get
@@ -592,6 +606,35 @@ def start_guide(app) -> dict:
                           "how": "없어도 규칙 AI 로 동작합니다. 무료 Gemini 키를 .env 에 넣으면 뉴스 번역·쉬운 설명이 켜집니다", "link": "#settings"}]}
 
 
+def member_guide(app) -> dict:
+    """v34 회원 시작 안내: ① 목표 계획 ② 관심종목 3개 ③ 알림 받기 ④ 오늘 할 일 (데이터·키·투자 한도는 운영자 몫)."""
+    from .alerts import active_rules
+    from .goal import get as goal_get
+    from .ux import starred
+    g = goal_get(app)
+    n_star = len(starred(app))
+    n_push = len(ops.get_state(app.engine, "push_subs").get("subs", []))
+    n_rules = sum(1 for r in active_rules(app.engine) if r["active"])
+    steps = [
+        {"key": "goal", "n": 1, "title": "내 목표 계획 정하기", "done": bool(g.get("goal")),
+         "how": "얼마로 시작해 매달 얼마를 넣어 몇 년 뒤 얼마를 만들지 — 추천 계획을 한 번에 적용하거나 금액을 바꿔 저장", "link": "#goal",
+         "detail": (f"{g['principal'] / 1e4:,.0f}만원 + 매달 {g['monthly'] / 1e4:,.0f}만원 → {g['goal'] / 1e8:,.2f}억 · {g['target_years']}년"
+                    if g.get("goal") else "아직 안 정함")},
+        {"key": "watch", "n": 2, "title": "관심종목 3개 담기", "done": n_star >= 3,
+         "how": "위 검색창(단축키 /)에서 종목을 찾아 ★ 를 누르세요 — 뉴스·공시·실적 일정을 챙겨 드려요", "link": "search",
+         "detail": f"{n_star}/3개"},
+        {"key": "notify", "n": 3, "title": "알림 받기", "done": bool(n_push or n_rules),
+         "how": "휴대폰 알림을 켜거나 관심종목에 가격 알림(±5%)을 걸어 두세요 — 적립일·큰 움직임을 놓치지 않게", "link": "#alerts",
+         "detail": f"휴대폰 {n_push}대 · 가격 알림 {n_rules}개"},
+        {"key": "today", "n": 4, "title": "'오늘 할 일' 확인하기", "done": False,
+         "how": "매일 홈 맨 위 몇 줄만 보면 됩니다", "link": "#dashboard", "detail": ""},
+    ]
+    need = [x for x in steps[:3] if not x["done"]]
+    nxt = need[0] if need else steps[3]
+    return {"steps": steps, "done": not need, "next": nxt["key"], "progress": sum(1 for x in steps[:3] if x["done"]), "optional": [],
+            "member": True}
+
+
 # ------------------------------------------------------------------ v23 홈: 주의할 것 · 시장 핵심 · 관심종목 판단 · 오늘의 결론
 def caution3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) -> list[dict]:
     """오늘 '하지 말아야 할 것·조심할 것' 3개 — 할 일(today3)과 반대편. 근거가 있는 것만."""
@@ -600,8 +643,9 @@ def caution3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) 
 
     def add(pri, text, why, level="warn", link="#dashboard"):
         out.append({"pri": pri, "text": text, "why": why, "level": level, "link": link})
+    from . import service
     try:
-        st = ai_state(app)
+        st = ai_state(app) if service.advice_on(app) else {"key": None}
         if st["key"] == "banned":
             add(90, "AI 판단은 참고만 하세요", st.get("why") or "최근 성적이 기준 미달", "bad", "#scorecard")
         elif st["key"] == "checking":
@@ -633,7 +677,11 @@ def caution3(app, mode: str = "paper", now: datetime | None = None, n: int = 3) 
     try:
         o = ops_status(app, now)
         if (o.get("bar") or {}).get("lag_days", 0) >= 2:
-            add(85, f"주가 데이터가 {o['bar']['lag_days']}거래일 밀림", "오래된 가격으로 판단하지 않도록 신규 매수는 막혀 있습니다", "bad", "#datahealth")
+            from . import tenancy as _t
+            if _t.is_member():  # v34: 회원에게는 '운영 매매 차단' 대신 '가격이 오래됐다'만
+                add(85, f"시세가 {o['bar']['lag_days']}거래일 전 기준이에요", "화면의 가격·등락은 최신이 아닐 수 있어요 — 증권사 앱에서 지금 가격을 확인하세요", "bad", "#market")
+            else:
+                add(85, f"주가 데이터가 {o['bar']['lag_days']}거래일 밀림", "오래된 가격으로 판단하지 않도록 신규 매수는 막혀 있습니다", "bad", "#datahealth")
     except Exception:  # noqa: BLE001, S110
         pass
     out.sort(key=lambda x: -x["pri"])
@@ -713,6 +761,20 @@ def watch_verdicts(app, n: int = 6) -> list[dict]:
              "change": r["change"], "last": r["last"]} for r in rows[:n]]
 
 
+def member_conclusion(h: dict) -> dict:
+    """v34 회원용 한 줄: 매매 지시 없이 '오늘 볼 것'만 (투자 판단은 회원 몫)."""
+    caution = h.get("caution") if isinstance(h.get("caution"), list) else []
+    todo = (h.get("todo") or {}).get("items") or [] if isinstance(h.get("todo"), dict) else []
+    bad = [c for c in caution if c.get("level") == "bad"]
+    if any("시세" in c["text"] for c in bad):
+        return {"text": "시세가 최신이 아니에요 — 화면의 가격은 참고만 하고 증권사 앱에서 지금 가격을 확인하세요.", "level": "warn", "do_nothing": False}
+    if bad:
+        return {"text": f"{bad[0]['text']} — 이것부터 확인해 보세요.", "level": "warn", "do_nothing": False}
+    if todo:
+        return {"text": f"오늘 확인할 것 {len(todo)}가지가 있어요. 목표 계획대로 꾸준히 가는 게 가장 중요해요.", "level": "ok", "do_nothing": False}
+    return {"text": "오늘은 특별히 확인할 것이 없어요. 계획대로 꾸준히.", "level": "ok", "do_nothing": True}
+
+
 def conclusion(h: dict) -> dict:
     """오늘의 결론 한 문단 — 홈의 다른 칸에서 이미 계산한 사실만으로 만든다 (새 판단을 만들지 않는다)."""
     caution = h.get("caution") if isinstance(h.get("caution"), list) else []
@@ -790,13 +852,18 @@ def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
 
     safe("market", market)
     safe("assets", assets)
-    safe("ai", lambda: {**ai_state(app), "stage": (ops.get_state(app.engine, "ladder").get("stage") or "backtest").upper()})
+    from . import service, tenancy
+    member, advice = tenancy.is_member(), service.advice_on(app)  # v34: 회원 홈에는 운영 상태를 넣지 않는다
+    if advice:
+        safe("ai", lambda: {**ai_state(app), "stage": (ops.get_state(app.engine, "ladder").get("stage") or "backtest").upper()})
     safe("news", news)
     safe("todo", lambda: today3(app, mode, now, include_ops=False))
-    safe("system", lambda: [{"text": it["text"], "fix": it["fix"], "level": it["level"]} for it in ops_status(app, now)["issues"]])
+    if not member:
+        safe("system", lambda: [{"text": it["text"], "fix": it["fix"], "level": it["level"]} for it in ops_status(app, now)["issues"]])
     safe("caution", lambda: caution3(app, mode, now))
     safe("core", lambda: market_core(app, now))
-    safe("watch", lambda: watch_verdicts(app))
+    safe("watch", lambda: watch_verdicts(app) if advice else [{k: v for k, v in r.items() if k not in ("ai", "prob_up", "change")}
+                                                              for r in watch_verdicts(app)])
     safe("upcoming", lambda: upcoming(app, now))
 
     def data_():  # v23: 데이터 상태 한 줄 (점수 + 종류별 정상/지연/문제)
@@ -807,8 +874,9 @@ def home5(app, mode: str = "paper", now: datetime | None = None) -> dict:
         ko = {"ok": "정상", "warn": "지연", "bad": "문제", "na": "키 없음"}
         return {"overall": d.get("overall"), "trading": d.get("trading"),
                 "items": [{"name": r["name"], "status": r["status"], "label": ko.get(r["status"], r["status"])} for r in d.get("rows") or []]}
-    safe("data", data_)
-    out["conclusion"] = conclusion(out)
+    if not member:
+        safe("data", data_)
+    out["conclusion"] = member_conclusion(out) if member else conclusion(out)
 
     def goal_():
         from .goal import progress

@@ -364,6 +364,7 @@ class AlertRecord(Base):
     link: Mapped[str | None] = mapped_column(String(256))
     dedupe: Mapped[str | None] = mapped_column(String(160), unique=True)  # 같은 알림 두 번 안 보내기
     data: Mapped[dict | None] = mapped_column(JSONType)
+    owner: Mapped[int | None] = mapped_column(Integer, index=True)  # v34: 한 사람에게만 보이는 알림 (없으면 모두에게)
     __table_args__ = (Index("ix_alerts_ts", "ts"),)
 
 
@@ -380,6 +381,7 @@ class AlertRule(Base):
     repeat: Mapped[bool] = mapped_column(Boolean, default=False)  # 하루 한 번씩 계속 (기본: 한 번 울리면 끔)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    owner: Mapped[int | None] = mapped_column(Integer, index=True)  # v34: 규칙을 만든 사람 (없으면 운영자·1인 모드)
 
 
 class UserJournal(Base):
@@ -398,4 +400,56 @@ class UserJournal(Base):
     row_hash: Mapped[str | None] = mapped_column(String(64))
     realized_return: Mapped[float | None] = mapped_column(Float)
     correct: Mapped[bool | None] = mapped_column(Boolean)
+    owner: Mapped[int | None] = mapped_column(Integer, index=True)  # v34: 쓴 사람 (없으면 운영자·1인 모드)
     __table_args__ = (Index("ix_user_journal_symbol", "symbol", "created_at"),)
+
+
+# ---------------------------------------------------------------- v34 회원 (여러 사용자 서비스)
+class User(Base):
+    """회원. role: owner(1인 모드 데이터의 주인 · 운영자) / admin(운영자) / member(회원)."""
+
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True)  # 소문자로 저장
+    name: Mapped[str | None] = mapped_column(String(60))
+    pw_hash: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(12), default="member")
+    plan: Mapped[str] = mapped_column(String(12), default="free")
+    plan_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(12), default="active")  # active / disabled
+    totp_secret: Mapped[str | None] = mapped_column(String(300))  # 암호화 키가 있으면 암호화해서
+    totp_last: Mapped[int | None] = mapped_column(BigInteger)  # 마지막으로 쓴 OTP 시간 칸 (재사용 방지)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consent: Mapped[dict | None] = mapped_column(JSONType)  # 약관·개인정보·투자위험 고지 동의 (버전·시각)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pw_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserSession(Base):
+    """로그인 세션 — DB 에 둬서 웹 서버를 여러 개 띄워도 같은 로그인. 세션 값 자체가 아니라 해시만 저장."""
+
+    __tablename__ = "user_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # sha256(세션 값)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ip: Mapped[str | None] = mapped_column(String(64))
+    agent: Mapped[str | None] = mapped_column(String(200))
+
+
+class UserToken(Base):
+    """한 번 쓰는 링크·코드: 이메일 확인 · 비밀번호 재설정 · 초대. 값이 아니라 해시만 저장."""
+
+    __tablename__ = "user_tokens"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # sha256(토큰)
+    kind: Mapped[str] = mapped_column(String(12))  # verify / reset / invite
+    user_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    data: Mapped[dict | None] = mapped_column(JSONType)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

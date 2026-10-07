@@ -100,6 +100,7 @@ function goalBar(pr) {
 async function baselineCard(box) {
   if (!box) return;
   let b;
+  if (typeof isMember === "function" && isMember()) { box.innerHTML = ""; return; }  // v34: 운영자 장부 비교는 회원에게 없음
   try { b = await api("/api/baseline"); } catch (e) { box.innerHTML = ""; return; }
   const rs = b.research, lv = b.live || {}, rc = b.recommend || {};
   const row = (x) => `<td class="r">${P(x.cagr, 1)}</td><td class="r">${(x.vol * 100).toFixed(1)}%</td><td class="r down">${P(x.mdd, 0)}</td>`;

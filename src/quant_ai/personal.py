@@ -104,7 +104,9 @@ def mistakes(app, days: int = 180) -> dict:
     from .data.models import UserJournal
     since = datetime.now(UTC) - timedelta(days=days)
     with session_scope(app.engine) as s:
-        rows = s.scalars(select(UserJournal).where(UserJournal.created_at >= since).order_by(UserJournal.created_at)).all()
+        from . import tenancy
+        rows = s.scalars(select(UserJournal).where(UserJournal.created_at >= since, tenancy.owner_filter(UserJournal.owner))
+                         .order_by(UserJournal.created_at)).all()
         rows = [{"sym": r.symbol, "at": r.created_at, "action": r.action, "conv": r.conviction, "ret": r.realized_return, "ok": r.correct,
                  "tags": r.tags or {}} for r in rows]
     scored = [r for r in rows if r["ok"] is not None]

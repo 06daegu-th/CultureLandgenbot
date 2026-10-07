@@ -59,7 +59,8 @@ def _route(kind: str, level: str, title: str, body: str | None, link: str | None
     urgent = level in ("bad", "critical")
     if in_quiet(notify.get("quiet") or {}) and not urgent:
         return  # 조용한 시간: 외부로는 보내지 않는다 (사이트 알림센터에는 이미 저장됨) · 긴급은 예외
-    n = ROUTE.get("notifier")
+    from . import tenancy
+    n = None if tenancy.scoped() else ROUTE.get("notifier")  # v34: 회원 알림은 운영자 텔레그램으로 보내지 않는다 (그 사람 휴대폰 푸시만)
     if n is not None and channel_on(notify, "external", kind, kind in ROUTE["kinds"]):
         try:
             n.send(f"{title}\n{body}" if body else title, {"bad": "critical", "warn": "warn"}.get(level, "info"))
@@ -76,7 +77,8 @@ def _route(kind: str, level: str, title: str, body: str | None, link: str | None
 def push(engine, kind: str, title: str, body: str | None = None, level: str = "info", symbol: str | None = None,
          link: str | None = None, dedupe: str | None = None, data: dict | None = None,
          now: datetime | None = None, route: bool = True) -> int | None:
-    """알림 하나 추가. 같은 dedupe 가 이미 있으면 None. 설정된 종류는 텔레그램·웹 푸시로도 보낸다."""
+    """알림 하나 추가. 같은 dedupe 가 이미 있으면 None. 설정된 종류는 텔레그램·웹 푸시로도 보낸다.
+    v34: 회원 문맥(tenancy)에서 부르면 그 사람에게만 보이는 알림 (휴대폰 푸시도 그 사람 기기로만)."""
     rid = _store(engine, kind, title, body, level, symbol, link, dedupe, data, now)
     if rid is not None and route:
         _route(kind, level, title, body, link, engine)
@@ -89,8 +91,9 @@ def _store(engine, kind, title, body, level, symbol, link, dedupe, data, now) ->
         with session_scope(engine) as s:
             if dedupe and s.scalar(select(AlertRecord.id).where(AlertRecord.dedupe == dedupe)):
                 return None
+            from . import tenancy
             rec = AlertRecord(ts=now, kind=kind, level=level, title=title[:300], body=(body or "")[:1000] or None,
-                              symbol=symbol, link=link, dedupe=dedupe[:160] if dedupe else None, data=data)
+                              symbol=symbol, link=link, dedupe=dedupe[:160] if dedupe else None, data=data, owner=tenancy.owner_value())
             s.add(rec)
             s.flush()
             rid = rec.id
@@ -103,23 +106,67 @@ def _store(engine, kind, title, body, level, symbol, link, dedupe, data, now) ->
         return None
 
 
-def recent(engine, after: int = 0, limit: int = 50) -> dict:
+# v34: 회원에게도 보여 주는 공용 알림 (시장 전체 소식) — 운영 알림(긴급 정지·작업 실패·장부·AI 승격 등)은 운영자만
+PUBLIC_KINDS = ("market", "disclosure", "news", "earnings")
+
+
+def _visible(public_kinds: tuple[str, ...] | None = None):
+    """지금 사람이 볼 수 있는 알림 조건: 회원 → 내 알림 + 공용 알림 · 운영자(1인 모드) → 회원 개인 알림만 빼고 전부."""
+    from sqlalchemy import or_
+
+    from . import tenancy
+    if tenancy.scoped():
+        return or_(AlertRecord.owner == tenancy.uid(),
+                   (AlertRecord.owner.is_(None)) & AlertRecord.kind.in_(public_kinds or PUBLIC_KINDS))
+    return AlertRecord.owner.is_(None)
+
+
+def recent(engine, after: int = 0, limit: int = 50, public_kinds: tuple[str, ...] | None = None) -> dict:
     with session_scope(engine) as s:
-        q = select(AlertRecord).order_by(AlertRecord.id.desc()).limit(limit)
+        vis = _visible(public_kinds)
+        q = select(AlertRecord).where(vis).order_by(AlertRecord.id.desc()).limit(limit)
         if after:
             q = q.where(AlertRecord.id > after)
         rows = s.scalars(q).all()
-        last = s.scalar(select(func.max(AlertRecord.id))) or 0
+        last = s.scalar(select(func.max(AlertRecord.id)).where(vis)) or 0
         return {"last_id": last, "items": [{"id": r.id, "ts": r.ts.isoformat() if r.ts else None, "kind": r.kind,
                                             "level": r.level, "title": r.title, "body": r.body, "symbol": r.symbol,
                                             "link": r.link, "data": r.data} for r in rows]}
 
 
 # ---------------------------------------------------------------- 관심 대상
+def member_focus(app) -> dict[str, set[str]]:
+    """v34 회원의 '내 종목': 내 모의 장부 보유 · 내 계좌 보유 · 별표 관심 · 내 알림 규칙 (운영자 장부·AI 코어는 섞지 않는다)."""
+    from . import accounts
+    from .ux import starred
+    out: dict[str, set[str]] = {}
+    for m in ("manual", "us-manual"):
+        try:
+            for sym, p in app.load_portfolio(m).positions.items():
+                if p.qty:
+                    out.setdefault(sym, set()).add("보유")
+        except Exception:  # noqa: BLE001, S112
+            continue
+    for a in accounts.load(app.engine):
+        for h in a.get("holdings") or []:
+            sym = str(h.get("symbol") or "")
+            if sym:
+                out.setdefault(sym, set()).add("보유")
+    for sym in starred(app):
+        out.setdefault(sym, set()).add("관심")
+    for r in active_rules(app.engine):
+        if r["active"]:
+            out.setdefault(r["symbol"], set()).add("규칙")
+    return out
+
+
 def focus_symbols(app) -> dict[str, set[str]]:
     """알림 대상: 보유 · 관심(내가 본 종목) · 코어 · 해외 관심 종목 → {종목: {태그}}."""
+    from . import tenancy
     from .actions import watch_symbols
     from .analytics import main_mode
+    if tenancy.scoped():
+        return member_focus(app)
     out: dict[str, set[str]] = {}
     mode = main_mode(app)
     for m in {mode, "live"}:
@@ -152,41 +199,50 @@ def _open_markets(now: datetime) -> set[str]:
 RULE_KINDS = {"above": "목표가 도달", "below": "손절가 도달", "move": "등락률", "volume": "거래량 급증"}
 
 
-def active_rules(engine) -> list[dict]:
+def active_rules(engine, all_owners: bool = False) -> list[dict]:
+    """알림 규칙. v34: 회원은 자기 규칙만 · 운영자(1인 모드)는 자기 규칙만 · all_owners 는 감시 작업용(모두)."""
+    from . import tenancy
     from .data.models import AlertRule
     with session_scope(engine) as s:
+        q = select(AlertRule).order_by(AlertRule.id.desc())
+        if not all_owners:
+            q = q.where(tenancy.owner_filter(AlertRule.owner))
         return [{"id": r.id, "symbol": r.symbol, "kind": r.kind, "value": r.value, "note": r.note, "repeat": r.repeat,
                  "active": r.active, "fired_at": r.fired_at.isoformat() if r.fired_at else None,
-                 "created_at": r.created_at.isoformat() if r.created_at else None}
-                for r in s.scalars(select(AlertRule).order_by(AlertRule.id.desc()))]
+                 "created_at": r.created_at.isoformat() if r.created_at else None, "owner": r.owner}
+                for r in s.scalars(q)]
 
 
-def add_rule(engine, symbol: str, kind: str, value: float, note: str | None = None, repeat: bool = False) -> dict:
+def add_rule(engine, symbol: str, kind: str, value: float, note: str | None = None, repeat: bool = False,
+             max_rules: int = 200) -> dict:
+    from . import tenancy
     from .data.models import AlertRule
     if kind not in RULE_KINDS:
         raise ValueError(f"알 수 없는 규칙: {kind}")
     value = float(value)
     if value <= 0:
         raise ValueError("값은 0 보다 커야 합니다")
+    mine = tenancy.owner_filter(AlertRule.owner)
     with session_scope(engine) as s:
-        same = s.query(AlertRule).filter(AlertRule.active.is_(True), AlertRule.symbol == symbol, AlertRule.kind == kind,
+        same = s.query(AlertRule).filter(mine, AlertRule.active.is_(True), AlertRule.symbol == symbol, AlertRule.kind == kind,
                                          AlertRule.value == value).first()
         if same is not None:  # 같은 규칙을 두 번 누른 경우 — 새로 만들지 않는다
             return {"id": same.id, "duplicate": True}
-        if s.query(AlertRule).filter(AlertRule.active.is_(True)).count() >= 200:
-            raise ValueError("활성 규칙은 200개까지")
+        if s.query(AlertRule).filter(mine, AlertRule.active.is_(True)).count() >= max_rules:
+            raise ValueError(f"활성 알림 규칙은 {max_rules}개까지예요")
         r = AlertRule(symbol=symbol, kind=kind, value=value, note=(note or "")[:200] or None, active=True,
-                      repeat=bool(repeat), created_at=datetime.now(UTC))
+                      repeat=bool(repeat), created_at=datetime.now(UTC), owner=tenancy.owner_value())
         s.add(r)
         s.flush()
         return {"id": r.id}
 
 
 def update_rule(engine, rule_id: int, active: bool | None = None, delete: bool = False) -> dict:
+    from . import tenancy
     from .data.models import AlertRule
     with session_scope(engine) as s:
         r = s.get(AlertRule, int(rule_id))
-        if r is None:
+        if r is None or r.owner != tenancy.owner_value():  # v34: 남의 규칙은 '없는 규칙' (있는지조차 알려 주지 않음)
             raise ValueError("규칙 없음")
         if delete:
             s.delete(r)
@@ -225,7 +281,8 @@ def evaluate_rules(app, quotes: dict[str, dict], now: datetime | None = None, na
     """시세가 들어올 때마다(2.5분 · 또는 실시간 체결) 규칙 확인 → 알림 + 외부 전송."""
     from .data.models import AlertRule
     now = now or datetime.now(UTC)
-    rules = [r for r in active_rules(app.engine) if r["active"] and r["symbol"] in quotes]
+    from . import tenancy
+    rules = [r for r in active_rules(app.engine, all_owners=True) if r["active"] and r["symbol"] in quotes]
     if not rules:
         return 0
     names = names or _names(app.engine)
@@ -251,9 +308,10 @@ def evaluate_rules(app, quotes: dict[str, dict], now: datetime | None = None, na
         if not hit:
             continue
         name = names.get(r["symbol"], r["symbol"])
-        rid = push(app.engine, "rule", f"{name} {RULE_KINDS[r['kind']]}", why + (f" · {r['note']}" if r["note"] else ""),
-                   level="warn", symbol=r["symbol"], link=f"#analysis/{r['symbol']}",
-                   dedupe=f"rule:{r['id']}:{day}", data={"rule": r["id"], "dir": "up" if (chg or 0) >= 0 else "down"}, now=now)
+        with tenancy.as_user({"id": r["owner"], "role": "member"} if r.get("owner") else None):  # v34: 규칙 주인에게만
+            rid = push(app.engine, "rule", f"{name} {RULE_KINDS[r['kind']]}", why + (f" · {r['note']}" if r["note"] else ""),
+                       level="warn", symbol=r["symbol"], link=f"#analysis/{r['symbol']}",
+                       dedupe=f"rule:{r['id']}:{day}", data={"rule": r["id"], "dir": "up" if (chg or 0) >= 0 else "down"}, now=now)
         if rid is not None:
             fired += 1
             with session_scope(app.engine) as s:
@@ -267,10 +325,14 @@ def evaluate_rules(app, quotes: dict[str, dict], now: datetime | None = None, na
 def watch_list(app, markets: set[str]) -> tuple[dict[str, set[str]], list[str]]:
     """감시 대상: 보유·관심·코어 + 규칙이 걸린 종목, 열려 있는 시장만."""
     focus = focus_symbols(app)
-    for r in active_rules(app.engine):  # 규칙이 걸린 종목은 관심 종목이 아니어도 본다
+    for r in active_rules(app.engine, all_owners=True):  # 규칙이 걸린 종목은 관심 종목이 아니어도 본다 (v34: 모든 회원 규칙)
         if r["active"]:
             focus.setdefault(r["symbol"], set()).add("규칙")
-    return focus, [s for s in focus if ("KR" if s.isdigit() else "US") in markets][:50]
+    import os
+    cap = int(os.environ.get("QUANT_WATCH_MAX") or 50)  # v34: 회원이 많으면 늘린다 (무료 시세 출처 부담 주의)
+    syms = [s for s in focus if ("KR" if s.isdigit() else "US") in markets]
+    syms.sort(key=lambda s: 0 if focus[s] & {"규칙", "보유"} else 1)  # 누군가 기준을 걸어 둔 종목·보유가 먼저 (잘리지 않게)
+    return focus, syms[:cap]
 
 
 def price_watch(app, now: datetime | None = None, fetchers: dict | None = None, markets: set[str] | None = None) -> dict:

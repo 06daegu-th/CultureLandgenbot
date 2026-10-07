@@ -237,8 +237,8 @@ def save(app, body: dict) -> dict:
     g["at"] = datetime.now(UTC).isoformat()
     ops.set_state(app.engine, KEY, g)
     dd = g.get("dca") or {}
-    if dd.get("on") and dd.get("mode") == "paper" and dd.get("target") == "etf" and g["principal"] > 0 and not app.cashflows(ETF_BOOK):
-        deposit(app, ETF_BOOK, g["principal"], memo="시작 원금")  # ETF 적립 장부는 원금부터 같이 굴린다
+    if dd.get("on") and dd.get("mode") == "paper" and dd.get("target") == "etf" and g["principal"] > 0 and not app.cashflows(etf_book()):
+        deposit(app, etf_book(), g["principal"], memo="시작 원금")  # ETF 적립 장부는 원금부터 같이 굴린다
         g["seeded"] = etf_buy(app, dd.get("etf") or "069500")
     return g
 
@@ -247,7 +247,7 @@ def current_assets(app) -> tuple[float, str]:
     from .portfolio_os import _book
     d = get(app).get("dca") or {}
     if d.get("mode") == "paper" and d.get("target") == "etf":
-        pf = _load_book(app, ETF_BOOK)
+        pf = _load_book(app, etf_book())
         return float(pf.equity(_book_prices(app, pf))), f"ETF 적립 모의 장부 · {ETFS.get(d.get('etf') or '069500', '').split(' (')[0]}"
     try:
         vals, cash, total, names = _book(app, d.get("mode", "paper"))
@@ -441,6 +441,12 @@ def home_card(app, now: datetime | None = None) -> dict:
 
 
 # ------------------------------------------------------------------ 월 적립식
+def etf_book() -> str:
+    """v34: 월 적립 모의 장부 — 회원마다 따로 (etf-dca@1z) · 1인 모드·소유자는 예전 그대로."""
+    from . import tenancy
+    return tenancy.book(ETF_BOOK)
+
+
 ETF_BOOK = "etf-dca"  # 월 적립 ETF 전용 모의 장부 (코어가 리밸런싱하는 paper 장부와 섞지 않는다 — 섞으면 코어가 ETF 를 팔아 버림)
 ETFS = {"069500": "KODEX 200 (국내 대표 200종목)", "360750": "TIGER 미국S&P500"}
 
@@ -484,7 +490,7 @@ def _load_book(app, mode: str):
     from .data.db import session_scope
     from .data.models import PortfolioSnapshot
     from .trading.portfolio import Portfolio
-    if mode == ETF_BOOK:
+    if mode == etf_book():
         with session_scope(app.engine) as s:
             has = s.scalar(select(PortfolioSnapshot.id).where(PortfolioSnapshot.mode == mode).limit(1))
         if has is None:
@@ -527,7 +533,7 @@ def deposit(app, mode: str, amount: float, memo: str = "월 적립") -> dict:
 def etf_buy(app, symbol: str = "069500") -> dict:
     """ETF 적립 장부의 현금으로 ETF 를 산다 (1주 단위 · 수수료·미끄러짐 반영). 가격을 못 받으면 현금으로 둔다."""
     from .trading.portfolio import CostModel, Fill, Order, Side
-    pf = _load_book(app, ETF_BOOK)
+    pf = _load_book(app, etf_book())
     lc = last_close(app, symbol)
     if lc is None:
         return {"bought": 0, "reason": f"{ETFS.get(symbol, symbol)} 가격을 받지 못함 — 현금으로 두고 다음 날 다시 시도", "cash": round(pf.cash)}
@@ -539,7 +545,7 @@ def etf_buy(app, symbol: str = "069500") -> dict:
         return {"bought": 0, "reason": "1주 살 돈이 안 됨 — 다음 적립 때 함께", "cash": round(pf.cash), "price": price}
     order = Order(symbol=symbol, side=Side.BUY, qty=qty, reason="월 적립 ETF", ref_price=price)
     pf.apply(Fill(order=order, ts=datetime.now(UTC), qty=qty, price=fill_px, fee=cm.fee(Side.BUY, fill_px, qty)))
-    _save_snapshot(app, ETF_BOOK, pf)
+    _save_snapshot(app, etf_book(), pf)
     return {"bought": qty, "price": round(fill_px, 2), "price_date": day, "cost": round(fill_px * qty), "cash": round(pf.cash)}
 
 
@@ -574,6 +580,10 @@ def dca_due(g: dict, today: date, trading_day: bool) -> bool:
     return today.day >= d["day"] and (d.get("last") or "")[:7] != month
 
 
+def _d(n: int) -> str:
+    return "내일" if n == 1 else f"{n}일 뒤"
+
+
 def dca_run(app, now: datetime | None = None) -> dict:
     """스케줄러가 매일 부른다. 이번 달 적립일(휴장이면 다음 거래일)에 한 번만."""
     from .alerts import push
@@ -584,9 +594,15 @@ def dca_run(app, now: datetime | None = None) -> dict:
     d0 = g.get("dca") or {}
     pending = None
     if d0.get("on") and d0.get("mode") == "paper" and d0.get("target") == "etf" and MARKETS["KRX"].is_trading_day(today):
-        pf = _load_book(app, ETF_BOOK)
+        pf = _load_book(app, etf_book())
         if pf.cash > 0 and (d0.get("last") or "") != today.isoformat():
             pending = etf_buy(app, d0.get("etf") or "069500")  # 지난번에 가격을 못 받아 남은 현금 → 오늘 산다
+    from . import tenancy
+    who = f"{tenancy.b36(tenancy.uid())}:" if tenancy.scoped() else ""  # v34: 알림 중복 막기 키를 사람마다 따로
+    nd = next_dca(g, today)
+    if nd and nd["mode"] == "live" and 1 <= nd["d_day"] <= 2:  # v34: 실계좌는 이틀 전에 '돈 준비' 알림 (휴대폰 푸시)
+        push(app.engine, "brief", "적립일 준비", f"{_d(nd['d_day'])} 적립일 — 증권 계좌에 {nd['amount'] / 1e4:,.0f}만원을 준비해 두세요",
+             level="info", link="#goal", dedupe=f"dca-pre:{who}{nd['date'][:7]}", now=now)
     if not dca_due(g, today, MARKETS["KRX"].is_trading_day(today)):
         return {"done": False, **({"pending_buy": pending} if pending else {})}
     d = g["dca"]
@@ -595,7 +611,7 @@ def dca_run(app, now: datetime | None = None) -> dict:
         return {"done": False, "reason": "적립액 0"}
     etf = d.get("etf") or "069500"
     if d["mode"] == "paper" and d.get("target") == "etf":
-        r = deposit(app, ETF_BOOK, amt)
+        r = deposit(app, etf_book(), amt)
         b = etf_buy(app, etf)
         r |= {"buy": b}
         msg = (f"ETF 적립 장부에 {amt / 1e4:,.0f}만원 입금 → {ETFS.get(etf, etf)} {b['bought']}주 매수 (주당 약 {b['price']:,.0f}원)"
@@ -609,7 +625,7 @@ def dca_run(app, now: datetime | None = None) -> dict:
         msg = f"오늘은 적립일 — 증권 계좌로 {amt / 1e4:,.0f}만원을 옮기고 사세요{sheet} (프로그램은 돈을 옮기지 않습니다)"
     d["last"] = today.isoformat()
     ops.set_state(app.engine, KEY, g | {"dca": d})
-    push(app.engine, "brief", "월 적립일", msg, level="info", link="#goal", dedupe=f"dca:{today.strftime('%Y-%m')}", now=now)
+    push(app.engine, "brief", "월 적립일", msg, level="info", link="#goal", dedupe=f"dca:{who}{today.strftime('%Y-%m')}", now=now)
     return {"done": True, **r, "message": msg}
 
 

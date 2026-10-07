@@ -365,7 +365,9 @@ function buildTabbar() {
   const t = $("#tabbar");
   if (!t) return;
   // v25: 쉬운 화면 = 홈 · 관심종목 · 포트폴리오 · 시장 · 더보기 (토스식) / 전체 화면 = 예전 그대로
-  const items = typeof uiMode === "function" && uiMode() === "easy"
+  const items = typeof isMember === "function" && isMember()
+    ? [["dashboard", "home", "홈"], ["watch", "star", "관심종목"], ["goal", "target", "내 목표"], ["pos", "portfolio", "모의투자"], ["more", "grid", "더보기"]]
+    : typeof uiMode === "function" && uiMode() === "easy"
     ? [["dashboard", "home", "홈"], ["watch", "star", "관심종목"], ["pos", "portfolio", "포트폴리오"], ["market", "market", "시장"], ["more", "grid", "더보기"]]
     : [["dashboard", "home", "홈"], ["action", "bell", "오늘"], ["watch", "score", "관심"], ["pos", "portfolio", "자산"], ["chat", "chat", "AI"]];
   t.innerHTML = items.map(([v, ic, l]) => `<a href="#${v}" data-tab="${v}">${ICONS[ic] || ""}<span>${l}</span></a>`).join("");

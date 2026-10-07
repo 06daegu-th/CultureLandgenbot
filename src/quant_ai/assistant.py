@@ -131,17 +131,35 @@ class Tools:
           "reason": {"type": "string"}}, ["action"]),
     ]
 
+    # v34: 회원(여러 사용자 모드)에게는 운영 도구를 열지 않는다 — 서버·DB·키·긴급 정지·운영 장부·실행 버튼
+    MEMBER_BLOCKED = frozenset({"safety_status", "server_status", "db_status", "keys_status", "propose_action", "budget",
+                                "why_no_trade", "net_alpha", "ai_performance", "event_strategy"})
+    ADVICE_TOOLS = frozenset({"ai_trust"})
+
+    def _blocked(self) -> frozenset:
+        from . import service, tenancy
+        if not tenancy.is_member():
+            return frozenset()
+        return self.MEMBER_BLOCKED | (frozenset() if service.advice_on(self.app) else self.ADVICE_TOOLS)
+
     def schemas(self) -> list[dict]:
+        blocked = self._blocked()
         return [{"type": "function", "function": {"name": n, "description": d,
                                                   "parameters": {"type": "object", "properties": p, "required": r}}}
-                for n, d, p, r in self.SPECS]
+                for n, d, p, r in self.SPECS if n not in blocked]
 
     def call(self, name: str, args: dict) -> dict:
         fn = getattr(self, f"t_{name}", None)
         if fn is None:
             return {"error": f"알 수 없는 도구: {name}"}
+        if name in self._blocked():
+            return {"error": "이 정보는 운영자만 볼 수 있어요"}
         try:
-            return fn(**{k: v for k, v in (args or {}).items() if isinstance(k, str)})
+            out = fn(**{k: v for k, v in (args or {}).items() if isinstance(k, str)})
+            from . import service, tenancy
+            if tenancy.is_member() and not service.advice_on(self.app):  # AI 매수·매도 판단 칸은 빼고 답한다
+                out = service._strip_rows(out, service.ROW_ADVICE_FIELDS + ("ai_consensus", "consensus_id", "core_rank", "picks", "core", "ai_note"))
+            return out
         except TypeError as e:
             return {"error": f"인자 오류: {e}"}
         except Exception as e:  # noqa: BLE001 - 도구 실패는 답변 안에서 설명
@@ -665,7 +683,8 @@ def reply(app, text: str, sid: str | None = None, client_factory=chat_client) ->
         pre.append({"tool": name, "args": args, "result": res})
         used.append({"tool": name, "args": args, "ok": "error" not in res})
     if any(k in text.lower() for k in ("정리해", "정리 해", "청소", "비워")) and any(k in text.lower() for k in ("db", "디비", "데이터베이스")):
-        tools.t_propose_action("db_clean", "사용자가 DB 정리를 요청")
+        if "propose_action" not in tools._blocked():
+            tools.t_propose_action("db_clean", "사용자가 DB 정리를 요청")
     client, provider = client_factory(app.settings)
     answer, model, mode = None, None, "rules"
     if client is not None:

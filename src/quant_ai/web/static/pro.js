@@ -381,13 +381,15 @@ function chatMsgHtml(m) {
   return `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble">${tools ? `<div class="tchips">${tools}</div>` : ""}${md(m.content)}${cards ? `<div class="cards">${cards}</div>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}${links ? `<div class="chat-links xs muted">근거 화면 ${links}</div>` : ""}${fol ? `<div class="chat-fol">${fol}</div>` : ""}${m.model ? `<div class="xs dim" style="margin-top:6px">${esc(m.model)}</div>` : ""}</div></div>`;
 }
 
+// v34: 회원용 추천 질문 (운영·AI 판단 질문 없이)
+const SUGGEST_MEMBER = ["삼성전자 지금 어때?", "이번 주 시장 일정", "증시 지도 요약", "PER 이 뭐야?"];
 function chatShell(id, full = false) {
   return `<div class="chat ${full ? "full" : ""}" id="${id}">
     <div class="chat-h"><span class="ch-ic">${ICONS.chat}</span><div><b>Quant AI 어시스턴트</b><div class="xs muted" data-role="model">연결 확인 중…</div></div>
       <button class="icon-btn" data-role="clear" title="대화 지우기">${ICONS.refresh}</button>${full ? "" : `<button class="icon-btn" data-role="close" title="닫기">✕</button>`}</div>
     <div class="chat-body" data-role="body"></div>
-    <div class="chat-sug" data-role="sug">${SUGGEST.map((s) => `<button>${esc(s)}</button>`).join("")}</div>
-    <form class="chat-in" data-role="form"><textarea rows="1" placeholder="종목·시장·서버·DB 무엇이든 물어보세요 (Enter 전송)" maxlength="2000"></textarea><button type="submit" class="send">${ICONS.send}</button></form>
+    <div class="chat-sug" data-role="sug">${(typeof isMember === "function" && isMember() ? SUGGEST_MEMBER : SUGGEST).map((s) => `<button>${esc(s)}</button>`).join("")}</div>
+    <form class="chat-in" data-role="form"><textarea rows="1" placeholder="${typeof isMember === "function" && isMember() ? "종목·시장·용어 무엇이든 물어보세요 (Enter 전송)" : "종목·시장·서버·DB 무엇이든 물어보세요 (Enter 전송)"}" maxlength="2000"></textarea><button type="submit" class="send">${ICONS.send}</button></form>
   </div>`;
 }
 
@@ -397,7 +399,7 @@ async function chatLoad(root) {
     const h = await api(`/api/chat?sid=${CHAT.sid}`);
     CHAT.info = h;
     root.querySelector('[data-role="model"]').innerHTML = h.model ? `${aiIcon(h.provider, null, h.model, 14)} ${esc(h.model)} · 플랫폼 데이터 연결됨` : "AI 키 없음 · 플랫폼 데이터 요약 모드";
-    body.innerHTML = h.messages.length ? h.messages.map(chatMsgHtml).join("") : `<div class="chat-hello"><div class="hello-ic">${ICONS.chat}</div><b>무엇이든 물어보세요</b><div class="small muted">이 사이트의 시세·AI 판단·성과·서버 상태를 직접 조회해서 답합니다.<br>DB 정리 같은 작업은 버튼을 눌러야 실행됩니다.</div></div>`;
+    body.innerHTML = h.messages.length ? h.messages.map(chatMsgHtml).join("") : `<div class="chat-hello"><div class="hello-ic">${ICONS.chat}</div><b>무엇이든 물어보세요</b><div class="small muted">${typeof isMember === "function" && isMember() ? "시세·뉴스·일정·내 목표와 용어를 직접 조회해서 답해요.<br>투자 판단은 본인 몫이에요 — 참고용으로 써 주세요." : "이 사이트의 시세·AI 판단·성과·서버 상태를 직접 조회해서 답합니다.<br>DB 정리 같은 작업은 버튼을 눌러야 실행됩니다."}</div></div>`;
   } catch (e) { body.innerHTML = empty(e.message); }
   body.scrollTop = body.scrollHeight;
   bindChatActs(root);

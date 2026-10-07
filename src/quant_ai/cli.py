@@ -701,6 +701,64 @@ def cmd_goal_plan(args):
         print(f"  {c['year']}년 뒤: 넣은 돈 {c['paid']:,.0f} · 보통 {c['p50']:,.0f} (하위 10% {c['p10']:,.0f} · 상위 10% {c['p90']:,.0f})")
 
 
+def cmd_users(args):
+    """v34 회원 관리 (여러 사용자 모드): 소유자 만들기 · 목록 · 초대 · 권한/요금제/정지 · 삭제 · 정리."""
+    import getpass
+    import os
+
+    from . import members
+    from .data.db import session_scope
+    from .data.models import User
+    app = _app(args)
+
+    def find(email):
+        with session_scope(app.engine) as s:
+            u = s.query(User).filter(User.email == members.normalize_email(email)).first()
+            if u is None:
+                sys.exit(f"회원 없음: {email}")
+            return u.id
+    try:
+        if args.action in ("owner", "create"):
+            if not args.email:
+                sys.exit("--email 필요")
+            pw = os.environ.get("QUANT_OWNER_PASSWORD") or getpass.getpass("비밀번호 (10자 이상 · 화면에 안 보임): ")
+            if not os.environ.get("QUANT_OWNER_PASSWORD") and getpass.getpass("한 번 더: ") != pw:
+                sys.exit("두 비밀번호가 달라요")
+            role = "owner" if args.action == "owner" else (args.role or "member")
+            u = members.create(app, args.email, pw, args.name, role=role, plan=args.plan or ("pro" if role != "member" else "free"),
+                               consent={"terms": members.TERMS_VERSION, "privacy": members.TERMS_VERSION, "risk": True, "age14": True,
+                                        "by": "cli"}, verified=True)
+            print(f"만들었어요: #{u['id']} {u['email']} ({u['role']})")
+            if role == "owner":
+                print("소유자 계정은 1인 모드 때의 데이터(목표·계좌·관심종목·장부)를 그대로 씁니다.")
+                print("다음: .env 에 QUANT_SERVICE_MODE=multi 를 넣고 ./run.sh serve → 이 이메일로 로그인 → 운영 → 회원 관리에서 초대")
+        elif args.action == "list":
+            r = members.list_users(app, args.email or "", 500)
+            print(f"회원 {r['total']}명")
+            for u in r["rows"]:
+                print(f"  #{u['id']:<5} {u['email']:<32} {u['role']:<7} {u['plan']:<5} {u['status']:<9} "
+                      f"{'2단계' if u['mfa'] else '     '} 최근 {(u['last_seen_at'] or '-')[:16]}")
+        elif args.action == "invite":
+            r = members.invite(app, None, args.email, args.plan or "free", args.days or 7, args.uses,
+                               os.environ.get("QUANT_PUBLIC_URL", "http://127.0.0.1:8050"))
+            print(f"초대 링크 ({r['expires_days']}일 · {r['max_uses']}명): {r['link']}" + (" · 메일 보냄" if r["emailed"] else ""))
+        elif args.action == "set":
+            body = {k: v for k, v in (("role", args.role), ("plan", args.plan), ("status", args.status), ("days", args.days if args.plan else None)) if v}
+            if args.unlock:
+                body["unlock"] = True
+            u = members.admin_update(app, {"id": None, "owner": True}, find(args.email), body)
+            print(f"#{u['id']} {u['email']} → {u['role']} · {u['plan']} · {u['status']}")
+        elif args.action == "delete":
+            uid = find(args.email)
+            if not args.yes and input(f"{args.email} 의 모든 데이터를 지웁니다. 'delete' 입력: ") != "delete":
+                sys.exit("취소")
+            print(members.admin_delete(app, {"id": None, "owner": True}, uid))
+        elif args.action == "cleanup":
+            print(members.cleanup(app))
+    except members.AuthError as e:
+        sys.exit(str(e))
+
+
 def cmd_smallcap(args):
     """v32 소액 현실 검증: 200만원 + 매달 100만원 · 1주 단위 · 실비용으로 후보 규칙 vs 지수 ETF 적립 (KRX 16년)."""
     from . import smallcap
@@ -1009,6 +1067,18 @@ def main(argv: list[str] | None = None) -> None:
     gp.add_argument("--day", type=int, default=None)
     gp.add_argument("--etf", default=None, choices=["069500", "360750"])
     gp.set_defaults(fn=cmd_goal_plan)
+    us_ = sub.add_parser("users", help="회원 관리 (여러 사용자 모드): owner · create · list · invite · set · delete · cleanup")
+    us_.add_argument("action", choices=["owner", "create", "list", "invite", "set", "delete", "cleanup"])
+    us_.add_argument("--email", default=None)
+    us_.add_argument("--name", default=None)
+    us_.add_argument("--role", default=None, choices=["admin", "member"])
+    us_.add_argument("--plan", default=None, choices=["free", "pro"])
+    us_.add_argument("--status", default=None, choices=["active", "disabled"])
+    us_.add_argument("--days", type=int, default=None, help="초대 유효 일수(기본 7) · 요금제 기간(일, 없으면 기간 없음)")
+    us_.add_argument("--uses", type=int, default=1, help="초대 링크 하나로 가입할 수 있는 사람 수")
+    us_.add_argument("--unlock", action="store_true")
+    us_.add_argument("--yes", action="store_true")
+    us_.set_defaults(fn=cmd_users)
     sc = sub.add_parser("smallcap", help="소액 현실 검증 (200만원 + 매달 100만원 · 1주 단위 · 실비용 — 후보 규칙 vs 지수 ETF 적립, KRX 16년)")
     sc.add_argument("--marcap-dir", default=None)
     sc.add_argument("--principal", type=float, default=2_000_000)

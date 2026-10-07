@@ -45,8 +45,10 @@ def add(session, symbol: str, action: str, conviction: int = 3, horizon: int = 5
         raise ValueError("action 은 BUY / SELL / HOLD")
     conviction = int(max(1, min(5, conviction)))
     horizon = int(max(1, min(60, horizon)))
+    from .. import tenancy
     r = UserJournal(created_at=now or datetime.now(UTC), symbol=symbol, action=action, conviction=conviction,
-                    horizon=horizon, ref_price=ref_price, reason=(reason or "")[:1000] or None, tags=tags)
+                    horizon=horizon, ref_price=ref_price, reason=(reason or "")[:1000] or None, tags=tags,
+                    owner=tenancy.owner_value())  # v34: 쓴 사람 (봉인 해시에는 넣지 않음 — 예전 기록 그대로 검증)
     r.row_hash = _hash(r)
     session.add(r)
     session.flush()
@@ -69,7 +71,8 @@ def score(session, bars: dict) -> int:
 
 
 def compare(session, days: int | None = None, limit: int = 2000) -> dict:
-    q = select(UserJournal).order_by(UserJournal.id.desc()).limit(limit)
+    from .. import tenancy
+    q = select(UserJournal).where(tenancy.owner_filter(UserJournal.owner)).order_by(UserJournal.id.desc()).limit(limit)
     if days:
         q = q.where(UserJournal.created_at >= datetime.now(UTC) - timedelta(days=days))
     mine = session.scalars(q).all()

@@ -406,7 +406,9 @@ def alerts_write(app, body: dict) -> dict:
     if not sym:
         raise ValueError("kind 또는 symbol 필요")
     if body.get("price_on"):
-        r = add_rule(app.engine, sym, "move", float(body.get("value") or 5), note="v25 알림 설정", repeat=True)
+        from . import service, tenancy
+        lim = service.limits().get("alert_rules", 200) if tenancy.is_member() else 200  # v34: 요금제 가격 알림 수
+        r = add_rule(app.engine, sym, "move", float(body.get("value") or 5), note="v25 알림 설정", repeat=True, max_rules=lim)
         return {"ok": True, "rule_id": r.get("id")}
     if body.get("rule_id"):
         update_rule(app.engine, int(body["rule_id"]), False, True)

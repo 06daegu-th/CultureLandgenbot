@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from . import ops
+from . import ops, tenancy
 from .asof import label
 
 MODE = "manual"
@@ -47,7 +47,7 @@ def _ctx(app, symbol: str, side: str, qty: int | None, amount: float | None, now
     if side not in ("buy", "sell"):
         raise ValueError("side 는 buy/sell")
     us = _is_us(symbol)
-    mode = US_MODE if us else MODE
+    mode = tenancy.book(US_MODE if us else MODE)  # v34: 회원마다 따로 (manual@1z)
     bars = _us_bars(app, symbol) if us else app.market_data()[0]
     b = bars.get(symbol)
     if b is None or b.empty:
@@ -181,12 +181,17 @@ def place(app, body: dict, now: datetime | None = None) -> dict:
     from .governance import audit
     audit(app.engine, "manual_order", f"{sym} {'매수' if approved.side is Side.BUY else '매도'} {approved.qty}주 @ {fill.price if fill else '-'}")
     return v | {"placed": bool(fill), "fill": {"qty": fill.qty, "price": round(fill.price, 2), "fee": round(fill.fee)} if fill else None,
-                "message": (f"모의 체결 {fill.qty}주 @ ${fill.price:,.2f}" if mode == US_MODE else f"모의 체결 {fill.qty}주 @ {fill.price:,.0f}") if fill else "미체결"}
+                "message": (f"모의 체결 {fill.qty}주 @ ${fill.price:,.2f}" if us_book(mode) else f"모의 체결 {fill.qty}주 @ {fill.price:,.0f}") if fill else "미체결"}
+
+
+def us_book(mode: str) -> bool:
+    return mode.startswith(US_MODE)
 
 
 def book(app, mode: str = MODE) -> dict:
-    """수동 모의 장부. mode=us-manual 이면 미국 장부 (달러 · 원화 환산 함께)."""
-    us = mode == US_MODE
+    """수동 모의 장부. mode=us-manual 이면 미국 장부 (달러 · 원화 환산 함께). v34: 회원이면 그 사람 장부."""
+    mode = tenancy.book(US_MODE if us_book(mode) else MODE)
+    us = us_book(mode)
     pf = app.load_portfolio(mode)
     if us:
         from .global_market import CASH_USD

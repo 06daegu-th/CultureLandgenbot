@@ -59,8 +59,10 @@ async function api(path, opts = {}) {
   if (S.token) headers["X-Token"] = S.token;
   const r = await fetch(path, { ...opts, headers, credentials: "same-origin" });
   if (r.status === 401 && !path.startsWith("/api/login")) {
+    if (typeof isMulti === "function" && isMulti()) { await memberAuth("login"); return api(path, opts); }  // v34: 회원 로그인
     if (await loginDialog()) return api(path, opts);  // v17: 비밀번호 + 2단계 인증 (또는 토큰)
   }
+  if (r.status === 428 && typeof termsDialog === "function") { await termsDialog(); return api(path, opts); }  // v34: 바뀐 약관 재동의
   if (!r.ok) {
     let msg = `${path} ${r.status}`;
     try { const j = await r.json(); if (j.error) msg = j.error; } catch { /* 본문 없음 */ }
@@ -1150,6 +1152,13 @@ const NAV = [
   ["신뢰 · 시스템", [["datahealth", "data", "데이터 상태 · 키 진단"], ["datacheck", "data", "데이터 점검 (수정주가 · 외부 대조)"], ["logoq", "data", "로고 관리 (없는 종목)"], ["readiness", "check", "매매해도 되나 (7가지 점검)"], ["truth", "shield", "데이터 사실 확인"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "실시간 감시실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 위험 기록"], ["ops", "ops", "운영 · 작업 기록"], ["settings", "settings", "설정"]]],
 ];
 function buildNav() {
+  if (typeof isMember === "function" && isMember()) {  // v34: 회원 메뉴 (운영 기능 없음 · 화면 모드 고정)
+    $("#nav").innerHTML = `<div class="grp">메뉴</div>${memberNav().map(([v, ic, label]) => `<a href="#${v}" data-view="${v}">${ICONS[ic] || ""}<span>${label}</span></a>`).join("")}
+      <div class="grp">계정</div><a href="#account" data-view="account">${ICONS.settings || ""}<span>내 계정</span></a>`;
+    document.body.classList.add("ui-easy");
+    if (typeof buildTabbar === "function") buildTabbar();
+    return;
+  }
   // v19: 쉬운 화면 = 자주 쓰는 6개만, 나머지는 '고급 메뉴'로 접는다 (전체 화면이면 모두 펼침)
   const easy = uiMode() === "easy";
   const open = !easy || safeGet("qa_nav_open") === "1";
@@ -1157,6 +1166,7 @@ function buildNav() {
   const link = ([v, ic, label]) => `<a href="#${v}" data-view="${v}">${ICONS[ic] || ""}<span>${label}</span></a>`;
   const nAdv = NAV.reduce((a, [, it]) => a + it.filter((x) => !easyIds.has(x[0])).length, 0);
   let h = `<div class="grp">자주 쓰는 것</div>${NAV_EASY.map(link).join("")}`;
+  if (typeof isAdminUser === "function" && isAdminUser()) h += `<div class="grp">서비스 운영</div>${link(["admin", "shield", "운영 콘솔 (회원 · 정책)"])}${link(["account", "settings", "내 계정"])}`;
   if (easy) h += `<button class="nav-more" id="nav-more">${open ? "기능 접기 ▴" : `더 많은 기능 ${nAdv}개 ▾`}</button>`;
   if (open) h += `<input class="nav-filter" id="nav-filter" placeholder="기능 찾기 (예: 세금, 주문, 성적)" autocomplete="off">`;
   if (open) h += NAV.map(([g, items]) => { const xs = items.filter((x) => !easyIds.has(x[0])); return xs.length ? `<div class="grp">${g}</div>${xs.map(link).join("")}` : ""; }).join("");
@@ -1195,6 +1205,7 @@ async function render() {
   document.body.classList.toggle("tl", legacy);  // v26: 기존 화면도 토스식 공통 스킨
   if (legacy && typeof tlHead === "function") { const h = tlHead(); if (h) $("#view").prepend(h); }
   try {
+    if (typeof memberCanView === "function" && !memberCanView(S.view)) { memberDenied(el, S.view); document.body.classList.add("ts-on"); return; }  // v34: 회원이 운영 화면 주소로 오면 안내
     if (typeof tossRender === "function" && await tossRender(el)) { document.body.classList.add("ts-on"); }  // v25 토스식 화면 (toss.js)
     else if (S.view === "dashboard") {
       if (uiMode() === "easy" && !S.homeDetail) await homeEasy(el);  // v19: 쉬운 화면은 홈 맨 위 5칸만
@@ -1371,9 +1382,15 @@ function tickClock() {
 }
 
 async function refresh() {
+  if (typeof isMember === "function" && isMember()) {  // v34: 회원은 운영 대시보드(/api/dashboard)를 부르지 않는다
+    S.data = S.data || { member: true, markets: {}, portfolios: {}, system: {} };
+    memberChrome();
+    return;
+  }
   try {
     S.data = await api("/api/dashboard");
     renderChrome(S.data);
+    if (typeof memberChrome === "function") memberChrome();
   } catch (e) {
     $("#sys-status").innerHTML = `<span class="dot bad"></span>연결 실패`;
     if (isNetErr(e)) showOffline(e);  // v19: 작은 표시 대신 안내 화면
@@ -1431,20 +1448,23 @@ $("#settings-btn").innerHTML = ICONS.settings;
 $("#bell-btn").innerHTML = ICONS.bell;
 // v24: 처음엔 기기 설정(라이트/다크)을 따른다 — 직접 바꾸면 그 선택을 기억
 setTheme(safeGet("qa_theme") || (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
-loadPrefs().then((p) => {
+const _prefsBoot = () => loadPrefs().then((p) => {
   if (p.theme && p.theme !== document.documentElement.dataset.theme) setTheme(p.theme);
   if (p.ui?.mode && p.ui.mode !== uiMode()) { S.uiMode = p.ui.mode; safeSet("qa_ui", p.ui.mode); buildNav(); markNav(); if (S.view === "dashboard") render(); }  // v19: 기기 간 동기화
 }).catch(() => {});
-buildNav();
-initChatWidget();
-initLive();
-initPWA();
-initV14();
-if (typeof initAsOfChip === "function") initAsOfChip();
-tickClock(); setInterval(tickClock, 1000);
-
-window.addEventListener("hashchange", route);
-refresh().then(route).catch(() => route());
+(async () => {
+  if (typeof authBoot === "function") await authBoot();  // v34: 여러 사용자 모드면 로그인부터 (1인 모드는 그대로)
+  _prefsBoot();
+  buildNav();
+  initChatWidget();
+  initLive();
+  initPWA();
+  initV14();
+  if (typeof initAsOfChip === "function") initAsOfChip();
+  tickClock(); setInterval(tickClock, 1000);
+  window.addEventListener("hashchange", route);
+  refresh().then(route).catch(() => route());
+})();
 setInterval(async () => {
   if (document.querySelector(".offline")) return;  // 연결 실패 화면이 대신 다시 시도한다
   try { await refresh(); } catch { return; }

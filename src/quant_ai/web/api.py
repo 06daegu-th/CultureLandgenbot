@@ -86,12 +86,55 @@ def _ts(x) -> str | None:
     return t.isoformat()
 
 
+def _member() -> bool:
+    from .. import tenancy
+    return tenancy.is_member()
+
+
+# v34: 모두가 같은 결과를 보는 캐시 (시장·AI 공용 계산) — 여기 없는 키는 사람마다 따로 저장한다 (안전한 쪽이 기본)
+SHARED_CACHE = ("ai_alpha", "ai_context", "ai_health", "ai_lab", "ai_plain:", "ai_trust", "aicard:", "aipublic:", "an:", "company:",
+                "exec_costs", "freshness", "fx", "guardian", "ladder", "logo_queue", "market_map", "net_alpha:", "pead", "power",
+                "replay:", "rotation", "scorecard:", "sentinel", "sp:news:", "sp:overlay:", "sp:earnings:", "t_collect", "t_market",
+                "t_q:", "t_rep:", "t_stock:", "validation", "verdict:", "verify", "truth", "control", "checklist", "conflicts",
+                "server", "setup", "ops_status", "signals2_base:")
+
+
+class _Cache(dict):
+    """화면 캐시. 회원 요청이면 키 앞에 사람 번호를 붙여 따로 저장 (다른 사람 화면이 섞이는 사고 방지) — 공용 계산만 같이 쓴다."""
+
+    MAX = 4000
+
+    @staticmethod
+    def _k(key: str) -> str:
+        from .. import tenancy
+        return key if key.startswith(SHARED_CACHE) else tenancy.cache_key(key)
+
+    def get(self, key, default=None):
+        return dict.get(self, self._k(key), default)
+
+    def __setitem__(self, key, value):
+        if len(self) >= self.MAX:  # 회원이 많아도 메모리가 끝없이 늘지 않게 (오래된 것부터 절반)
+            for k in sorted(self, key=lambda k: dict.__getitem__(self, k)[0])[: self.MAX // 2]:
+                dict.pop(self, k, None)
+        dict.__setitem__(self, self._k(key), value)
+
+    def pop(self, key, *default):
+        return dict.pop(self, self._k(key), *default)
+
+    def drop(self, *prefixes: str, exact: tuple[str, ...] = ()) -> None:
+        """이 접두어로 시작하는 캐시를 모든 사람 칸에서 지운다 (저장 뒤 다시 계산하게)."""
+        def base(k: str) -> str:
+            return k.split(":", 1)[1] if k.startswith("@") else k
+        for k in [k for k in self if (prefixes and base(k).startswith(prefixes)) or base(k) in exact]:
+            dict.pop(self, k, None)
+
+
 class DashboardAPI:
     def __init__(self, app):
         self.app = app
         self.engine = app.engine
         self._cache: tuple[float, dict] | None = None
-        self._risk_cache: dict[str, tuple[float, dict]] = {}
+        self._risk_cache: _Cache = _Cache()
 
     # ------------------------------------------------------------------ 공통
     def _instruments(self, s):
@@ -783,8 +826,10 @@ class DashboardAPI:
         sym = str(body.get("symbol", ""))[:12]
         if not re.fullmatch(r"\d{6}|[A-Z][A-Z.\-]{0,9}", sym):
             raise ValueError("종목 코드가 올바르지 않습니다")
+        from .. import service
         return add_rule(self.engine, sym, str(body.get("kind", "")), float(body.get("value") or 0),
-                        str(body.get("note") or "")[:200] or None, bool(body.get("repeat")))
+                        str(body.get("note") or "")[:200] or None, bool(body.get("repeat")),
+                        max_rules=service.limits().get("alert_rules", 200) if service.multi() and _member() else 200)
 
     def push_info(self) -> dict:
         from ..webpush import SUBS_KEY, available, vapid_keys
@@ -926,7 +971,7 @@ class DashboardAPI:
 
     def news_extract(self) -> dict:
         from ..news_llm import extract_pending
-        self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith("nb:")}
+        self._risk_cache.drop("nb:")
         return extract_pending(self.app)
 
     def pead(self) -> dict:
@@ -1027,8 +1072,8 @@ class DashboardAPI:
 
     # ------------------------------------------------------------------ v25 토스식 화면
     def t_home(self, mode: str = "paper") -> dict:
-        from .. import toss
-        mode = mode if mode in ("paper", "shadow", "live") else "paper"
+        from .. import tenancy, toss
+        mode = tenancy.personal_book(mode if mode in ("paper", "shadow", "live") else "paper")
         return self._cached(f"t_home:{mode}", 30, lambda: toss.home(self.app, mode))
 
     def t_stock(self, symbol: str) -> dict:
@@ -1046,8 +1091,8 @@ class DashboardAPI:
         return self._cached(f"t_feed:{tab}:{region}:{topic}", 60, lambda: toss.feed(self.app, tab, region, topic))
 
     def t_portfolio(self, mode: str = "paper") -> dict:
-        from .. import toss
-        mode = mode if mode in ("paper", "shadow", "live", "us-paper") else "paper"
+        from .. import tenancy, toss
+        mode = tenancy.personal_book(mode if mode in ("paper", "shadow", "live", "us-paper") else "paper")
         return self._cached(f"t_pf:{mode}", 20, lambda: toss.portfolio(self.app, mode))
 
     def t_community(self, symbol: str) -> dict:
@@ -1307,17 +1352,17 @@ class DashboardAPI:
             rb = body["record_buy"]
             r = goal.record_buy(self.app, float(str(rb.get("qty")).replace(",", "")), float(str(rb.get("price")).replace(",", "")),
                                 float(str(rb["deposit"]).replace(",", "")) if rb.get("deposit") not in (None, "") else None, rb.get("etf"))
-            self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5"))}
+            self._risk_cache.drop("goal", "home5")
             self._audit("goal_buy", f"적립 기록 {r['lot']['etf']} {r['lot']['qty']:g}주 × {r['lot']['price']:,.0f}원")
             return r
         if body.get("apply"):  # v31: 추천 계획 한 번에 적용
             r = goal.apply_recommended(self.app, str(body["apply"]), str(body.get("mode") or "paper"),
                                        monthly=float(str(body["monthly"]).replace(",", "")) if body.get("monthly") else None)
-            self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5", "autopilot"))}
+            self._risk_cache.drop("goal", "home5", "autopilot")
             self._audit("goal", f"추천 계획 {body['apply']} 적용 · {r['mode']} · 월 {r['saved']['monthly']:,.0f}")
             return {"ok": True, **r}
         g = goal.save(self.app, body)
-        self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5"))}
+        self._risk_cache.drop("goal", "home5")
         self._audit("goal", f"목표 {g['goal']:,.0f} · 월 {g['monthly']:,.0f}" + (f" · 적립 {'켬' if g.get('dca', {}).get('on') else '끔'}" if g.get("dca") else ""))
         return {"ok": True, "saved": g}
 
@@ -1656,8 +1701,7 @@ class DashboardAPI:
 
     def stock(self, symbol: str, mode: str = "paper") -> dict:
         from .. import stock
-        if mode not in ("paper", "shadow", "live"):
-            raise ValueError("장부는 paper/shadow/live")
+        mode = self._mode(mode)
         return self._cached(f"stock:{symbol}:{mode}", 30, lambda: stock.page(self.app, symbol, mode))
 
     def pretrade(self, symbol: str, weight: str = "", mode: str = "paper") -> dict:
@@ -1668,9 +1712,7 @@ class DashboardAPI:
             raise ValueError("비중은 숫자(%)로") from None
         if w is not None and not 0 < w <= 1:
             raise ValueError("비중은 0~100% 사이")
-        if mode not in ("paper", "shadow", "live"):
-            raise ValueError("장부는 paper/shadow/live")
-        return stock.pretrade(self.app, symbol, w, mode)
+        return stock.pretrade(self.app, symbol, w, self._mode(mode))
 
     def ai_health(self) -> dict:
         from ..health import ai_health
@@ -1701,16 +1743,17 @@ class DashboardAPI:
         return ux.compare(self.app, symbols.split(","))
 
     def star(self, body: dict) -> dict:
-        from .. import ux
+        from .. import service, ux
         sym = str(body.get("symbol", ""))[:12]
+        if body.get("on", True) and sym and sym not in ux.starred(self.app):
+            service.check_count("watch", len(ux.starred(self.app)))  # v34: 요금제 관심종목 수
         syms = ux.set_star(self.app, sym, bool(body.get("on", True)))
         if body.get("on", True) and sym:  # v19: 관심종목에 담는 순간 로고를 미리 받아 둔다 (화면이 느려지지 않게)
             import threading
 
             from ..logos import prefetch
             threading.Thread(target=lambda: prefetch(self.app, [sym]), daemon=True, name="logo-prefetch").start()
-        self._risk_cache = {k: v for k, v in self._risk_cache.items()
-                            if k not in ("watchlist", "today", "start_guide") and not k.startswith("home5:")}
+        self._risk_cache.drop("home5:", exact=("watchlist", "today", "start_guide"))
         return {"ok": True, "starred": syms}
 
     def starred(self) -> dict:
@@ -1722,8 +1765,10 @@ class DashboardAPI:
         return self._cached("accounts", 15, lambda: accounts.summary(self.app))
 
     def accounts_write(self, body: dict) -> dict:
-        from .. import accounts
+        from .. import accounts, service
         self._risk_cache.pop("accounts", None)
+        if not body.get("delete") and not any(a["id"] == body.get("id") for a in accounts.load(self.engine)):
+            service.check_count("accounts", len(accounts.load(self.engine)))  # v34: 요금제 계좌 수
         self._audit("accounts", f"삭제 {body['delete']}" if body.get("delete") else f"저장 {body.get('name') or body.get('id') or ''}")
         if body.get("delete"):
             return {"deleted": accounts.delete(self.engine, str(body["delete"])[:20])}
@@ -1739,13 +1784,18 @@ class DashboardAPI:
 
     # ------------------------------------------------------------------ v16
     def _mode(self, mode: str | None) -> str:
+        from .. import tenancy
         mode = mode or "paper"
         if mode not in ("paper", "shadow", "live"):
             raise ValueError("장부는 paper/shadow/live")
-        return mode
+        return tenancy.personal_book(mode)  # v34: 회원이면 그 사람 모의 장부
 
     def _audit(self, action: str, detail: str = "") -> None:
+        from .. import tenancy
         from ..governance import audit
+        uid = tenancy.uid()
+        if uid is not None:  # v34: 누가 했는지 (회원 번호만 — 이메일 같은 개인정보는 남기지 않는다)
+            detail = f"[#{uid}] {detail}"
         try:
             audit(self.engine, action, detail)
         except Exception as e:  # noqa: BLE001 - 감사 기록 실패가 조작을 막지는 않는다 (로그)
@@ -1938,7 +1988,7 @@ class DashboardAPI:
 
     def ticket_book(self, mode: str = "") -> dict:
         from .. import ticket
-        return ticket.book(self.app, ticket.US_MODE if mode == ticket.US_MODE else ticket.MODE)
+        return ticket.book(self.app, ticket.US_MODE if mode.startswith(ticket.US_MODE) else ticket.MODE)
 
     def reviews(self, limit: int = 10) -> list[dict]:
         with session_scope(self.engine) as s:

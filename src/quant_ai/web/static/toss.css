@@ -814,3 +814,51 @@ body.ui-easy #clock, body.ui-easy .side .ver { display: none; }
 .t2-buy { margin-top: 12px; padding: 14px; border-radius: 14px; background: var(--t-soft, rgba(255,255,255,.04)); }
 .t2-buy .t-form { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 10px; }
 .t-card .t2-buy .t-in { background: var(--t-card); border: 1px solid var(--line); }  /* 같은 바탕색 안에서 입력칸이 안 보이던 것 */
+
+/* ===== v34 회원: 가입 · 로그인 · 내 계정 · 운영 콘솔 ===== */
+.ma-open { overflow: hidden; }
+.ma-ov { position: fixed; inset: 0; z-index: 9000; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto;
+  padding: max(24px, 6vh) 16px 32px; background: var(--bg, #0b1220); }
+.ma-card { width: 100%; max-width: 420px; background: var(--t-card); border: 1px solid var(--line); border-radius: 20px; padding: 26px 22px 20px;
+  display: flex; flex-direction: column; gap: 12px; box-shadow: 0 10px 40px rgba(0, 0, 0, .18); }
+.ma-card h2 { margin: 4px 0 0; font-size: 22px; }
+.ma-brand { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ma-brand svg { width: 30px; height: 30px; }
+.ma-brand b { font-size: 18px; }
+.ma-brand span { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+.ma-f { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.ma-f input { font: inherit; font-size: 16px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--t-soft, transparent); color: var(--text); }
+.ma-f input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); border-color: transparent; }
+.ma-f input[readonly] { opacity: .75; }
+.ma-hint { font-size: 12px; color: var(--muted); font-style: normal; margin-top: -6px; }
+.ma-go { width: 100%; padding: 14px; font-size: 16px; margin-top: 4px; }
+.ma-links { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+.ma-links a { color: var(--accent); }
+.ma-err { min-height: 18px; font-size: 13px; color: var(--down-strong, #e5484d); }
+.ma-msg { font-size: 13px; padding: 10px 12px; border-radius: 12px; background: var(--t-soft); line-height: 1.5; }
+.ma-msg.good { color: var(--good, #1f9d55); } .ma-msg.bad { color: #e5484d; } .ma-msg.warn { color: var(--warn, #d97706); }
+.ma-msg code { font-size: 12px; }
+.ma-sub { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.55; }
+.ma-consent { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; font-size: 13px; line-height: 1.5; }
+.ma-consent label, .ma-chk { display: flex; gap: 8px; align-items: flex-start; }
+.ma-consent input, .ma-chk input { margin-top: 3px; flex: none; width: 17px; height: 17px; }
+.ma-consent .ma-all { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.ma-consent a { color: var(--accent); text-decoration: underline; }
+.ma-foot { font-size: 11px; color: var(--muted); text-align: center; margin-top: 4px; }
+body.is-member #kill-btn, body.is-member #mode-card, body.is-member #balance-card, body.is-member .ui-mode, body.is-member #nav-more { display: none !important; }
+.ac-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.ac-plan { border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.ac-plan.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.ac-plan ul { margin: 4px 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
+.ac-plan em { font-style: normal; font-size: 12px; color: var(--accent); }
+.ac-key { display: inline-block; margin: 6px 0; font-size: 15px; letter-spacing: .04em; word-break: break-all; }
+.t-btn.danger { background: color-mix(in srgb, #e5484d 16%, transparent); color: #e5484d !important; }
+.adm-bars { display: flex; align-items: flex-end; gap: 4px; height: 70px; margin-top: 6px; }
+.adm-bars span { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 3px; }
+.adm-bars i { display: block; width: 100%; min-height: 2px; border-radius: 4px 4px 0 0; background: var(--accent); }
+.adm-bars em { font-style: normal; font-size: 10px; color: var(--muted); }
+.adm-users td { vertical-align: middle; }
+.adm-users select.t-in { padding: 6px 8px; font-size: 13px; }
+.adm-users .t-btn.sm { margin: 2px; }
+.adm-mail { display: block; white-space: pre-wrap; word-break: break-all; font-size: 12px; margin-top: 4px; max-width: 100%; }
+@media (max-width: 760px) { .ma-card { padding: 22px 16px 16px; border-radius: 16px; } }

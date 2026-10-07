@@ -1242,7 +1242,7 @@ TV.myjournal = async (el) => {
   if (!L) return;
   const j = L.d, pr = j.pairs || {}, dg = j.disagree || {};
   tPaint(L.root, "내 투자일지", `
-    ${tHero({ k: `기록 ${tN(j.n)}개 · 채점 ${tN(j.scored)}개`, lv: "idle", big: j.me?.hit_rate != null ? `내 판단 ${tPr(j.me.hit_rate)} 맞음` : "채점 전이에요", sub: pr.n ? `AI 와 같은 종목·같은 날 ${pr.n}번 — 의견 일치 ${tPr(pr.agree_rate)} · 나 ${tPr(pr.me_hit)} vs AI ${tPr(pr.ai_hit)}` : "적는 순간 봉인돼서 나중에 고칠 수 없어요 — 솔직한 기록이 쌓여요" })}
+    ${tHero({ k: `기록 ${tN(j.n)}개 · 채점 ${tN(j.scored)}개`, lv: "idle", big: j.me?.hit_rate != null ? `내 판단 ${tPr(j.me.hit_rate)} 맞음` : "채점 전이에요", sub: pr.n && (typeof adviceOn !== "function" || adviceOn()) ? `AI 와 같은 종목·같은 날 ${pr.n}번 — 의견 일치 ${tPr(pr.agree_rate)} · 나 ${tPr(pr.me_hit)} vs AI ${tPr(pr.ai_hit)}` : "적는 순간 봉인돼서 나중에 고칠 수 없어요 — 솔직한 기록이 쌓여요" })}
     ${tCard("새로 적기", `<form class="t-form" id="mj-f">
       ${tField("종목 코드", `<input class="t-in" name="symbol" required maxlength="12" placeholder="예: 005930, NVDA">`)}
       ${tField("내 판단", `<select class="t-in" name="action"><option value="BUY">오른다 (산다)</option><option value="SELL">내린다 (판다)</option><option value="HOLD">지켜본다</option></select>`)}
@@ -1250,10 +1250,10 @@ TV.myjournal = async (el) => {
       ${tField("기간", `<select class="t-in" name="horizon">${[1, 5, 20].map((k) => `<option value="${k}" ${k === 5 ? "selected" : ""}>${k}거래일</option>`).join("")}</select>`)}
       ${tField("이유", `<input class="t-in" name="reason" maxlength="500" placeholder="왜 그렇게 생각하나요?">`)}
       <div class="t2-field" style="justify-content:flex-end"><button class="t-btn primary">기록 (봉인)</button></div></form>`)}
-    ${dg.n ? tCard(`AI 와 의견이 달랐던 ${dg.n}번`, `${tVs([["내가 맞음", dg.me_right / dg.n, "acc", `${dg.me_right}번`], ["AI 가 맞음", dg.ai_right / dg.n, "dim", `${dg.ai_right}번`]], { max: 1 })}`) : ""}
+    ${dg.n && (typeof adviceOn !== "function" || adviceOn()) ? tCard(`AI 와 의견이 달랐던 ${dg.n}번`, `${tVs([["내가 맞음", dg.me_right / dg.n, "acc", `${dg.me_right}번`], ["AI 가 맞음", dg.ai_right / dg.n, "dim", `${dg.ai_right}번`]], { max: 1 })}`) : ""}
     ${(j.biases || []).length ? tCard("내 습관", tList(j.biases.map((b) => tStRow(b.title || b, b.detail || "", "warn", { label: "" })))) : ""}
     ${tCard("내 기록", tList((j.rows || []).map((r) => `<div class="t2-item">${tSym(r.symbol, r.name, `${esc(tDate(r.at))} · ${r.horizon}거래일 · 확신 ${r.conviction}${r.sealed ? " · 봉인" : ""}`, `${tPill(r.action, null, { short: true })}${r.ret != null ? `<span class="num t-sub ${tCls(r.ret)}">${tPct(r.ret, 1)}</span>` : ""}${tOk(r.correct)}`)}${r.reason ? `<div class="t2-why">${esc(r.reason)}</div>` : ""}</div>`), "아직 기록이 없어요"))}
-    ${tFull("myjournal", '<a class="t-btn ghost" href="#journal">AI 판단 일지</a><a class="t-btn ghost" href="#profile">내 투자 성향</a>')}`);
+    ${typeof isMember === "function" && isMember() ? '<div class="t-pro"><a class="t-btn ghost" href="#profile">내 투자 성향</a></div>' : tFull("myjournal", '<a class="t-btn ghost" href="#journal">AI 판단 일지</a><a class="t-btn ghost" href="#profile">내 투자 성향</a>')}`);
   const f = L.root.querySelector("#mj-f");
   f.onsubmit = async (e) => {
     e.preventDefault();
@@ -1416,6 +1416,7 @@ async function tGoalHome(box) {
 }
 async function tPicksHome(box) {
   let d;
+  if (typeof adviceOn === "function" && !adviceOn()) { box.remove(); return; }  // v34: 회원 · 투자 정보 범위 none
   try { d = await api("/api/signals2?market=KR"); } catch { box.remove(); return; }
   if (!box.isConnected || d.error) { box.innerHTML = ""; return; }
   const t = d.calibration?.tier || {};
@@ -1429,6 +1430,7 @@ async function tStockSignal(root, sym) {
   const box = root.querySelector("#tsk-sum-sig");
   if (!box) return;
   let d;
+  if (typeof adviceOn === "function" && !adviceOn()) { box.innerHTML = ""; return; }
   try { d = await api(`/api/signals2/stock?symbol=${encodeURIComponent(sym)}`); } catch { box.innerHTML = ""; return; }
   if (!box.isConnected) return;
   if (!d.row) { box.innerHTML = tSec("신호 점수", tEmpty("신호 점수가 없어요", d.why || ""), "", "t-card"); return; }

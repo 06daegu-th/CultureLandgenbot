@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .. import members, service, tenancy
 from ..auth import Auth
 from .api import DashboardAPI
 
@@ -31,6 +32,8 @@ CSP = ("default-src 'self'; script-src 'self'; "
 def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], auth: Auth | None = None):
     auth = auth or Auth()
     auth.admin_token = token  # 인자로 받은 관리자 토큰이 우선 (없으면 토큰 인증 없음)
+    MULTI = service.multi()  # v34: 여러 사용자 모드 (QUANT_SERVICE_MODE=multi)
+    PUBLIC_POST = ("/api/signup", "/api/login", "/api/password/forgot", "/api/password/reset", "/api/verify-email")
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "QuantAI"
@@ -47,11 +50,56 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             return None
 
         def _role(self, qs) -> str | None:
-            """admin / viewer / None. 인증을 하나도 설정하지 않았으면 (이 PC 전용) admin."""
+            """admin / viewer / member / None. 인증을 하나도 설정하지 않았으면 (이 PC 전용) admin.
+            v34 여러 사용자 모드: 로그인한 회원(DB 세션) — 소유자·운영자는 admin, 회원은 member."""
+            got = self.headers.get("X-Token") or (qs.get("token") or [""])[0]
+            if MULTI:
+                tok_role = auth.role_for_token(got)
+                if tok_role:
+                    return tok_role
+                u = self._member()
+                if u is None:
+                    return None
+                return "member" if u["role"] == "member" else "admin"
             if not auth.enabled:
                 return "admin"
-            got = self.headers.get("X-Token") or (qs.get("token") or [""])[0]
             return auth.role_for_token(got) or auth.session_role(self._sid())
+
+        def _member(self) -> dict | None:
+            """여러 사용자 모드: 이 요청의 로그인 회원 (요청마다 한 번만 찾는다)."""
+            if not MULTI:
+                return None
+            if getattr(self, "_mu", 0) == 0:
+                try:
+                    self._mu = members.session_user(api.app, self._sid())
+                except Exception:  # noqa: BLE001 - DB 문제면 로그인 안 된 것으로 (fail-closed)
+                    log.exception("세션 확인 실패")
+                    self._mu = None
+            return self._mu
+
+        def _ctx_user(self, qs) -> dict | None:
+            """요청 문맥에 올릴 사람 — 회원이면 그 사람 (데이터 칸·장부·캐시가 따라간다). 토큰 관리자는 소유자 칸."""
+            if not MULTI:
+                return None
+            u = self._member()
+            if u is not None:
+                return u
+            got = self.headers.get("X-Token") or (qs.get("token") or [""])[0]
+            if auth.role_for_token(got):
+                return {"id": None, "role": "admin", "owner": True, "plan": "pro", "email": "token"}
+            return None
+
+        def _base_url(self) -> str:
+            pub = os.environ.get("QUANT_PUBLIC_URL")
+            if pub:
+                return pub.rstrip("/")
+            host = (self.headers.get("Host") or "localhost").strip()
+            secure = auth.is_secure(self.client_address[0] if self.client_address else "", self.headers.get("X-Forwarded-Proto"))
+            return f"{'https' if secure else 'http'}://{host}"
+
+        def _session_cookie(self, sid: str, max_age: int) -> str:
+            secure = "; Secure" if auth.is_secure(self.client_address[0] if self.client_address else "", self.headers.get("X-Forwarded-Proto")) else ""
+            return f"qa_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{secure}"
 
         def _authorized(self, qs) -> bool:
             return self._role(qs) is not None
@@ -99,9 +147,45 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             self.wfile.write(body)
 
         def _json(self, obj, code: int = 200) -> None:
+            flt = getattr(self, "_flt", None)
+            if flt and code == 200:  # v34: 회원에게 보내는 응답은 운영 정보·(범위 밖) AI 판단 칸을 뺀다
+                obj = service.filter_for_member(flt[0], obj, flt[1])
             self._send(code, json.dumps(obj, ensure_ascii=False, default=str).encode(), "application/json; charset=utf-8")
 
+        def _gate_member(self, method: str, path: str) -> bool:
+            """회원 요청 검사 (허용 목록 · 투자 정보 범위 · 약관 재동의 · 속도 제한). 막았으면 응답을 보내고 False."""
+            u = self._member()
+            if u is None or u["role"] != "member":
+                return True
+            if not service.allow(f"u{u['id']}"):
+                self._json({"error": "요청이 너무 많아요 — 잠시 뒤에 다시 해 주세요", "code": "rate"}, 429)
+                return False
+            pol = service.policy(api.app)
+            if not u.get("terms_ok") and not path.startswith(("/api/me", "/api/auth", "/api/logout")):
+                self._json({"error": "바뀐 약관에 다시 동의해 주세요", "code": "terms"}, 428)
+                return False
+            ok, why = service.member_can(method, path, pol.get("advice", "none"))
+            if not ok:
+                msg = ("이 서비스에서는 AI 매수·매도 판단을 제공하지 않아요" if why == "advice_off"
+                       else "운영자만 쓸 수 있는 기능이에요")
+                self._json({"error": msg, "code": why}, 403)
+                return False
+            self._flt = (path, pol.get("advice", "none"))
+            return True
+
         def do_GET(self):  # noqa: N802
+            self._mu, self._flt = 0, None
+            qs0 = parse_qs(urlparse(self.path).query)
+            with tenancy.as_user(self._ctx_user(qs0) if self._host_ok() else None):  # v34: 이 요청의 사람 → 데이터 칸
+                return self._do_get()
+
+        def do_POST(self):  # noqa: N802
+            self._mu, self._flt = 0, None
+            qs0 = parse_qs(urlparse(self.path).query)
+            with tenancy.as_user(self._ctx_user(qs0) if self._host_ok() else None):
+                return self._do_post()
+
+        def _do_get(self):
             import time as _time
             self._t0 = _time.monotonic()  # v30: 응답 시간 지표 (/metrics)
             url = urlparse(self.path)
@@ -115,7 +199,15 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 from ..metrics import render as _metrics
                 return self._send(200, _metrics(api.app).encode(), "text/plain; version=0.0.4; charset=utf-8")
             if url.path == "/api/auth":  # 로그인 화면이 무엇을 물어볼지 (비밀 정보 없음)
+                if MULTI:  # v34: 회원 가입·로그인 화면용
+                    pol = service.public_policy(api.app)
+                    return self._json({"login_required": True, "multi": True, "role": self._role(qs), "user": self._member(),
+                                       "signup": pol["signup"], "brand": pol["brand"], "notice": pol["notice"], "advice": pol["advice"],
+                                       "support": pol["support"], "terms_version": members.TERMS_VERSION,
+                                       "needs_owner": members.count(api.app) == 0})
                 return self._json(auth.info() | {"role": self._role(qs)})
+            if MULTI and url.path == "/api/invite":  # 초대 링크 확인 (가입 화면이 이메일을 미리 채운다)
+                return self._json(members.invite_info(api.app, (qs.get("token") or [""])[0][:100]))
             if url.path == "/api/health":  # 인증 없이 최소 정보 (로드밸런서/모니터링용)
                 h = api.health()
                 if (self.client_address[0] if self.client_address else "") in ("127.0.0.1", "::1"):
@@ -143,7 +235,11 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             if url.path.startswith("/api/"):
                 if not self._authorized(qs):
                     return self._json({"error": "unauthorized"}, 401)
+                if MULTI and not self._gate_member("GET", url.path):
+                    return None
                 try:
+                    if MULTI and url.path.startswith(("/api/me", "/api/admin", "/api/service")):
+                        return self._account_get(url.path, qs)
                     if url.path == "/api/dashboard":
                         return self._json(api.dashboard())
                     if url.path == "/api/chart":
@@ -422,7 +518,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 ctype += "; charset=utf-8"
             self._send(200, path.read_bytes(), ctype)
 
-        def do_POST(self):  # noqa: N802
+        def _do_post(self):
             url = urlparse(self.path)
             if not self._host_ok():
                 return self._send(421, b"misdirected request", "text/plain")
@@ -437,6 +533,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 body = json.loads(self.rfile.read(length) or b"{}")
             except json.JSONDecodeError:
                 return self._json({"error": "잘못된 JSON"}, 400)
+            if MULTI and url.path in PUBLIC_POST:  # v34: 가입 · 로그인 · 비밀번호 찾기 · 이메일 확인 (로그인 전)
+                return self._account_public(url.path, body)
             if url.path == "/api/login":
                 sid, msg = auth.login(self._ip(), str(body.get("password", ""))[:200], str(body.get("otp", ""))[:12])
                 api._audit("login" if sid else "login_fail", f"{self._ip()} · {msg}")
@@ -446,13 +544,31 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 return self._json_cookie({"ok": True, "role": "admin"},
                                          f"qa_session={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={12 * 3600}{secure}")
             if url.path == "/api/logout":
+                if MULTI:
+                    members.logout(api.app, self._sid())
                 auth.logout(self._sid())
                 return self._json_cookie({"ok": True}, "qa_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
             role = self._role(parse_qs(url.query))
             if role is None:
                 return self._json({"error": "unauthorized"}, 401)
-            if role != "admin":  # 읽기 전용 권한(RBAC): 긴급 정지·설정·주문·키 등 쓰기 불가
+            if role == "member":  # v34: 회원은 '내 것'만 쓴다 (허용 목록)
+                if not self._gate_member("POST", url.path):
+                    return None
+                try:
+                    q = self._member_quota(url.path, body)
+                    if q:
+                        return self._json({"error": q, "code": "quota"}, 429)
+                except Exception:  # noqa: BLE001 - 한도 확인 실패가 기능을 막지 않게
+                    log.exception("한도 확인 실패")
+            elif role != "admin":  # 읽기 전용 권한(RBAC): 긴급 정지·설정·주문·키 등 쓰기 불가
                 return self._json({"error": "읽기 전용 권한입니다 (관리자로 로그인 필요)"}, 403)
+            if MULTI and url.path.startswith(("/api/me", "/api/admin")):
+                try:
+                    return self._account_post(url.path, body, role)
+                except members.AuthError as e:
+                    return self._json({"error": str(e), "code": e.code}, e.status)
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
             if url.path == "/api/killswitch":
                 api.app.set_kill_switch(bool(body.get("on")), str(body.get("reason", ""))[:200], by="dashboard")
                 api._audit("killswitch", f"{'ON' if body.get('on') else 'OFF'} {str(body.get('reason', ''))[:100]}")
@@ -537,6 +653,137 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 return self._json({"error": str(exc)}, 500)
             self._json({"error": "not found"}, 404)
 
+        # ------------------------------------------------------------------ v34 회원 계정
+        def _account_public(self, path: str, body: dict):
+            """로그인 전에 쓰는 것: 가입 · 로그인 · 비밀번호 찾기/재설정 · 이메일 확인."""
+            app, ip = api.app, self._ip()
+            try:
+                if path == "/api/signup":
+                    pol = service.policy(app)
+                    u = members.signup(app, body, ip, pol, self._base_url())
+                    if pol.get("require_verify") and not u["verified"]:
+                        return self._json({"ok": True, "verify": True, "user": None,
+                                           "message": f"{u['email']} 로 확인 메일을 보냈어요 — 링크를 누른 뒤 로그인해 주세요"})
+                    sid, user = members.login(app, str(body.get("email", "")), str(body.get("password", "")), None, ip,
+                                              self.headers.get("User-Agent") or "")
+                    return self._json_cookie({"ok": True, "user": user}, self._session_cookie(sid, 30 * 86400))
+                if path == "/api/login":
+                    pol = service.policy(app)
+                    sid, user = members.login(app, str(body.get("email", ""))[:254], str(body.get("password", ""))[:200],
+                                              str(body.get("otp", ""))[:12] or None, ip, self.headers.get("User-Agent") or "",
+                                              require_verified=bool(pol.get("require_verify")))
+                    return self._json_cookie({"ok": True, "user": user, "role": "member" if user["role"] == "member" else "admin"},
+                                             self._session_cookie(sid, 30 * 86400))
+                if path == "/api/password/forgot":
+                    return self._json(members.request_reset(app, str(body.get("email", ""))[:254], self._base_url(), ip))
+                if path == "/api/password/reset":
+                    return self._json(members.reset_password(app, str(body.get("token", ""))[:100], str(body.get("password", ""))[:200]))
+                if path == "/api/verify-email":
+                    u = members.verify_email(app, str(body.get("token", ""))[:100])
+                    return self._json({"ok": True, "email": u["email"], "message": "이메일을 확인했어요 — 로그인해 주세요"})
+            except members.AuthError as e:
+                return self._json({"error": str(e), "code": e.code}, e.status)
+            return self._json({"error": "not found"}, 404)
+
+        def _account_get(self, path: str, qs):
+            app = api.app
+            u = self._member()
+            arg = lambda k, d="": (qs.get(k) or [d])[0]  # noqa: E731
+            if path == "/api/service":
+                return self._json(service.public_policy(app))
+            if path == "/api/me":
+                if u is None:  # 토큰 관리자
+                    return self._json({"user": tenancy.current(), "usage": None, "policy": service.public_policy(app)})
+                return self._json({"user": u, "usage": service.usage(app), "policy": service.public_policy(app),
+                                   "encryption": tenancy.encryption_on()})
+            if path == "/api/me/sessions" and u:
+                return self._json({"sessions": members.sessions(app, u["id"], self._sid())})
+            if path == "/api/me/export" and u:
+                data = json.dumps(members.export(app, u["id"]), ensure_ascii=False, indent=1, default=str).encode()
+                members.ops_audit(app, "export", f"#{u['id']}", u["id"])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="quant-ai-my-data.json"')
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(data)
+                return None
+            if path.startswith("/api/admin"):
+                if self._role(qs) != "admin":
+                    return self._json({"error": "운영자만 볼 수 있어요"}, 403)
+                if path == "/api/admin/users":
+                    return self._json(members.list_users(app, arg("q")[:80], int(arg("limit", "100") or 100), int(arg("offset", "0") or 0)))
+                if path == "/api/admin/overview":
+                    from .. import mailer
+                    return self._json({"stats": members.stats(app), "policy": service.policy(app), "outbox": mailer.outbox(app),
+                                       "encryption": tenancy.encryption_on(), "smtp": mailer.configured(),
+                                       "public_url": os.environ.get("QUANT_PUBLIC_URL") or None, "plans": service.PLANS})
+            return self._json({"error": "not found"}, 404)
+
+        def _account_post(self, path: str, body: dict, role: str):
+            app = api.app
+            u = self._member()
+            if path.startswith("/api/me"):
+                if u is None:
+                    return self._json({"error": "회원 로그인이 필요해요 (토큰으로는 쓸 수 없어요)"}, 400)
+                if path == "/api/me":
+                    return self._json({"ok": True, "user": members.update_profile(app, u["id"], body)})
+                if path == "/api/me/password":
+                    return self._json(members.change_password(app, u["id"], str(body.get("old", ""))[:200], str(body.get("new", ""))[:200], self._sid()))
+                if path == "/api/me/mfa":
+                    act = body.get("action")
+                    if act == "begin":
+                        return self._json(members.totp_begin(app, u["id"]))
+                    if act == "enable":
+                        return self._json({"ok": True, "user": members.totp_enable(app, u["id"], str(body.get("code", ""))[:12])})
+                    if act == "disable":
+                        return self._json({"ok": True, "user": members.totp_disable(app, u["id"], str(body.get("password", ""))[:200], str(body.get("code", ""))[:12])})
+                    return self._json({"error": "action 은 begin / enable / disable"}, 400)
+                if path == "/api/me/logout-others":
+                    return self._json({"ok": True, "logged_out": members.logout_others(app, u["id"], self._sid())})
+                if path == "/api/me/verify-resend":
+                    return self._json({"ok": True, "sent": members.send_verify(app, u["id"], self._base_url())})
+                if path == "/api/me/delete":
+                    out = members.delete_account(app, u["id"], str(body.get("password", ""))[:200], str(body.get("confirm", ""))[:254])
+                    api._risk_cache.clear()
+                    return self._json_cookie(out, "qa_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
+                return self._json({"error": "not found"}, 404)
+            if role != "admin":
+                return self._json({"error": "운영자만 할 수 있어요"}, 403)
+            by = u or tenancy.current() or {"id": None, "owner": True}
+            if path == "/api/admin/user":
+                uid_ = int(body.get("id") or 0)
+                if body.get("delete"):
+                    out = members.admin_delete(app, by, uid_)
+                    api._risk_cache.clear()
+                    return self._json(out)
+                return self._json({"ok": True, "user": members.admin_update(app, by, uid_, {k: body[k] for k in ("role", "plan", "days", "status", "unlock") if k in body})})
+            if path == "/api/admin/invite":
+                return self._json(members.invite(app, by.get("id"), body.get("email") or None, str(body.get("plan") or "free"),
+                                                 int(body.get("days") or 7), int(body.get("max_uses") or 1), self._base_url()))
+            if path == "/api/admin/policy":
+                api._risk_cache.clear()  # 투자 정보 범위가 바뀌면 회원 화면 캐시도 새로
+                out = service.set_policy(app, body)
+                members.ops_audit(app, "policy", ", ".join(f"{k}={body[k]}" for k in sorted(body) if k in ("signup", "advice", "require_verify")), by.get("id"))
+                return self._json({"ok": True, "policy": out})
+            return self._json({"error": "not found"}, 404)
+
+        def _member_quota(self, path: str, body: dict) -> str | None:
+            """회원 하루 한도 (요금제) — 넘으면 안내 문장."""
+            kind = {"/api/chat": "chat", "/api/news-explain": "ai_explain", "/api/disclosure-explain": "ai_explain",
+                    "/api/stock/digest": "ai_explain", "/api/myjournal": "journal"}.get(path)
+            if path == "/api/ticket" and body.get("confirm"):
+                kind = "ticket"
+            if not kind:
+                return None
+            try:
+                service.take(api.app, kind)
+            except service.QuotaError as e:
+                return str(e)
+            return None
+
     return Handler
 
 
@@ -545,7 +792,16 @@ def serve(app, host: str = "127.0.0.1", port: int = 8050) -> None:
     auth = Auth()
     if auth.config_errors():
         raise SystemExit("로그인 설정 오류: " + " · ".join(auth.config_errors()))
-    if host not in ("127.0.0.1", "localhost") and not (token or auth.pw_hash):
+    if service.multi():  # v34 여러 사용자 모드: 회원 로그인이 기본 — 시작 전에 꼭 필요한 것 점검
+        from .. import members
+        if members.count(app) == 0:
+            print("[여러 사용자 모드] 아직 계정이 없어요 → 먼저 소유자(운영자) 계정을 만드세요:  ./run.sh users owner --email 내이메일")
+        if not tenancy.encryption_on():
+            log.warning("QUANT_DATA_KEY 가 없어 회원 개인 데이터(목표·계좌·관심종목)를 암호화하지 않고 저장합니다 — 서비스 전 꼭 설정하세요")
+        from ..mailer import configured
+        if not configured():
+            log.warning("메일(SMTP) 설정이 없어 이메일 확인·비밀번호 찾기 메일이 '보낼 편지함'(운영 → 회원 관리)에만 쌓입니다")
+    elif host not in ("127.0.0.1", "localhost") and not (token or auth.pw_hash):
         raise SystemExit("외부 바인딩 시 로그인(./run.sh auth-setup) 또는 QUANT_WEB_TOKEN 설정이 필요합니다")
     if host not in ("127.0.0.1", "localhost") and not (auth.secure_cookie or auth.trusted_proxies):
         log.warning("외부 접속을 여는데 HTTPS 설정이 없습니다 — 비밀번호·세션이 평문으로 오갑니다. "

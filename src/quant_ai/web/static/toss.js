@@ -207,7 +207,7 @@ async function tHome(el) {
     <div id="th-goal"></div>
     ${tSec("지수", idxB, '<a href="#market">시장 전체</a>', "t-sec-idx")}
     <div id="th-picks2"></div>
-    ${tSec("AI가 본 오늘의 종목", trustLine + picksB, '<a href="#report">AI 분석</a>')}
+    ${typeof adviceOn === "function" && !adviceOn() ? "" : tSec("AI가 본 오늘의 종목", trustLine + picksB, '<a href="#report">AI 분석</a>')}
     <div class="t-grid2">
       ${tSec("오늘의 주요 이벤트", evB, '<a href="#calendar">일정 전체</a>', "t-card")}
       ${tSec(/mode=live/.test(q) ? "내 보유 종목 현황" : "모의투자 장부 <span class=\"t-tag\">가상 돈</span>", hdB, '<a href="#pos">포트폴리오</a>', "t-card")}
@@ -215,8 +215,9 @@ async function tHome(el) {
     <div class="t-grid2" id="th-todo">${tSec("오늘 확인할 것", tSkel(2), "", "t-card")}${tSec("오늘 주의할 것", tSkel(2), "", "t-card")}</div>
     <div id="th-news"></div>
     <div id="th-concl"></div>
-    <div class="t-pro"><button class="t-btn ghost" id="th-pro">자세한 홈 (전문가용)</button><span>AI 브리핑 · 매매 준비 · 시장 체크리스트 · 데이터 상태</span></div>`;
-  root.querySelector("#th-pro").onclick = () => { S.homeDetail = true; render(); };
+    ${typeof isMember === "function" && isMember() ? "" : '<div class="t-pro"><button class="t-btn ghost" id="th-pro">자세한 홈 (전문가용)</button><span>AI 브리핑 · 매매 준비 · 시장 체크리스트 · 데이터 상태</span></div>'}`;
+  const thp = root.querySelector("#th-pro");
+  if (thp) thp.onclick = () => { S.homeDetail = true; render(); };
   tBindBar(root);
   if (typeof tPicksHome === "function") tPicksHome(root.querySelector("#th-picks2"));  // v28: 신호 엔진 매수 후보
   if (typeof tGoalHome === "function") tGoalHome(root.querySelector("#th-goal"));  // v33: 홈 맨 위 '내 목표' (진행률 · 다음 적립일)
@@ -298,7 +299,7 @@ async function tStock(el, sym) {
   tBind(root, "tsk-tabs", (k) => { T.stab[sym] = k; root.querySelectorAll("#tsk-tabs button").forEach((b) => { b.classList.toggle("on", b.dataset.k === k); b.setAttribute("aria-selected", b.dataset.k === k); }); tStockTab(ctx, k); });
   tStockTab(ctx, T.stab[sym] || "sum");
   // AI 판단 · 실적 D-day · 내 보유 (verdict 는 조금 느릴 수 있어 나중에)
-  api(`/api/verdict?symbol=${encodeURIComponent(sym)}`).then((v) => { ctx.v = v; if (root.isConnected) tStockSide(ctx); })
+  if (typeof adviceOn === "function" && !adviceOn()) { /* v34: 회원 · AI 판단 없음 */ } else api(`/api/verdict?symbol=${encodeURIComponent(sym)}`).then((v) => { ctx.v = v; if (root.isConnected) tStockSide(ctx); })
     .catch((e) => { const s = root.querySelector("#tsk-side"); if (s) s.innerHTML = `<div class="tsk-cards">${tErr(e)}</div>`; });
 }
 function tStockSide(ctx) {
@@ -549,9 +550,9 @@ async function tWatch(el) {
     const n = (f) => all.filter(f).length;
     root.innerHTML = `<div class="t-h1row"><h1 class="t-h1">관심종목</h1><button class="t-ic" data-t-search aria-label="검색">${TI.search}</button></div>
       ${tTabs("tw-tab", [["all", `전체 ${all.length}`], ["kr", `국내 ${n((r) => isKR(r.symbol))}`], ["us", `해외 ${n((r) => !isKR(r.symbol))}`], ["held", `보유 ${n((r) => r.held)}`], ...groups.filter((g) => g !== "기본").map((g) => [`g:${g}`, esc(g)])], T.watchTab, "t-tabs-line")}
-      <div class="t-sortrow">${tChips("tw-sort", [["default", "기본"], ["up", "상승률"], ["down", "하락률"], ["ai", "AI 확률"], ["name", "이름"]], T.watchSort)}</div>
+      <div class="t-sortrow">${tChips("tw-sort", [["default", "기본"], ["up", "상승률"], ["down", "하락률"], ...(typeof adviceOn !== "function" || adviceOn() ? [["ai", "AI 확률"]] : []), ["name", "이름"]], T.watchSort)}</div>
       <div class="t-card t-sec">${tWatchRows(rows)}</div>
-      <div class="t-foot">가격은 ${esc((all[0] || {}).price_src || "일봉 종가")} · AI 판단 시각 ${esc((all.find((r) => r.ai_at) || {}).ai_at || "-")}</div>`;
+      <div class="t-foot">가격은 ${esc((all[0] || {}).price_src || "일봉 종가")}${typeof adviceOn !== "function" || adviceOn() ? ` · AI 판단 시각 ${esc((all.find((r) => r.ai_at) || {}).ai_at || "-")}` : ""}</div>`;
     tBind(root, "tw-tab", (k) => { T.watchTab = k; draw(); });
     tBind(root, "tw-sort", (k) => { T.watchSort = k; draw(); });
     tBindBar(root);
@@ -891,7 +892,7 @@ function tlHead() {
 }
 async function tossRender(el) {
   const v = S.view;
-  const own = { n: () => tArticle(el, "news", S.param), d: () => tArticle(el, "disclosure", S.param), report: () => tReport(el, S.param), alerts: () => tAlerts(el), more: () => tMore(el) };
+  const own = { n: () => tArticle(el, "news", S.param), d: () => tArticle(el, "disclosure", S.param), report: () => tReport(el, S.param), alerts: () => tAlerts(el), more: () => (typeof isMember === "function" && isMember() ? memberMore(el) : tMore(el)) };
   if (own[v]) { await own[v](); return true; }
   if (uiMode() !== "easy" || S.sub === "full") { if (typeof TV === "object" && TV[v] && S.sub !== "full") { await TV[v](el); return true; } return false; }
   if (v === "dashboard" && !S.homeDetail) { await tHome(el); return true; }

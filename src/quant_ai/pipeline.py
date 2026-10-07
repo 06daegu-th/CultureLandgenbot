@@ -518,6 +518,8 @@ class QuantAI:
         self.notifier.send(f"킬스위치 {'ON' if on else 'OFF'} ({by}) {reason}", "critical" if on else "warn")
 
     def load_portfolio(self, mode: str) -> Portfolio:
+        from . import tenancy
+        mode = tenancy.personal_book(mode)  # v34: 회원 요청이면 그 사람 장부 (1인 모드·스케줄러는 그대로)
         with session_scope(self.engine) as s:
             snap = s.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.mode == mode)
                             .order_by(PortfolioSnapshot.ts.desc(), PortfolioSnapshot.id.desc()))
@@ -1363,6 +1365,8 @@ class QuantAI:
         """입금(+)·출금(-) 기록. 건강검진 수익률에서 입출금 효과를 뺀다 (시간가중수익률)."""
         if amount == 0:
             raise ValueError("금액은 0 이 아니어야 합니다")
+        from . import tenancy
+        mode = tenancy.personal_book(mode)
         st = ops.get_state(self.engine, f"cashflows:{mode}")
         flows = list(st.get("flows", []))
         flows.append({"date": str(day or datetime.now(UTC).date()), "amount": float(amount), "memo": memo[:100]})
@@ -1370,7 +1374,8 @@ class QuantAI:
         return flows
 
     def cashflows(self, mode: str) -> list[dict]:
-        return ops.get_state(self.engine, f"cashflows:{mode}").get("flows", [])
+        from . import tenancy
+        return ops.get_state(self.engine, f"cashflows:{tenancy.personal_book(mode)}").get("flows", [])
 
     def strategy_health(self, mode: str | None = None, with_ic: bool = True, notify: bool = True) -> dict:
         """실제 운용 자산곡선이 과거 검증 범위 안인지 판정 (strategy/health.py). 상태가 바뀌면 알림."""

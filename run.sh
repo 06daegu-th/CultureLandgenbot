@@ -13,6 +13,7 @@
 #   ./run.sh smallcap [--show]   소액 현실 검증 (200만원 + 매달 100만원 · 1주 단위 · 실비용 · 후보 규칙 vs 지수 ETF 적립, KRX 16년)
 #   ./run.sh proof-project [start|status|record|end]   증명 프로젝트 (100만원 실계좌 · 규칙·기준 봉인 · 매일 봉인 기록 · 공개 페이지 /proof)
 #   ./run.sh datacheck        데이터 정합성 점검 (일봉 최신성 · 자동 갱신 · 수정주가 · 52주 · 시가총액 · 외부 시세 대조)
+#   ./run.sh users owner --email you@x.com   여러 사용자 모드: 소유자(운영자) 계정 만들기 · users list|invite|set|delete
 #   ./run.sh cycle            코어 1회 실행
 #   ./run.sh serve            대시보드만 http://127.0.0.1:8050
 #   ./run.sh stop             떠 있는 대시보드 종료 (옛 버전 폴더에서 띄운 것 포함)

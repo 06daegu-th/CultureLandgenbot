@@ -7,7 +7,7 @@ const NAV_EASY = [["dashboard", "home", "홈"], ["watch", "star", "관심종목"
   ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["picks", "ai", "AI 추천"], ["autopilot", "auto", "AI 자동매매"], ["goal", "target", "내 목표"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
 // v32: 'AI 분석'(종목별 판단)은 홈 'AI가 본 오늘의 종목' · 종목 화면 · 더보기에서 — 대신 날마다 보는 '내 목표'를 앞으로
 
-function uiMode() { return S.uiMode || safeGet("qa_ui") || "easy"; }
+function uiMode() { return (typeof isMember === "function" && isMember()) ? "easy" : S.uiMode || safeGet("qa_ui") || "easy"; }  // v34: 회원은 쉬운 화면 고정
 function setUiMode(m) {
   S.uiMode = m; safeSet("qa_ui", m);
   post("/api/prefs", { ui: { mode: m } }).then(() => { if (S.prefs) S.prefs.ui = { ...(S.prefs.ui || {}), mode: m }; }).catch(() => {});
@@ -21,6 +21,7 @@ function guideAct(x) {
   if (x.key === "budget") return `<a class="btn-sm primary" href="#budget">투자 한도 정하기 →</a>`;
   if (x.key === "goal") return `<a class="btn-sm primary" href="#goal">목표 계획 정하기 →</a>`;
   if (x.key === "watch") return `<button class="btn-sm primary" data-focus-search>종목 검색하기 ( / )</button>`;
+  if (x.key === "notify") return `<a class="btn-sm primary" href="#alerts">알림 켜기 →</a>`;
   return `<a class="btn-sm primary" href="#action">오늘 할 일 보기 →</a>`;
 }
 function guideCard(g) {
@@ -230,6 +231,7 @@ async function stockTop(sym) {
   const box = $("#pf-top");
   if (!box) return;
   let v;
+  if (typeof adviceOn === "function" && !adviceOn()) { box.innerHTML = ""; return; }  // v34: 회원 · AI 판단 없음
   try { v = await api(`/api/verdict?symbol=${encodeURIComponent(sym)}`); } catch (e) { box.innerHTML = `<div class="xs dim">AI 판단 불러오기 실패 — ${esc(e.message)}</div>`; return; }
   if ($("#pf-top") !== box) return;  // 그 사이 다른 종목으로 이동
   const m = v.market || {};

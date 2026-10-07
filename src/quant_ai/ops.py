@@ -29,19 +29,47 @@ UTC = UTC
 
 # ------------------------------------------------------------------ 공유 상태
 def get_state(engine: Engine, key: str, default: dict | None = None) -> dict:
+    """v34: 개인 데이터 키(목표·계좌·관심종목·설정 …)는 지금 요청한 사람의 칸을 읽는다 (tenancy)."""
+    from . import tenancy
+    k = tenancy.state_key(key)
     with session_scope(engine) as s:
-        row = s.get(SystemState, key)
-        return dict(row.value) if row else (default or {})
+        row = s.get(SystemState, k)
+        if not row:
+            return default or {}
+        return dict(tenancy.unseal(row.value)) if tenancy.is_personal(key) else dict(row.value)
 
 
 def set_state(engine: Engine, key: str, value: dict) -> None:
+    from . import tenancy
+    k = tenancy.state_key(key)
+    if tenancy.is_personal(key):
+        value = tenancy.seal(value)
     with session_scope(engine) as s:
-        row = s.get(SystemState, key)
+        row = s.get(SystemState, k)
         now = datetime.now(UTC)
         if row is None:
-            s.add(SystemState(key=key, value=value, updated_at=now))
+            s.add(SystemState(key=k, value=value, updated_at=now))
         else:
             row.value, row.updated_at = value, now
+
+
+def delete_state_prefix(engine: Engine, prefix: str) -> int:
+    """사람 칸 통째로 지우기 (탈퇴) — 'u:1z:' 처럼 사람 칸 접두어만 받는다."""
+    if not prefix.startswith("u:") or not prefix.endswith(":"):
+        raise ValueError("사람 칸 접두어만 지울 수 있어요")
+    with session_scope(engine) as s:
+        rows = list(s.query(SystemState).filter(SystemState.key.startswith(prefix)))
+        for r in rows:
+            s.delete(r)
+        return len(rows)
+
+
+def user_states(engine: Engine, prefix: str) -> dict[str, dict]:
+    """사람 칸의 모든 상태 (내보내기 · 전체 사용자 관심종목 합치기)."""
+    from . import tenancy
+    with session_scope(engine) as s:
+        return {r.key[len(prefix):]: dict(tenancy.unseal(r.value))
+                for r in s.query(SystemState).filter(SystemState.key.startswith(prefix))}
 
 
 def kill_switch_on(engine: Engine) -> bool:
