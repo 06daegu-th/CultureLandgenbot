@@ -34,6 +34,9 @@ PERSONAL_KEYS = frozenset({
     "chat_sessions",    # AI 채팅 목록
     "usage",            # 요금제 사용량 (하루 단위)
     "onboarding",       # 시작 안내 진행
+    "referral",         # v35 내 초대 링크
+    "referrals",        # v35 내가 초대한 친구
+    "my_clubs",         # v35 내가 들어간 모임
 })
 PERSONAL_PREFIXES = ("chat:", "cashflows:manual@", "cashflows:us-manual@", "cashflows:etf-dca@")
 

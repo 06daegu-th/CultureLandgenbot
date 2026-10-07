@@ -423,6 +423,9 @@ def build_default_scheduler(app, mode) -> Scheduler:
         sch.add("retrain_candidate", lambda now: app.train_candidate(), 24 * 3600, "closed")
     from . import goal
     sch.add("dca", lambda now: goal.dca_run(app, now), 3600, "always")  # v19: 월 적립일이면 한 번 (모의 장부 입금 · 실계좌는 알림)
+    from . import habit
+    sch.add("habit", lambda now: habit.job(app, now), 6 * 3600, "always")  # v35 월별 기록 · 배지 · 월간 리포트 (사람마다)
+    sch.add("crash_watch", lambda now: habit.crash_job(app, now), 3600, "always")  # v35 급락 때 '계획대로' 안내
     from . import service
     if service.multi():  # v34 여러 사용자: 회원마다 적립일 알림·모의 적립 · 만료된 로그인 정리
         from . import members

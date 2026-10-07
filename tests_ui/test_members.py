@@ -14,7 +14,7 @@ import pytest
 pw = pytest.importorskip("playwright.sync_api")
 
 MEMBER_SCREENS = ["dashboard", "watch", "goal", "pos", "accounts", "market", "news", "calendar", "alerts", "more", "map",
-                  "compare", "myjournal", "manual", "chat", "account", "analysis/000001"]
+                  "compare", "myjournal", "manual", "chat", "account", "analysis/000001", "explore", "together"]
 PW = "calm-ocean-4821"
 
 
@@ -121,5 +121,41 @@ def test_owner_admin_console(browser, base_url):
     page.click("#inv-go")
     page.wait_for_selector("#inv-out code", timeout=10000)
     assert "#signup/" in page.inner_text("#inv-out")
+    ctx.close()
+    assert not errors, errors
+
+
+def test_public_explore_then_signup_saves_plan_and_club(browser, base_url):
+    """v35: 로그인 화면 → 가입 전 계산 → '이 계획으로 시작' → 가입 → 계획 자동 저장 → 꾸준함 칸 → 모임 만들기."""
+    ctx = _ctx(browser, 390)
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("dialog", lambda d: d.accept())
+    page.goto(f"{base_url}/")
+    page.wait_for_selector(".ma-card", timeout=15000)
+    page.click("text=가입 전에 계산해 보기")
+    page.wait_for_selector(".xp-res", timeout=20000)
+    assert "될 확률" in page.inner_text(".xp-res")
+    page.click("[data-pre=x10]")
+    page.wait_for_timeout(1200)
+    page.click("#xp-start")
+    page.fill("input[name=email]", "xp@example.com")
+    page.fill("input[name=password]", PW)
+    page.fill("input[name=password2]", PW)
+    page.check("[data-all]")
+    page.click(".ma-go")
+    page.wait_for_selector("#view .view-inner", timeout=20000)
+    page.wait_for_timeout(2500)
+    page.goto(f"{base_url}/#goal")
+    page.wait_for_selector(".hb-top", timeout=20000)
+    assert "1,000만원" in page.inner_text("#view")
+    page.goto(f"{base_url}/#together")
+    page.wait_for_selector("#tg-create", timeout=15000)
+    page.fill("#tg-name", "같이 모으기 테스트")
+    page.click("#tg-create")
+    page.wait_for_selector(".xp-code b", timeout=15000)
+    assert len(page.inner_text(".xp-code b").strip()) == 8
+    assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 2
     ctx.close()
     assert not errors, errors

@@ -171,6 +171,8 @@ def signup(app, body: dict, ip: str, policy: dict, base_url: str = "") -> dict:
         inv = _token_peek(app, str(body.get("invite") or ""), "invite")
         if inv is None:
             raise AuthError("초대 링크가 없거나 만료됐어요 — 초대한 사람에게 새 링크를 받아 주세요", "invite", 403)
+        if (inv.get("data") or {}).get("ref") and not policy.get("member_invites", True):
+            raise AuthError("지금은 회원 초대 링크로 가입할 수 없어요", "invite", 403)
         want = (inv.get("data") or {}).get("email")
         if want and want != (body.get("email") or "").strip().lower():
             raise AuthError("이 초대 링크는 다른 이메일용이에요", "invite_email", 403)
@@ -182,6 +184,12 @@ def signup(app, body: dict, ip: str, policy: dict, base_url: str = "") -> dict:
                verified=bool(data.get("email")))  # 이메일을 지정한 초대로 왔으면 그 이메일은 확인된 것
     if inv is not None:
         _token_use(app, str(body.get("invite")), "invite", multi=not data.get("email"))
+        if data.get("ref") and data.get("by"):  # v35 친구 초대: 기록 + (켰으면) 둘 다 프로 N일
+            from . import together
+            together.on_signup(app, int(data["by"]), u["id"])
+            with session_scope(app.engine) as s:
+                nu = s.get(User, u["id"])
+                nu.consent = {**(nu.consent or {}), "ref_by": int(data["by"])}
     if not u["verified"]:
         send_verify(app, u["id"], base_url)
     ops_audit(app, "signup", f"#{u['id']}", u["id"])
@@ -527,8 +535,11 @@ def totp_disable(app, user_id: int, password: str, code: str) -> dict:
 
 
 # ------------------------------------------------------------------ 운영자
-def invite(app, by: int, email: str | None = None, plan: str = "free", days: int = 7, max_uses: int = 1, base_url: str = "") -> dict:
+def invite(app, by: int, email: str | None = None, plan: str = "free", days: int = 7, max_uses: int = 1, base_url: str = "",
+           ref: bool = False) -> dict:
     data: dict = {"plan": plan if plan in ("free", "pro") else "free", "by": by}
+    if ref:
+        data["ref"] = True  # v35 회원 초대 링크 (요금제는 항상 무료로 시작)
     if email:
         data["email"] = normalize_email(email)
     elif max_uses > 1:
@@ -672,8 +683,29 @@ def delete_account(app, user_id: int, password: str, confirm: str) -> dict:
     return {"ok": True, "deleted": n}
 
 
+def grant_pro(app, user_id: int, days: int, why: str = "") -> dict:
+    """프로 요금제 N일 더하기 (초대 보상 등) — 이미 프로면 남은 기간 뒤에 이어 붙인다 · 기간 없는 프로면 그대로."""
+    with session_scope(app.engine) as s:
+        u = s.get(User, user_id)
+        if u is None or days <= 0:
+            return {"ok": False}
+        if u.plan == "pro" and u.plan_until is None:
+            return {"ok": True, "unlimited": True}
+        base = max(_now(), _aware(u.plan_until) or _now()) if u.plan == "pro" else _now()
+        u.plan, u.plan_until = "pro", base + timedelta(days=int(days))
+        until = u.plan_until.isoformat()
+    _SESS_CACHE.clear()
+    ops_audit(app, "grant_pro", f"#{user_id} +{days}일 {why}", user_id)
+    return {"ok": True, "until": until}
+
+
 def purge(app, user_id: int) -> int:
     """회원 데이터 전부 삭제 (탈퇴 · 운영자 삭제)."""
+    try:  # v35: 모임에서 먼저 빼기 (사람 칸이 지워지기 전에)
+        from . import together
+        together.purge_user(app, user_id)
+    except Exception:  # noqa: BLE001, S110 - 모임 정리 실패가 탈퇴를 막지 않게
+        pass
     n = ops.delete_state_prefix(app.engine, tenancy.user_prefix(user_id))
     books = _books(user_id)
     with session_scope(app.engine) as s:
@@ -757,4 +789,4 @@ def ops_audit(app, action: str, detail: str, user_id: int | None) -> None:
 __all__ = ["AuthError", "signup", "login", "logout", "session_user", "create", "count", "public", "password_problem",
            "normalize_email", "send_verify", "verify_email", "request_reset", "reset_password", "change_password", "update_profile",
            "totp_begin", "totp_enable", "totp_disable", "invite", "invite_info", "list_users", "admin_update", "admin_delete",
-           "stats", "export", "delete_account", "purge", "cleanup", "all_ids", "for_each_member", "sessions", "logout_others", "TERMS_VERSION"]
+           "stats", "export", "delete_account", "grant_pro", "purge", "cleanup", "all_ids", "for_each_member", "sessions", "logout_others", "TERMS_VERSION"]

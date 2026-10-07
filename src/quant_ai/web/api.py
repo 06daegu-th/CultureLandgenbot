@@ -1342,9 +1342,60 @@ class DashboardAPI:
                     "buy_est": goal.buy_estimate(self.app)}
 
     def goal_home(self) -> dict:
-        """v33 홈 '내 목표' 카드 (가벼움 · 1분 캐시)."""
+        """v33 홈 '내 목표' 카드 (가벼움 · 1분 캐시) · v35 연속 적립 · 급락 때 '계획대로' 카드."""
+        from .. import goal, habit
+
+        def build():
+            out = goal.home_card(self.app)
+            if out.get("set"):
+                from datetime import datetime as _dt
+                st = habit.streak(goal.get(self.app), _dt.now(habit.KST).date())
+                out["streak"] = {k: st[k] for k in ("current", "best", "status", "text", "this_month")}
+                try:
+                    out["calm"] = habit.calm_card(self.app)
+                except Exception:  # noqa: BLE001 - 안내 카드 실패가 목표 카드를 막지 않게
+                    out["calm"] = None
+            return out
+        return self._cached("goal_home", 60, build)
+
+    # ------------------------------------------------------------------ v35 체험 계산기 · 꾸준함 · 함께
+    def explore(self, q: dict) -> dict:
         from .. import goal
-        return self._cached("goal_home", 60, lambda: goal.home_card(self.app))
+
+        def num(k, d):
+            v = str(q.get(k) or "").replace(",", "").strip()
+            try:
+                return float(v) if v else d
+            except ValueError:
+                raise ValueError(f"{k} 는 숫자로") from None
+        return goal.explore(num("principal", 1_000_000), num("monthly", 150_000), num("goal", 10_000_000), int(num("years", 5)),
+                            str(q.get("strategy") or "kospi")[:10])
+
+    def habit(self) -> dict:
+        from datetime import datetime as _dt
+
+        from .. import goal, habit
+        g = goal.get(self.app)
+        if g.get("goal"):  # 오늘 기록이 없으면 먼저 남긴다 (처음 열어도 연속 기록·배지가 바로 보이게)
+            today = _dt.now(habit.KST).date().isoformat()
+            last = (list((g.get("history") or {}).values()) or [{}])[-1]
+            if last.get("at") != today:
+                habit.snapshot(self.app)
+        return self._cached("habit", 60, lambda: habit.overview(self.app))
+
+    def together(self, base_url: str = "") -> dict:
+        from .. import together
+        return together.overview(self.app, base_url)
+
+    def club(self, cid: str) -> dict:
+        from .. import together
+        return together.view(self.app, cid[:20])
+
+    def together_write(self, body: dict, base_url: str = "") -> dict:
+        from .. import together
+        out = together.action(self.app, body, base_url)
+        self._audit("together", str(body.get("action"))[:20])
+        return out
 
     def goal_save(self, body: dict) -> dict:
         from .. import goal
@@ -1352,17 +1403,17 @@ class DashboardAPI:
             rb = body["record_buy"]
             r = goal.record_buy(self.app, float(str(rb.get("qty")).replace(",", "")), float(str(rb.get("price")).replace(",", "")),
                                 float(str(rb["deposit"]).replace(",", "")) if rb.get("deposit") not in (None, "") else None, rb.get("etf"))
-            self._risk_cache.drop("goal", "home5")
+            self._risk_cache.drop("goal", "home5", "habit")
             self._audit("goal_buy", f"적립 기록 {r['lot']['etf']} {r['lot']['qty']:g}주 × {r['lot']['price']:,.0f}원")
             return r
         if body.get("apply"):  # v31: 추천 계획 한 번에 적용
             r = goal.apply_recommended(self.app, str(body["apply"]), str(body.get("mode") or "paper"),
                                        monthly=float(str(body["monthly"]).replace(",", "")) if body.get("monthly") else None)
-            self._risk_cache.drop("goal", "home5", "autopilot")
+            self._risk_cache.drop("goal", "home5", "autopilot", "habit")
             self._audit("goal", f"추천 계획 {body['apply']} 적용 · {r['mode']} · 월 {r['saved']['monthly']:,.0f}")
             return {"ok": True, **r}
         g = goal.save(self.app, body)
-        self._risk_cache.drop("goal", "home5")
+        self._risk_cache.drop("goal", "home5", "habit")
         self._audit("goal", f"목표 {g['goal']:,.0f} · 월 {g['monthly']:,.0f}" + (f" · 적립 {'켬' if g.get('dca', {}).get('on') else '끔'}" if g.get("dca") else ""))
         return {"ok": True, "saved": g}
 

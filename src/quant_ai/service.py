@@ -21,7 +21,7 @@ from . import ops, tenancy
 
 POLICY_KEY = "service_policy"
 DEFAULT_POLICY = {"signup": "invite", "advice": "none", "require_verify": None, "brand": "Quant AI", "support": "",
-                  "notice": ""}
+                  "notice": "", "member_invites": True, "ref_reward_days": 0}
 
 # 요금제별 한도 (하루 사용량은 한국 시간 날짜 기준 · 개수 한도는 동시에 가질 수 있는 수)
 PLANS = {
@@ -62,6 +62,13 @@ def set_policy(app, body: dict) -> dict:
         cur["advice"] = body["advice"]
     if "require_verify" in body:
         cur["require_verify"] = bool(body["require_verify"])
+    if "member_invites" in body:
+        cur["member_invites"] = bool(body["member_invites"])
+    if "ref_reward_days" in body:
+        d = int(body["ref_reward_days"] or 0)
+        if not 0 <= d <= 90:
+            raise ValueError("초대 보상은 0~90일")
+        cur["ref_reward_days"] = d
     for k, n in (("brand", 40), ("support", 120), ("notice", 300)):
         if k in body:
             cur[k] = str(body[k] or "")[:n]
@@ -79,7 +86,7 @@ def advice_on(app) -> bool:
 
 def public_policy(app) -> dict:
     p = policy(app)
-    return {"mode": mode(), "signup": p["signup"], "advice": p["advice"], "brand": p["brand"], "support": p["support"],
+    return {"member_invites": p.get("member_invites", True), "ref_reward_days": p.get("ref_reward_days", 0), "mode": mode(), "signup": p["signup"], "advice": p["advice"], "brand": p["brand"], "support": p["support"],
             "notice": p["notice"], "require_verify": bool(p["require_verify"]), "plans": PLANS}
 
 
@@ -96,6 +103,7 @@ MEMBER_GET = frozenset({
     "/api/goal", "/api/goal-home", "/api/accounts", "/api/watchlist", "/api/star", "/api/prefs", "/api/user-profile",
     "/api/thesis", "/api/myjournal", "/api/rules", "/api/ticket", "/api/ticket/book", "/api/holdings", "/api/start-guide",
     "/api/push/key", "/api/chat", "/api/discover", "/api/mistakes", "/api/t/portfolio", "/api/t/alerts", "/api/risk-simple",
+    "/api/habit", "/api/together", "/api/club", "/api/explore",  # v35
 })
 MEMBER_GET_PREFIX = ("/api/news/", "/api/disclosure/", "/api/stock/")
 MEMBER_POST = frozenset({
@@ -103,6 +111,7 @@ MEMBER_POST = frozenset({
     "/api/thesis", "/api/user-profile", "/api/ticket", "/api/push/subscribe", "/api/push/unsubscribe", "/api/push/test",
     "/api/chat", "/api/chat/clear", "/api/news-explain", "/api/disclosure-explain", "/api/stock/digest",
     "/api/me", "/api/me/password", "/api/me/mfa", "/api/me/logout-others", "/api/me/delete", "/api/me/verify-resend",
+    "/api/together",  # v35
 })
 # AI 가 매수·매도·확률을 말하는 것 — 투자 정보 범위가 info 일 때만 회원에게
 ADVICE_GET = frozenset({"/api/signals2", "/api/signals2/stock", "/api/verdict", "/api/ai-card", "/api/ai-plain", "/api/explain",

@@ -1132,6 +1132,7 @@ TV.goal = async (el) => {
       foot: esc(g.assumption?.source || "") })}
     ${goalRecCard(g)}
     ${pr.set ? tCard("지금까지", (typeof goalBar === "function" ? goalBar(pr) : "") + goalBandLine(pr)) : ""}
+    <div id="g-habit" class="hb-wrap"></div>
     ${goalCheckCard(g)}
     ${tSmallcapCard(g.smallcap, true)}
     ${(g.honest || []).length ? `<div class="t-note warn" style="grid-column:1/-1;align-self:start">${g.honest.map((x) => esc(koText(x))).join("<br>")}</div>` : ""}
@@ -1160,6 +1161,7 @@ TV.goal = async (el) => {
     <div id="g-base"></div>
     <div class="t-foot">${esc(koText(g.note || ""))}</div>
     ${tFull("goal", '<a class="t-btn ghost" href="#budget">투자 한도</a><a class="t-btn ghost" href="#accounts">계좌 · 세금</a>')}`);
+  if (typeof habitSection === "function") habitSection(L.root.querySelector("#g-habit"));  // v35 꾸준함
   if (typeof baselineCard === "function") { const gb = L.root.querySelector("#g-base"); gb.classList.add("tl", "t2-legacy"); baselineCard(gb); }
   const val = (id) => L.root.querySelector(id).value.replace(/[^\d.]/g, "");
   const read = () => ({ principal: val("#g-principal"), monthly: val("#g-monthly"), goal: val("#g-goal"), target_years: val("#g-years"), strategy: L.root.querySelector("#g-strategy").value, raise_pct: String((Number(val("#g-raise")) || 0) / 100) });
@@ -1398,7 +1400,7 @@ async function tGoalHome(box) {
   try { c = await api("/api/goal-home"); } catch { box.innerHTML = ""; return; }
   if (!box.isConnected) return;
   if (!c.set) {
-    box.innerHTML = `<a class="t-goalhome empty" href="#goal"><span class="t-k">내 목표</span><b>${esc(c.hint || "")}</b><span class="t-btn primary sm">목표 정하기 ›</span></a>`;
+    box.innerHTML = `<a class="t-goalhome empty" href="#explore"><span class="t-k">내 목표</span><b>얼마로 시작해 매달 얼마를 넣으면 언제 목표에 닿을까? 먼저 계산해 보세요</b><span class="t-btn primary sm">계산해 보기 ›</span></a>`;
     return;
   }
   const pr = c.progress || {}, nd = c.next_dca, b = pr.band;
@@ -1406,13 +1408,14 @@ async function tGoalHome(box) {
   const pct = Math.max(0, Math.min(1, pr.pct || 0));
   const dcaTxt = nd ? (nd.d_day === 0 ? `<b class="up">오늘 적립일</b>` : `다음 적립 <b>${esc(nd.date.slice(5).replace("-", "/"))}</b> <span class="t-tag">D-${nd.d_day}</span>`)
     + ` · ${tMoney(nd.amount)} · ${esc(nd.what || "")}${nd.mode === "live" ? " · 실제 계좌 (직접 이체)" : " · 모의 장부 (자동)"}` : "자동 적립이 꺼져 있어요";
-  box.innerHTML = `<a class="t-goalhome lv-${lv}" href="#goal">
+  const sk = c.streak;
+  box.innerHTML = (typeof calmCard === "function" ? calmCard(c.calm) : "") + `<a class="t-goalhome lv-${lv}" href="#goal">
     <div class="t-goalhome-top"><span class="t-k">내 목표 · ${tMoney(c.principal)} + 매달 ${tMoney(c.monthly)} → ${tMoney(c.goal)} · ${c.target_years}년${c.p_target != null ? ` · 될 확률 ${tPr(c.p_target)}` : ""}</span>${TI.chev}</div>
     <div class="t-goalhome-mid"><b class="t-big num">${tMoney(pr.total)}</b><span class="t-sub">목표의 ${(pct * 100).toFixed(1)}% · ${pr.months ? `${pr.months}개월째` : "이번 달 시작"} · 남은 기간 약 ${c.years_left}년</span></div>
     <div class="t-prog lv-${lv}"><i style="width:${Math.max(1, pct * 100)}%"></i></div>
     <div class="t-goalhome-bot"><span>${lvDot(lv)}${esc(pr.band_text || pr.text || "")}${b && pr.months >= 1 ? ` <span class="t-sub">(정상 범위 ${tMoney(b.p10)} ~ ${tMoney(b.p90)})</span>` : ""}</span><span>${dcaTxt}</span></div>
     ${nd?.sheet ? `<div class="t-note">주문표: ${esc(nd.sheet)}</div>` : ""}
-    <div class="t-sub">${esc(pr.source || "")}</div></a>`;
+    <div class="t-sub">${esc(pr.source || "")}${sk ? ` · <b class="${sk.status === "missed" ? "warn-t" : ""}">${esc(sk.text)}</b>` : ""}</div></a>`;
 }
 async function tPicksHome(box) {
   let d;

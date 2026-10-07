@@ -216,7 +216,7 @@ def test_abnormal_handles_tz_aware_bars():
 # ------------------------------------------------------------------ 9·10·11·14. 화면
 def test_every_menu_screen_has_toss_renderer():
     app_js = (STATIC / "app.js").read_text()
-    t2 = (STATIC / "toss2.js").read_text()
+    t2 = (STATIC / "toss2.js").read_text() + (STATIC / "habit.js").read_text()  # v35 화면(계산기·같이 모으기)은 habit.js
     nav = re.findall(r'\["(\w+)", "\w+", "[^"]+"\]', app_js[app_js.find("const NAV = ["):app_js.find("function buildNav")])
     owned_by_toss1 = {"dashboard", "analysis", "watch", "market", "news", "pos"}  # V25 토스 화면 (쉬운 화면)
     tv = set(re.findall(r"^TV\.(\w+) = ", t2, re.M))

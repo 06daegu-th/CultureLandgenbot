@@ -853,7 +853,8 @@ async function tMore(el) {
       ${tile("#market", "market", "글로벌 시장", "지수 · 장 상태 · 많이 오른")}
       ${tile("#calendar", "calendar", "경제지표 캘린더", "실적 · FOMC · CPI D-Day")}
       ${tile("#map", "data", "증시 지도", "업종별 오늘 움직임")}
-      ${tile("#goal", "target", "내 목표", "몇 년 안에 몇 %")}
+      ${tile("#goal", "target", "내 목표", "몇 년 안에 몇 % · 꾸준함")}
+      ${tile("#explore", "target", "얼마를 언제까지", "목표 계산기 · 현실 확률")}
       ${tile("#budget", "risk", "투자 한도", "원금 · 최대 손실")}
       ${tile("#alerts", "bell", "알림 설정", "가격 · 뉴스 · 일정")}
       ${tile("#chat", TI.news, "AI 에게 묻기", "종목 · 시장 · 서버")}

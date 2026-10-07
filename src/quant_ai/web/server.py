@@ -208,6 +208,13 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                 return self._json(auth.info() | {"role": self._role(qs)})
             if MULTI and url.path == "/api/invite":  # 초대 링크 확인 (가입 화면이 이메일을 미리 채운다)
                 return self._json(members.invite_info(api.app, (qs.get("token") or [""])[0][:100]))
+            if url.path == "/api/explore":  # v35 '얼마를 언제까지' 체험 계산기 — 로그인 전에도 (계산만 · IP 마다 속도 제한)
+                if not service.allow(f"ip:{self._ip()}", 4.0):
+                    return self._json({"error": "잠시 뒤에 다시 계산해 주세요"}, 429)
+                try:
+                    return self._json(api.explore({k: (qs.get(k) or [""])[0][:20] for k in ("principal", "monthly", "goal", "years", "strategy")}))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
             if url.path == "/api/health":  # 인증 없이 최소 정보 (로드밸런서/모니터링용)
                 h = api.health()
                 if (self.client_address[0] if self.client_address else "") in ("127.0.0.1", "::1"):
@@ -339,6 +346,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.start_guide())
                     if url.path == "/api/goal":
                         return self._json(api.goal({k: arg(k) for k in ("principal", "monthly", "goal", "target_years", "strategy", "raise_pct")}))
+                    if url.path == "/api/habit":  # v35 꾸준함
+                        return self._json(api.habit())
+                    if url.path == "/api/together":  # v35 친구 초대 · 모임
+                        return self._json(api.together(self._base_url()))
+                    if url.path == "/api/club":
+                        return self._json(api.club(arg("id", "")))
                     if url.path == "/api/goal-home":
                         return self._json(api.goal_home())
                     if url.path == "/api/ops-status":
@@ -626,6 +639,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                     return self._json(api.budget_write(body))
                 if url.path == "/api/goal":
                     return self._json(api.goal_save(body))
+                if url.path == "/api/together":
+                    return self._json(api.together_write(body, self._base_url()))
                 if url.path == "/api/keys/reload":
                     return self._json(api.keys_reload())
                 if url.path == "/api/keys/probe":
@@ -766,7 +781,7 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
             if path == "/api/admin/policy":
                 api._risk_cache.clear()  # 투자 정보 범위가 바뀌면 회원 화면 캐시도 새로
                 out = service.set_policy(app, body)
-                members.ops_audit(app, "policy", ", ".join(f"{k}={body[k]}" for k in sorted(body) if k in ("signup", "advice", "require_verify")), by.get("id"))
+                members.ops_audit(app, "policy", ", ".join(f"{k}={body[k]}" for k in sorted(body) if k in ("signup", "advice", "require_verify", "member_invites", "ref_reward_days")), by.get("id"))
                 return self._json({"ok": True, "policy": out})
             return self._json({"error": "not found"}, 404)
 

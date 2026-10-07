@@ -190,9 +190,123 @@ def plan(principal: float, monthly: float, goal: float, target_years: int = 10, 
             "note": "미래 수익률은 가정입니다 — 과거 평균과 변동성으로 3,000가지 미래를 만들어 센 확률이지 보장이 아닙니다. 세금·수수료는 연 수익률 가정에 대략 포함."}
 
 
+# ------------------------------------------------------------------ v35 '얼마를 언제까지' 체험 계산기 (가입 전에도)
+EXPLORE_PRESETS = [
+    {"key": "x10", "title": "100만원 → 1,000만원", "principal": 1_000_000, "monthly": 150_000, "goal": 10_000_000, "years": 5},
+    {"key": "first1", "title": "첫 1억 (200만원 + 매달 100만원)", "principal": 2_000_000, "monthly": 1_000_000, "goal": 100_000_000, "years": 7},
+    {"key": "wed", "title": "결혼 자금 3,000만원", "principal": 3_000_000, "monthly": 500_000, "goal": 30_000_000, "years": 4},
+    {"key": "house", "title": "집 계약금 1억 (10년)", "principal": 10_000_000, "monthly": 500_000, "goal": 100_000_000, "years": 10},
+]
+_EXPLORE_CACHE: dict[tuple, dict] = {}
+
+
+def _first_year(by_year: list[float], prob: float) -> int | None:
+    return next((i + 1 for i, p in enumerate(by_year) if p >= prob), None)
+
+
+def explore(principal: float, monthly: float, goal: float, years: int, strategy: str = "kospi") -> dict:
+    """'100만원으로 1,000만원' 같은 목표를 현실 숫자로: 기간 안 확률 · 넣은 돈과 불어난 돈 · 범위 · 확률을 올리는 대안.
+
+    약속하지 않는다 — 과거 평균·변동성으로 만든 2,000가지 미래 중 몇 번 닿았는지 센 것. 적립액·기간처럼
+    '내가 정할 수 있는 것'으로 확률을 올리는 길을 먼저 보여 주고, 무리한 수익률(몰빵·레버리지)은 그 위험을 숫자로 말한다."""
+    principal, monthly, goal = float(principal), float(monthly), float(goal)
+    if principal < 0 or monthly < 0 or goal <= 0:
+        raise ValueError("시작 금액·매달 금액은 0 이상, 목표는 0보다 크게")
+    if principal + monthly <= 0:
+        raise ValueError("시작 금액이나 매달 금액 중 하나는 있어야 해요")
+    if goal > 100_000_000_000 or principal > 100_000_000_000 or monthly > 1_000_000_000:
+        raise ValueError("금액이 너무 커요")
+    if strategy not in PRESETS:
+        raise ValueError(f"투자 방식은 {', '.join(PRESETS)} 중 하나")
+    years = max(1, min(int(years), MAX_YEARS))
+    key = (round(principal, -3), round(monthly, -3), round(goal, -4), years, strategy)
+    if key in _EXPLORE_CACHE:
+        return _EXPLORE_CACHE[key]
+    p = PRESETS[strategy]
+    horizon = min(MAX_YEARS, max(years + 5, 10))
+    sim = simulate(principal, monthly, goal, p["mu"], p["vol"], horizon, n=2000)
+    by = sim["by_year"]
+    prob = by[years - 1]
+    row = sim["yearly"][years - 1]
+    paid = row["paid"]
+    already = principal >= goal
+    # 확률을 올리는 길 (내가 정할 수 있는 것부터)
+    alts = []
+    need50 = required_monthly(principal, goal, years, p["mu"], p["vol"], 0.5) if not already else 0
+    need70 = required_monthly(principal, goal, years, p["mu"], p["vol"], 0.7) if not already else 0
+    if need50 is not None and need50 > monthly:
+        alts.append({"kind": "monthly", "title": f"매달 {need50 / 1e4:,.0f}만원으로 늘리면", "detail": f"{years}년 안 확률 절반(50%)",
+                     "monthly": need50, "years": years})
+    if need70 is not None and need70 > monthly and need70 != need50:
+        alts.append({"kind": "monthly", "title": f"매달 {need70 / 1e4:,.0f}만원이면", "detail": f"{years}년 안 확률 70%", "monthly": need70, "years": years})
+    y50, y70 = _first_year(by, 0.5), _first_year(by, 0.7)
+    if (y50 is None or y70 is None) and horizon < MAX_YEARS:  # 10년 넘게 걸리는 목표 — 30년까지 다시 본다
+        far = simulate(principal, monthly, goal, p["mu"], p["vol"], MAX_YEARS, n=1500)["by_year"]
+        y50, y70 = y50 or _first_year(far, 0.5), y70 or _first_year(far, 0.7)
+    if y50 and y50 > years:
+        alts.append({"kind": "years", "title": f"기간을 {y50}년으로 늘리면", "detail": f"지금 적립액 그대로 확률 절반 · {y70}년이면 70%" if y70 else f"지금 적립액 그대로 확률 절반 ({MAX_YEARS}년 안에 70%는 어려움)",
+                     "monthly": monthly, "years": y50})
+    lump = (goal / principal) ** (1 / years) - 1 if principal > 0 and monthly == 0 else None
+    need_cagr = None  # 적립까지 감안해 '보통 경로'로 닿으려면 해마다 몇 %가 필요한가 (이분 탐색)
+    if not already:
+        lo, hi = -0.5, 3.0
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            v = principal
+            for _k in range(years * 12):
+                v = (v + monthly) * (1 + mid) ** (1 / 12)
+            lo, hi = (mid, hi) if v < goal else (lo, mid)
+        need_cagr = round(hi, 4)
+    if already:
+        verdict, level = "이미 목표 금액 이상이에요 — 지키는 것이 목표예요", "great"
+    elif prob >= 0.7:
+        verdict, level = "현실적인 계획이에요", "great"
+    elif prob >= 0.45:
+        verdict, level = "해볼 만해요 — 절반쯤은 닿아요", "good"
+    elif prob >= 0.2:
+        verdict, level = "빠듯해요 — 적립액이나 기간을 조금 늘려 보세요", "warn"
+    else:
+        verdict, level = "이대로는 어려워요 — 적립액·기간을 바꿔야 해요", "bad"
+    honest = []
+    if need_cagr is not None and need_cagr > 0.2:
+        honest.append(f"이 기간에 닿으려면 해마다 약 {need_cagr:.0%}가 필요해요. 지수의 장기 평균은 연 {p['mu']:.0%} 안팎이라 "
+                      "이 차이를 '고수익 종목'이나 몰빵·레버리지로 메우려 하면 크게 잃을 확률이 훨씬 커져요.")
+    if y50 is None and not already:
+        honest.append(f"지금 조건 그대로면 {MAX_YEARS}년 안에도 닿을 확률이 절반이 안 돼요 — 매달 조금이라도 넣는 것이 가장 큰 차이를 만들어요.")
+    if paid > 0 and not already:
+        share = paid / goal
+        honest.append(f"목표의 {min(share, 9.99):.0%}는 내가 넣는 돈이에요 — 목표 금액은 수익보다 '꾸준히 넣기'에서 대부분 나와요." if share >= 0.5
+                      else f"넣는 돈은 목표의 {share:.0%} — 나머지는 시장 수익에 기대야 해서 결과의 폭이 넓어요.")
+    if sim["p_mdd30"] > 0.25:
+        honest.append(f"가는 길에 고점 대비 30% 넘게 떨어지는 때를 겪을 확률 {sim['p_mdd30']:.0%} — 그때 멈추지 않는 것이 계획의 일부예요.")
+    out = {"inputs": {"principal": principal, "monthly": monthly, "goal": goal, "years": years, "strategy": strategy},
+           "assumption": {"name": p["name"], "mu": p["mu"], "vol": p["vol"], "source": p["source"]},
+           "prob": prob, "level": level, "verdict": verdict, "already": already,
+           "at_target": {"paid": paid, "p10": row["p10"], "p50": row["p50"], "p90": row["p90"], "growth_p50": row["p50"] - paid},
+           "median_years": sim["median_years"], "years_50": y50, "years_70": y70, "need_cagr": need_cagr, "lump_cagr": lump,
+           "mdd_p50": sim["mdd_p50"], "p_mdd30": sim["p_mdd30"],
+           "path": [{"year": r["year"], "paid": r["paid"], "p10": r["p10"], "p50": r["p50"], "p90": r["p90"], "p_reach": by[r["year"] - 1]}
+                    for r in sim["yearly"]],
+           "alternatives": alts[:3], "honest": honest, "presets": EXPLORE_PRESETS,
+           "note": "보장이 아니라 확률이에요 — 과거 평균·변동성으로 2,000가지 미래를 만들어 목표에 닿은 경우를 셌어요. 세금·수수료는 대략 반영."}
+    if len(_EXPLORE_CACHE) > 500:
+        _EXPLORE_CACHE.clear()
+    _EXPLORE_CACHE[key] = out
+    return out
+
+
 # ------------------------------------------------------------------ 저장 · 진행률
 def get(app) -> dict:
     return ops.get_state(app.engine, KEY)
+
+
+KEEP_ON_SAVE = ("lots", "done_months", "history", "badges", "reported")
+
+
+def mark_done(g: dict, day: str) -> dict:
+    """이번 달 적립을 했다고 기록 (연속 적립 기록용 · 'YYYY-MM')."""
+    months = sorted(set(g.get("done_months") or []) | {day[:7]})
+    return g | {"done_months": months[-240:]}
 
 
 def save(app, body: dict) -> dict:
@@ -231,6 +345,9 @@ def save(app, body: dict) -> dict:
             raise ValueError(f"ETF 는 {', '.join(ETFS)} 중 하나")
         g["dca"] = {"on": bool(d.get("on", prev.get("on", False))), "day": day, "mode": mode, "target": target, "etf": etf,
                     "amount": float(d.get("amount", g["monthly"]) or g["monthly"]), "last": prev.get("last")}
+    for k in KEEP_ON_SAVE:  # v35: 계획을 고쳐 저장해도 적립 기록·월별 기록·배지는 그대로 (예전엔 '샀어요' 기록이 지워졌다)
+        if cur.get(k) is not None:
+            g[k] = cur[k]
     pl = plan(g["principal"], g["monthly"], g["goal"], g["target_years"], g["strategy"], g["raise_pct"])  # 검증
     g["checkpoints"] = pl["sim"]["yearly"][: g["target_years"] + 3]  # 해마다 '이쯤이면 정상' 범위 (진행률 판정용으로 저장)
     g["p_target"] = pl["p_target"]
@@ -249,6 +366,10 @@ def current_assets(app) -> tuple[float, str]:
     if d.get("mode") == "paper" and d.get("target") == "etf":
         pf = _load_book(app, etf_book())
         return float(pf.equity(_book_prices(app, pf))), f"ETF 적립 모의 장부 · {ETFS.get(d.get('etf') or '069500', '').split(' (')[0]}"
+    from . import accounts, tenancy
+    if tenancy.scoped() and d.get("mode", "paper") == "live" and not accounts.load(app.engine):
+        # v35: 회원의 실계좌 목표는 '샀어요' 기록·내 계좌로만 센다 — 연습용 가상 1,000만원 장부를 내 자산으로 세지 않는다
+        return 0.0, "아직 기록이 없어요 — 증권사에서 사면 '샀어요'로 기록해 주세요"
     try:
         vals, cash, total, names = _book(app, d.get("mode", "paper"))
     except Exception:  # noqa: BLE001
@@ -398,7 +519,7 @@ def record_buy(app, qty: float, price: float, deposit: float | None = None, etf:
                                  "broker": (acct or {}).get("broker") or "", "cash": cash, "holdings": list(hold.values())})
     today = now.astimezone(KST).date().isoformat()
     lots.append({"date": today, "etf": etf, "qty": qty, "price": price, "deposit": float(deposit), "cost": round(cost)})
-    g = g | {"lots": lots[-240:]}
+    g = mark_done(g | {"lots": lots[-240:]}, today)
     if d:
         g["dca"] = d | {"last": today}
     ops.set_state(app.engine, KEY, g)
@@ -624,10 +745,10 @@ def dca_run(app, now: datetime | None = None) -> dict:
         r = {"mode": "live", "amount": amt, "sheet": sheet.strip(" ·")}
         msg = f"오늘은 적립일 — 증권 계좌로 {amt / 1e4:,.0f}만원을 옮기고 사세요{sheet} (프로그램은 돈을 옮기지 않습니다)"
     d["last"] = today.isoformat()
-    ops.set_state(app.engine, KEY, g | {"dca": d})
+    ops.set_state(app.engine, KEY, mark_done(g | {"dca": d}, today.isoformat()))
     push(app.engine, "brief", "월 적립일", msg, level="info", link="#goal", dedupe=f"dca:{who}{today.strftime('%Y-%m')}", now=now)
     return {"done": True, **r, "message": msg}
 
 
-__all__ = ["PRESETS", "ACCOUNTS", "ETFS", "ETF_BOOK", "RECOMMENDED", "AI_CAP_MAX", "apply_recommended", "band_at", "order_sheet", "simulate", "required_monthly", "plan", "tax_compare", "get", "save", "progress",
+__all__ = ["explore", "EXPLORE_PRESETS", "mark_done", "PRESETS", "ACCOUNTS", "ETFS", "ETF_BOOK", "RECOMMENDED", "AI_CAP_MAX", "apply_recommended", "band_at", "order_sheet", "simulate", "required_monthly", "plan", "tax_compare", "get", "save", "progress",
            "deposit", "etf_buy", "last_close", "dca_due", "dca_run", "next_dca", "home_card", "record_buy", "buy_estimate", "GOAL_ACCOUNT"]

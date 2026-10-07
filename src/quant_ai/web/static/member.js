@@ -3,13 +3,13 @@
 "use strict";
 
 // 회원 메뉴 (운영 기능 없음). 투자 정보 범위가 info 일 때만 'AI 추천'
-const MEMBER_NAV = [["dashboard", "home", "홈"], ["watch", "star", "관심종목"], ["goal", "target", "내 목표"], ["pos", "portfolio", "모의투자"],
-  ["accounts", "portfolio", "내 계좌"], ["market", "market", "시장"], ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"],
-  ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
+const MEMBER_NAV = [["dashboard", "home", "홈"], ["goal", "target", "내 목표"], ["explore", "target", "얼마를 언제까지"], ["together", "star", "같이 모으기"],
+  ["watch", "star", "관심종목"], ["pos", "portfolio", "모의투자"], ["accounts", "portfolio", "내 계좌"], ["market", "market", "시장"],
+  ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
 // 회원이 열 수 있는 화면 (나머지는 '운영자 전용' 안내)
 const MEMBER_VIEWS = new Set(["dashboard", "watch", "goal", "pos", "accounts", "market", "news", "newslist", "calendar", "alerts", "more",
   "analysis", "n", "d", "map", "compare", "myjournal", "manual", "chat", "account", "profile", "picks", "aitrust", "scorecard", "report",
-  "verify", "signup", "reset", "login"]);
+  "verify", "signup", "reset", "login", "explore", "together", "club"]);
 const ADVICE_VIEWS = new Set(["picks", "aitrust", "scorecard", "report"]);
 
 const isMulti = () => !!(S.auth && S.auth.multi);
@@ -19,7 +19,7 @@ const adviceOn = () => !isMember() || (S.auth && S.auth.advice === "info");
 
 function memberNav() {
   const nav = MEMBER_NAV.slice();
-  if (adviceOn()) nav.splice(6, 0, ["picks", "ai", "AI 추천"]);
+  if (adviceOn()) nav.splice(8, 0, ["picks", "ai", "AI 추천"]);
   return nav;
 }
 function memberCanView(v) {
@@ -41,6 +41,7 @@ async function authBoot() {
   if (!S.me && !S.auth.role) { await memberAuth(v === "signup" ? "signup" : "login", v === "signup" ? tok : null); return; }
   if (S.me && !S.me.terms_ok) await termsDialog();
   document.body.classList.toggle("is-member", isMember());
+  if (S.me && typeof applyPendingPlan === "function") setTimeout(applyPendingPlan, 800);  // v35 가입 전에 계산한 계획
   if (v === "signup" || v === "login") location.hash = "#dashboard";
 }
 
@@ -75,6 +76,7 @@ function memberAuth(mode = "login", token = null) {
         ${field("password", "비밀번호", "password", 'autocomplete="current-password" required')}
         <div class="ma-otp" hidden>${field("otp", "2단계 인증 코드 (OTP 앱 6자리)", "text", 'inputmode="numeric" autocomplete="one-time-code" maxlength="6"')}</div>
         <button class="t-btn primary ma-go" type="submit">로그인</button>
+        <button class="t-btn ghost ma-xp" type="button" data-go="explore">가입 전에 계산해 보기 — 얼마를 언제까지?</button>
         <div class="ma-links"><a href="#" data-go="forgot">비밀번호를 잊었어요</a>${a.signup !== "closed" ? `<a href="#" data-go="signup">${a.signup === "invite" ? "초대받았어요 — 가입" : "처음이에요 — 가입하기"}</a>` : ""}</div>
         ${a.needs_owner ? '<div class="ma-msg warn">아직 운영자 계정이 없어요 — 서버에서 <code>./run.sh users owner --email 내이메일</code> 을 먼저 실행하세요</div>' : ""}`,
       signup: () => `<h2>가입하기</h2>${notice}
@@ -103,6 +105,13 @@ function memberAuth(mode = "login", token = null) {
         <button class="t-btn primary ma-go" type="submit">바꾸기</button>`,
     };
     const show = (m, msg) => {
+      if (m === "explore") {  // v35 가입 전 체험 계산기 (로그인 화면 안에서)
+        d.innerHTML = `<div class="ma-card ma-wide"><div class="ma-brand">${typeof ICONS === "object" ? ICONS.logo || "" : ""}<b>${brand}</b><span>얼마를 언제까지 — 가입 없이 계산해 보기</span></div>
+          <div id="ma-xp"></div><div class="ma-links"><a href="#" data-go="signup">가입하기</a><a href="#" data-go="login">로그인</a></div></div>`;
+        d.querySelectorAll("[data-go]").forEach((x) => x.onclick = (e) => { e.preventDefault(); show(x.dataset.go); });
+        exploreView(d.querySelector("#ma-xp"), { public: true, onStart: () => show("signup") });
+        return;
+      }
       mode = m;
       d.innerHTML = `<form class="ma-card" novalidate><div class="ma-brand">${typeof ICONS === "object" ? ICONS.logo || "" : ""}<b>${brand}</b><span>목표를 정하고, 꾸준히, 기록으로 확인하는 투자</span></div>
         ${a.notice ? `<div class="ma-msg info">${esc(a.notice)}</div>` : ""}${views[m]()}<div class="ma-err" role="alert">${msg ? esc(msg) : ""}</div>
@@ -215,7 +224,9 @@ function memberMore(el) {
   const theme = document.documentElement.dataset.theme;
   el.innerHTML = `<div class="ts ts-more"><h1 class="t-h1">더보기</h1>
     <div class="t-tiles">
-      ${tile("#goal", "target", "내 목표", "적립 계획 · 진행률")}
+      ${tile("#goal", "target", "내 목표", "적립 계획 · 진행률 · 꾸준함")}
+      ${tile("#explore", "target", "얼마를 언제까지", "목표 계산기 · 현실 확률")}
+      ${tile("#together", "star", "같이 모으기", "모임 · 친구 초대")}
       ${tile("#manual", "orders", "모의 주문", "가상 1,000만원으로 연습")}
       ${tile("#accounts", "portfolio", "내 계좌", "직접 입력 · 세금 · 배당")}
       ${tile("#myjournal", "journal", "투자 일지", "내 판단 기록 · 채점")}
@@ -322,6 +333,8 @@ TV.admin = async (el) => {
     ${tCard("서비스 정책", `<div class="t-list">
       <div class="t-li"><span class="t-co-t"><b>가입 방식</b><span>open = 누구나 · invite = 초대 링크로만 · closed = 막음</span></span><span class="t-li-r">${tChips("adm-signup", [["open", "누구나"], ["invite", "초대"], ["closed", "막음"]], pol.signup)}</span></div>
       <div class="t-li"><span class="t-co-t"><b>투자 정보 범위</b><span>none = AI 매수·매도 판단을 회원에게 안 보여 줌 (법률 검토 전 기본) · info = 모두에게 같은 AI 분석을 정보로 (유사투자자문업 신고 등 확인 후)</span></span><span class="t-li-r">${tChips("adm-advice", [["none", "보여 주지 않음"], ["info", "정보로 보여 줌"]], pol.advice)}</span></div>
+      <div class="t-li"><span class="t-co-t"><b>회원 초대 링크</b><span>회원이 자기 링크로 친구를 초대 (가입 방식이 '초대'여도 가입 가능)</span></span><span class="t-li-r">${tChips("adm-minv", [["1", "허용"], ["0", "막음"]], pol.member_invites === false ? "0" : "1")}</span></div>
+      <div class="t-li"><span class="t-co-t"><b>초대 보상 (프로 일수)</b><span>친구가 가입하면 초대한 사람과 친구 모두 프로 N일 · 0 = 보상 없음 · 한 사람 1년까지</span></span><span class="t-li-r"><input class="t-in" id="adm-ref" inputmode="numeric" style="width:80px" value="${pol.ref_reward_days || 0}"></span></div>
       <div class="t-li"><span class="t-co-t"><b>이메일 확인 필수</b><span>메일(SMTP)이 있을 때 켜는 것을 권해요</span></span><span class="t-li-r">${tChips("adm-verify", [["1", "필수"], ["0", "선택"]], pol.require_verify ? "1" : "0")}</span></div></div>
       <div class="t-form">${tField("서비스 이름", `<input class="t-in" id="adm-brand" maxlength="40" value="${esc(pol.brand || "")}">`)}${tField("문의 이메일", `<input class="t-in" id="adm-support" maxlength="120" value="${esc(pol.support || "")}">`)}${tField("로그인 화면 공지", `<input class="t-in" id="adm-notice" maxlength="300" value="${esc(pol.notice || "")}">`)}</div>
       <div class="t-pro"><button class="t-btn" id="adm-pol-save">저장</button><span class="t-sub" id="adm-pol-msg"></span></div>`)}
@@ -351,10 +364,11 @@ TV.admin = async (el) => {
     if (k === "info" && !confirm("회원에게 AI 매수·매도 판단을 '정보'로 보여 줍니다.\n유사투자자문업 신고 등 법률 검토를 마쳤나요?")) return;
     pol2.advice = k; el.querySelectorAll("#adm-advice button").forEach((b) => b.classList.toggle("on", b.dataset.k === k));
   });
+  tBind(el, "adm-minv", (k) => { pol2.member_invites = k === "1"; el.querySelectorAll("#adm-minv button").forEach((b) => b.classList.toggle("on", b.dataset.k === k)); });
   tBind(el, "adm-verify", (k) => { pol2.require_verify = k === "1"; el.querySelectorAll("#adm-verify button").forEach((b) => b.classList.toggle("on", b.dataset.k === k)); });
   el.querySelector("#adm-pol-save").onclick = async () => {
     try {
-      await post("/api/admin/policy", { ...pol2, brand: el.querySelector("#adm-brand").value, support: el.querySelector("#adm-support").value, notice: el.querySelector("#adm-notice").value });
+      await post("/api/admin/policy", { ...pol2, ref_reward_days: +el.querySelector("#adm-ref").value || 0, brand: el.querySelector("#adm-brand").value, support: el.querySelector("#adm-support").value, notice: el.querySelector("#adm-notice").value });
       el.querySelector("#adm-pol-msg").textContent = "저장했어요 — 회원 화면에 바로 반영돼요";
     } catch (e) { el.querySelector("#adm-pol-msg").textContent = e.message; }
   };
