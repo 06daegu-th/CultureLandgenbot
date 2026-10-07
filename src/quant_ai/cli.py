@@ -701,6 +701,27 @@ def cmd_goal_plan(args):
         print(f"  {c['year']}년 뒤: 넣은 돈 {c['paid']:,.0f} · 보통 {c['p50']:,.0f} (하위 10% {c['p10']:,.0f} · 상위 10% {c['p90']:,.0f})")
 
 
+def cmd_smallcap(args):
+    """v32 소액 현실 검증: 200만원 + 매달 100만원 · 1주 단위 · 실비용으로 후보 규칙 vs 지수 ETF 적립 (KRX 16년)."""
+    from . import smallcap
+    app = _app(args)
+    if args.show:
+        s = smallcap.status(app)
+    else:
+        s = smallcap.run(app, args.marcap_dir, principal=args.principal, monthly=args.monthly)
+    if not s.get("results"):
+        print("결과가 없어요 — ./run.sh smallcap (KRX 16년 자료 필요)")
+        return
+    e = s["etf"]
+    print(f"계좌: {s['principal']:,.0f}원 + 매달 {s['monthly']:,.0f}원 · 자료 {s['data'].get('from')}~{s['data'].get('to')} · "
+          f"{'내 PC 계산' if s.get('origin') == 'local' else '개발자 PC 계산(참고)'} · 봉인 {'확인' if s.get('sealed_ok') else '불일치!'}")
+    print(f"  {'규칙':<24} {'개발 구간':>16} {'검증 구간':>16} {'검증 최종 금액':>16}")
+    print(f"  {'지수 ETF 적립':<22} {e['dev']['twr_cagr']:+15.1%} {e['holdout']['twr_cagr']:+15.1%} {e['holdout']['final']:>15,}원")
+    for r in s["results"]:
+        print(f"  {r['name']:<24} {r['dev']['twr_cagr']:+15.1%} {r['holdout']['twr_cagr']:+15.1%} {r['holdout']['final']:>15,}원")
+    print(s["verdict"]["text"])
+
+
 def cmd_autopilot(args):
     """v30 AI 자동매매: status (오늘 할 일·관문) · run (지금 한 번) · goal (100만원 → 목표 확률)."""
     from . import autopilot as AP
@@ -988,6 +1009,12 @@ def main(argv: list[str] | None = None) -> None:
     gp.add_argument("--day", type=int, default=None)
     gp.add_argument("--etf", default=None, choices=["069500", "360750"])
     gp.set_defaults(fn=cmd_goal_plan)
+    sc = sub.add_parser("smallcap", help="소액 현실 검증 (200만원 + 매달 100만원 · 1주 단위 · 실비용 — 후보 규칙 vs 지수 ETF 적립, KRX 16년)")
+    sc.add_argument("--marcap-dir", default=None)
+    sc.add_argument("--principal", type=float, default=2_000_000)
+    sc.add_argument("--monthly", type=float, default=1_000_000)
+    sc.add_argument("--show", action="store_true", help="다시 계산하지 않고 저장된 결과만")
+    sc.set_defaults(fn=cmd_smallcap)
     ap = sub.add_parser("autopilot", help="AI 자동매매 (신호 엔진 후보로 매일 사고팔기 · 가상 100만원 장부 · 실제 계좌는 관문 5개 통과 + 켬)")
     ap.add_argument("action", nargs="?", default="status", choices=["status", "run", "goal"])
     ap.set_defaults(fn=cmd_autopilot)

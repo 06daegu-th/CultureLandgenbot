@@ -1,0 +1,290 @@
+{
+ "principal": 2000000,
+ "monthly": 1000000,
+ "periods": {
+  "dev": [
+   "2012-01-01",
+   "2020-12-31"
+  ],
+  "holdout": [
+   "2021-01-01",
+   null
+  ]
+ },
+ "etf": {
+  "dev": {
+   "final": 149724030,
+   "paid": 109000000,
+   "twr_total": 0.5514,
+   "twr_cagr": 0.0513,
+   "mdd": -0.4425,
+   "irr": 0.0683,
+   "sharpe": 0.406
+  },
+  "holdout": {
+   "final": 169112610,
+   "paid": 70000000,
+   "twr_total": 1.4323,
+   "twr_cagr": 0.1731,
+   "mdd": -0.3862,
+   "irr": 0.3067,
+   "sharpe": 0.71
+  }
+ },
+ "results": [
+  {
+   "name": "factor-top3-trend200",
+   "top_k": 3,
+   "trend_ma": 200,
+   "dev": {
+    "final": 129608698,
+    "paid": 109000000,
+    "twr_total": 0.3024,
+    "twr_cagr": 0.0305,
+    "mdd": -0.2964,
+    "irr": 0.0375,
+    "sharpe": 0.279,
+    "avg_cash": 0.226,
+    "skipped_unaffordable": 2,
+    "trades": 290
+   },
+   "holdout": {
+    "final": 104217406,
+    "paid": 70000000,
+    "twr_total": 0.8065,
+    "twr_cagr": 0.1121,
+    "mdd": -0.3194,
+    "irr": 0.1367,
+    "sharpe": 0.575,
+    "avg_cash": 0.219,
+    "skipped_unaffordable": 1,
+    "trades": 198
+   },
+   "dev_mix": {
+    "final": 146487552,
+    "paid": 109000000,
+    "twr_total": 0.4969,
+    "twr_cagr": 0.047,
+    "mdd": -0.4158,
+    "irr": 0.0637,
+    "sharpe": 0.401
+   },
+   "holdout_mix": {
+    "final": 159420759,
+    "paid": 70000000,
+    "twr_total": 1.3851,
+    "twr_cagr": 0.169,
+    "mdd": -0.3662,
+    "irr": 0.2857,
+    "sharpe": 0.728
+   },
+   "dev_dsr": 0.173
+  },
+  {
+   "name": "factor-top5-trend200",
+   "top_k": 5,
+   "trend_ma": 200,
+   "dev": {
+    "final": 123681062,
+    "paid": 109000000,
+    "twr_total": 0.1736,
+    "twr_cagr": 0.0184,
+    "mdd": -0.4273,
+    "irr": 0.0274,
+    "sharpe": 0.207,
+    "avg_cash": 0.23,
+    "skipped_unaffordable": 8,
+    "trades": 414
+   },
+   "holdout": {
+    "final": 103518954,
+    "paid": 70000000,
+    "twr_total": 0.9907,
+    "twr_cagr": 0.1316,
+    "mdd": -0.3449,
+    "irr": 0.1343,
+    "sharpe": 0.663,
+    "avg_cash": 0.222,
+    "skipped_unaffordable": 4,
+    "trades": 281
+   },
+   "dev_mix": {
+    "final": 146321468,
+    "paid": 109000000,
+    "twr_total": 0.497,
+    "twr_cagr": 0.047,
+    "mdd": -0.4382,
+    "irr": 0.0634,
+    "sharpe": 0.398
+   },
+   "holdout_mix": {
+    "final": 159507403,
+    "paid": 70000000,
+    "twr_total": 1.3575,
+    "twr_cagr": 0.1665,
+    "mdd": -0.372,
+    "irr": 0.2859,
+    "sharpe": 0.718
+   },
+   "dev_dsr": 0.12
+  },
+  {
+   "name": "factor-top10-trend200",
+   "top_k": 10,
+   "trend_ma": 200,
+   "dev": {
+    "final": 120128052,
+    "paid": 109000000,
+    "twr_total": 0.1411,
+    "twr_cagr": 0.0151,
+    "mdd": -0.4214,
+    "irr": 0.0211,
+    "sharpe": 0.187,
+    "avg_cash": 0.226,
+    "skipped_unaffordable": 20,
+    "trades": 755
+   },
+   "holdout": {
+    "final": 114281779,
+    "paid": 70000000,
+    "twr_total": 0.9442,
+    "twr_cagr": 0.1268,
+    "mdd": -0.2703,
+    "irr": 0.1686,
+    "sharpe": 0.688,
+    "avg_cash": 0.227,
+    "skipped_unaffordable": 18,
+    "trades": 499
+   },
+   "dev_mix": {
+    "final": 145140473,
+    "paid": 109000000,
+    "twr_total": 0.4721,
+    "twr_cagr": 0.045,
+    "mdd": -0.4355,
+    "irr": 0.0617,
+    "sharpe": 0.384
+   },
+   "holdout_mix": {
+    "final": 161923599,
+    "paid": 70000000,
+    "twr_total": 1.3921,
+    "twr_cagr": 0.1696,
+    "mdd": -0.366,
+    "irr": 0.2912,
+    "sharpe": 0.729
+   },
+   "dev_dsr": 0.108
+  },
+  {
+   "name": "factor-top5",
+   "top_k": 5,
+   "trend_ma": null,
+   "dev": {
+    "final": 114636102,
+    "paid": 109000000,
+    "twr_total": 0.0647,
+    "twr_cagr": 0.0072,
+    "mdd": -0.5904,
+    "irr": 0.011,
+    "sharpe": 0.124,
+    "avg_cash": 0.031,
+    "skipped_unaffordable": 7,
+    "trades": 347
+   },
+   "holdout": {
+    "final": 111028809,
+    "paid": 70000000,
+    "twr_total": 1.135,
+    "twr_cagr": 0.1459,
+    "mdd": -0.343,
+    "irr": 0.1586,
+    "sharpe": 0.681,
+    "avg_cash": 0.027,
+    "skipped_unaffordable": 4,
+    "trades": 260
+   },
+   "dev_mix": {
+    "final": 144928969,
+    "paid": 109000000,
+    "twr_total": 0.4727,
+    "twr_cagr": 0.045,
+    "mdd": -0.4634,
+    "irr": 0.0614,
+    "sharpe": 0.377
+   },
+   "holdout_mix": {
+    "final": 160242596,
+    "paid": 70000000,
+    "twr_total": 1.3643,
+    "twr_cagr": 0.1671,
+    "mdd": -0.3709,
+    "irr": 0.2875,
+    "sharpe": 0.716
+   },
+   "dev_dsr": 0.078
+  },
+  {
+   "name": "short-trend-top5",
+   "top_k": 5,
+   "trend_ma": null,
+   "dev": {
+    "final": 118496433,
+    "paid": 109000000,
+    "twr_total": -0.1749,
+    "twr_cagr": -0.0216,
+    "mdd": -0.6301,
+    "irr": 0.0182,
+    "sharpe": 0.022,
+    "avg_cash": 0.021,
+    "skipped_unaffordable": 3,
+    "trades": 1036
+   },
+   "holdout": {
+    "final": 92287723,
+    "paid": 70000000,
+    "twr_total": 0.0435,
+    "twr_cagr": 0.0077,
+    "mdd": -0.6705,
+    "irr": 0.0947,
+    "sharpe": 0.188,
+    "avg_cash": 0.025,
+    "skipped_unaffordable": 2,
+    "trades": 663
+   },
+   "dev_mix": {
+    "final": 144409902,
+    "paid": 109000000,
+    "twr_total": 0.4164,
+    "twr_cagr": 0.0404,
+    "mdd": -0.4464,
+    "irr": 0.0606,
+    "sharpe": 0.34
+   },
+   "holdout_mix": {
+    "final": 157612567,
+    "paid": 70000000,
+    "twr_total": 1.2448,
+    "twr_cagr": 0.1563,
+    "mdd": -0.3799,
+    "irr": 0.2816,
+    "sharpe": 0.668
+   },
+   "dev_dsr": 0.043
+  }
+ ],
+ "chosen": null,
+ "verdict": {
+  "beat_etf_holdout": false,
+  "text": "개발 구간에서 지수 ETF 적립을 이긴 후보가 없음 — 지수 ETF 적립이 정답"
+ },
+ "n_trials": 15,
+ "data": {
+  "source": "KRX marcap (상장폐지 포함)",
+  "from": "2010",
+  "to": "2026-09-23",
+  "universe": "월말 시가총액 상위 100"
+ },
+ "computed_at": "2026-10-07T05:07:21+00:00",
+ "hash": "b4339661db4c515e4f0c19c497d276595e66171066277a0ceec75a3229c093f8"
+}

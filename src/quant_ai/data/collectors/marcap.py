@@ -99,6 +99,7 @@ def adjusted_bars(df: pd.DataFrame, codes: list[str]) -> dict[str, pd.DataFrame]
             "volume": g["Volume"].astype(float) / f,  # 분할 전후 거래량도 같은 단위로
             "marcap": g["Marcap"].astype(float),  # 시가총액(원) — 분할과 무관
             "amount": g["Amount"].astype(float),  # 거래대금(원)
+            "close_raw": g["Close"].astype(float),  # v32: 그날 실제 1주 가격 (소액 백테스트 — 1주를 살 수 있었나)
         })
         out[code] = bars
     return out

@@ -1125,6 +1125,7 @@ TV.goal = async (el) => {
     ${goalRecCard(g)}
     ${pr.set ? tCard("지금까지", (typeof goalBar === "function" ? goalBar(pr) : "") + goalBandLine(pr)) : ""}
     ${goalCheckCard(g)}
+    ${tSmallcapCard(g.smallcap, true)}
     ${(g.honest || []).length ? `<div class="t-note warn" style="grid-column:1/-1;align-self:start">${g.honest.map((x) => esc(koText(x))).join("<br>")}</div>` : ""}
     ${tCard("목표 바꿔 보기", `<div class="t-form">
       ${tField("지금 원금 (원)", `<input id="g-principal" class="t-in" inputmode="numeric" value="${num(i.principal)}">`)}
@@ -1163,7 +1164,7 @@ TV.goal = async (el) => {
   L.root.querySelector("#g-save").onclick = () => save();
   L.root.querySelectorAll("[data-gapply]").forEach((b) => { b.onclick = async () => {
     const live = b.dataset.mode === "live";
-    if (live && !confirm("실제 계좌 계획으로 시작할까요?\n\n프로그램은 돈을 옮기지 않아요. 매달 적립일에 알림과 주문표가 오면 증권사 앱에서 직접 이체하고 사요.\nAI 자동매매는 관문 5개를 다 넘기 전까지 실제 계좌에 손대지 않아요.")) return;
+    if (live && !confirm("실제 계좌 계획으로 시작할까요?\n\n프로그램은 돈을 옮기지 않아요. 매달 적립일에 알림과 주문표가 오면 증권사 앱에서 직접 이체하고 사요.\nAI 자동매매는 관문 6개를 다 넘기 전까지 실제 계좌에 손대지 않아요.")) return;
     b.disabled = true; b.textContent = "적용 중…";
     const r = await post("/api/goal", { apply: b.dataset.gapply, mode: b.dataset.mode }).catch((e) => ({ error: e.message }));
     if (r.error) { toast({ title: "적용하지 못했어요", body: r.error, level: "bad" }); b.disabled = false; return; }
@@ -1182,7 +1183,7 @@ function goalRecCard(g) {
     const why = `<div class="t2-wrap" style="margin-top:8px">${r.why.map((x) => `<div class="t-sub">· ${esc(x)}</div>`).join("")}</div>`;
     if (on) {
       const d = sv.dca || {};
-      return tCard(`적용한 계획 — ${esc(r.title)}`, `${tKV([["시작", esc(sv.start || "-")], ["장부", d.mode === "live" ? "실제 계좌" : "모의 ETF 장부", "", d.mode === "live" ? "알림 + 주문표 · 돈은 직접" : "매달 자동으로 넣고 삼"], ["매달", `${d.day}일 ${tMoney(d.amount)}`], [`${sv.target_years}년 안 확률`, tPr(sv.p_target)], ["AI 자동매매 상한", `${Math.round((sv.ai_cap || 0) * 100)}%`, "", "관문 5개를 넘은 뒤 실제 계좌에서만"]])}
+      return tCard(`적용한 계획 — ${esc(r.title)}`, `${tKV([["시작", esc(sv.start || "-")], ["장부", d.mode === "live" ? "실제 계좌" : "모의 ETF 장부", "", d.mode === "live" ? "알림 + 주문표 · 돈은 직접" : "매달 자동으로 넣고 삼"], ["매달", `${d.day}일 ${tMoney(d.amount)}`], [`${sv.target_years}년 안 확률`, tPr(sv.p_target)], ["AI 자동매매 상한", `${Math.round((sv.ai_cap || 0) * 100)}%`, "", "관문 6개를 넘은 뒤 실제 계좌에서만"]])}
         ${ap?.start_sheet ? `<div class="t-note">오늘 할 일: 증권 계좌(가능하면 ISA)에 ${tMoney(sv.principal)} 넣고 — ${esc(ap.start_sheet)}</div>` : ""}
         <div class="t-pro">${d.mode !== "live" ? `<button class="t-btn ghost" data-gapply="${k}" data-mode="live">실제 계좌로 바꾸기</button>` : `<button class="t-btn ghost" data-gapply="${k}" data-mode="paper">모의로 바꾸기</button>`}<a class="t-btn ghost" href="#autopilot">AI 자동매매 관문</a></div>`);
     }
@@ -1503,6 +1504,29 @@ function tGoalCard(g) {
     <ol class="t-ol">${(g.advice || []).map((x, i) => `<li><span class="t-num">${i + 1}</span>${esc(x)}</li>`).join("")}</ol>
     <div class="t-pro"><button class="t-btn ghost" id="ap-goal">다시 계산</button><a class="t-btn ghost" href="#proof">증명 프로젝트</a></div>`);
 }
+// v32: 소액 현실 검증 — 같은 돈(원금 + 매달 적립)으로 1주 단위 매매만 했다면? (16년 KRX · 지수 ETF 적립과 비교)
+const SC_NAME = { "factor-top3-trend200": "종목 고르기 3개 (추세 필터)", "factor-top5-trend200": "종목 고르기 5개 (추세 필터)",
+  "factor-top10-trend200": "종목 고르기 10개 (추세 필터)", "factor-top5": "종목 고르기 5개", "short-trend-top5": "단기 추세 5개 (지금 AI 와 비슷)" };
+function tSmallcapCard(sc, brief = false) {
+  if (!sc || !sc.etf) return "";
+  const e = sc.etf, rows = sc.results || [], hp = (sc.periods || {}).holdout || [], dp = (sc.periods || {}).dev || [];
+  const best = rows.slice().sort((a, b) => b.holdout.final - a.holdout.final)[0];
+  const src = sc.origin === "local" ? "내 PC 에서 계산" : "개발자 PC 계산 (참고 — './run.sh smallcap' 으로 내 PC 에서 다시)";
+  const head = `${hp[0] ? hp[0].slice(0, 4) : ""}년부터 ${tMoney(sc.principal)} + 매달 ${tMoney(sc.monthly)}`;
+  if (brief) {
+    return tCard("과거 검증 — 같은 돈이면 무엇이 나았나", `${tKV([["지수 ETF 적립", tMoney(e.holdout.final), "up", `넣은 돈 ${tMoney(e.holdout.paid)} · 연 ${tPct(e.holdout.twr_cagr, 1)}`],
+      ["가장 나은 종목 고르기", best ? tMoney(best.holdout.final) : "-", "", best ? `${esc(SC_NAME[best.name] || best.name)} · 연 ${tPct(best.holdout.twr_cagr, 1)}` : ""]])}
+      <div class="t-sub" style="margin-top:6px">${esc(head)} · 1주 단위 · 수수료·세금 반영 · ${esc(sc.verdict?.text || "")}</div>`);
+  }
+  const tr = (name, d, h, cls = "") => `<tr${cls ? ` class="${cls}"` : ""}><td>${name}</td><td class="r num">${tPct(d.twr_cagr, 1)}</td><td class="r num down">${tPct(d.mdd, 0)}</td><td class="r num">${tPct(h.twr_cagr, 1)}</td><td class="r num down">${tPct(h.mdd, 0)}</td><td class="r num b">${tMoney(h.final)}</td></tr>`;
+  return tCard("소액 현실 검증 — 작은 계좌로 실제로 할 수 있었던 매매만", `
+    <div class="t-sub b">${esc(head)} · 그날 실제 가격으로 1주 단위 · 1주도 못 사면 건너뜀 · 수수료·미끄러짐·연도별 거래세</div>
+    <div class="t2-scroll" style="margin-top:8px"><table class="t-table"><thead><tr><th>규칙</th><th class="r">개발 ${esc((dp[0] || "").slice(0, 4))}~${esc((dp[1] || "").slice(0, 4))}<br><span class="t-sub">연</span></th><th class="r">최대 하락</th><th class="r">검증 ${esc((hp[0] || "").slice(0, 4))}~<br><span class="t-sub">연</span></th><th class="r">최대 하락</th><th class="r">검증 최종 금액</th></tr></thead><tbody>
+      ${tr("<b>지수 ETF 적립</b>", e.dev, e.holdout, "acc")}${rows.map((r) => tr(esc(SC_NAME[r.name] || r.name), r.dev, r.holdout)).join("")}</tbody></table></div>
+    <div class="t-note ${sc.verdict?.beat_etf_holdout ? "" : "warn"}" style="margin-top:10px"><b>${esc(sc.verdict?.text || "")}</b><br><span class="t-sub">규칙은 개발 구간 성적으로만 고르고(ETF 적립보다 높고 최대 하락이 -45% 보다 얕은 것), 검증 구간은 고른 뒤 한 번만 계산 · 시도 ${tN(sc.n_trials)}번으로 보정 · 검증 구간 넣은 돈 ${tMoney(e.holdout.paid)}</span></div>
+    <div class="t-foot">${esc(src)} · 자료 ${esc(sc.data?.from || "")}~${esc(sc.data?.to || "")} · ${esc(sc.data?.universe || "")} · 봉인 ${sc.sealed_ok ? "확인" : "불일치"} ${esc(String(sc.hash || "").slice(0, 8))}${sc.running ? " · 다시 계산 중…" : ""}${sc.error ? ` · 마지막 계산 실패: ${esc(sc.error)}` : ""}</div>
+    <div class="t-pro"><button class="t-btn ghost" id="ap-sc" ${sc.running ? "disabled" : ""}>내 PC 자료로 다시 계산 (1~2분)</button></div>`);
+}
 TV.autopilot = async (el) => {
   const L = await tLoad(el, "autopilot", "AI 자동매매", "t2-ap", () => api("/api/autopilot"));
   if (!L) return;
@@ -1511,10 +1535,10 @@ TV.autopilot = async (el) => {
   const acts = (pv.actions || []).slice().sort((a, b) => ({ sell: 0, buy: 1, hold: 2 }[a.action] - { sell: 0, buy: 1, hold: 2 }[b.action]));
   const hold = Object.entries(s.holdings || {});
   tPaint(L.root, "AI 자동매매", `
-    ${tHero({ k: `${c.paper_on ? "가상 100만원 장부 자동 운용 중" : "가상 장부 꺼짐"} · 실제 계좌 ${s.live ? "연결됨" : `연결 안 됨 (관문 ${nOk}/5)`}`, lv: s.live ? "good" : c.paper_on ? "warn" : "idle",
+    ${tHero({ k: `${c.paper_on ? "가상 100만원 장부 자동 운용 중" : "가상 장부 꺼짐"} · 실제 계좌 ${s.live ? "연결됨" : `연결 안 됨 (관문 ${nOk}/${(s.gates || []).length})`}`, lv: s.live ? "good" : c.paper_on ? "warn" : "idle",
       big: p.days ? `<span class="${tCls(p.ret)}">${tPct(p.ret, 2)}</span> <span class="t-sub" style="font-size:.5em">${tWon(p.equity)} · 코스피 대비 ${p.excess == null ? "-" : tPct(p.excess, 1)}</span>` : `${tWon(p.equity || c.principal)} <span class="t-sub" style="font-size:.5em">아직 하루치 기록 전</span>`,
       sub: s.last_skip ? esc(s.last_skip) : `마지막 결정 ${esc(s.last_run || "아직 없음")} · ${esc(s.rule || "")}`,
-      foot: "AI 가 신호 엔진 점수로 매일 장중 한 번 스스로 사고팔아요. 실제 돈은 아래 관문 5개를 모두 넘고 직접 켜야 움직여요." })}
+      foot: "AI 가 신호 엔진 점수로 매일 장중 한 번 스스로 사고팔아요. 실제 돈은 아래 관문 6개를 모두 넘고 직접 켜야 움직여요." })}
     ${(p.curve || []).length > 1 ? tCard("가상 장부 자산 흐름", tSpark(p.curve.map((x) => x[1]), { h: 90, w: 640 }) + `<div class="t-foot">${tN(p.days)}거래일 · 최대 낙폭 ${tPct(p.mdd, 1)}</div>`) : ""}
     ${tCard(`오늘 AI 가 할 일 ${pv.as_of ? `<span class="t-sub">${esc(pv.as_of)} 일봉 기준 · 자리 ${tN(pv.slots)}개 · 매수 기준 점수 +${pv.buy_min}</span>` : ""}`,
       pv.error ? tEmpty("계산하지 못했어요", pv.error) : tList(acts.map((a) => `<div class="t2-item">${tSym(a.symbol, a.name, esc(a.reason || ""), `<span class="t-tag ${AP_ACT[a.action][1]}">${AP_ACT[a.action][0]}</span>${a.score != null ? tScore(a.score) : ""}`)}</div>`), "오늘은 할 일이 없어요", "점수 +0.8 이상 후보가 없고 가진 종목도 그대로 둬요")
@@ -1522,16 +1546,19 @@ TV.autopilot = async (el) => {
       + `<div class="t-pro"><button class="t-btn primary" id="ap-run">가상 장부로 지금 한 번 실행</button><a class="t-btn ghost" href="#picks">AI 추천 (점수 근거)</a></div>`)}
     ${tCard("가상 장부 보유 종목", tList(hold.map(([sym, h]) => tSym(sym, h.name || sym, `${tN(h.qty)}주 · 평균 ${tPx(h.avg_price, sym)}${h.entry_date ? ` · ${esc(h.entry_date)} 매수 · ${tN(h.held_days)}거래일` : ""}${h.stop ? ` · 손절선 ${tPx(h.stop, sym)}` : ""}`, "")), "보유 종목 없음", "장중에 AI 가 첫 결정을 하면 채워져요"))}
     ${tGoalCard(s.goal)}
-    ${tCard(`실제 계좌 연결 관문 ${nOk}/5`, tList((s.gates || []).map((g) => tStRow(g.title, g.detail, g.ok ? "good" : "idle", { label: g.ok ? "통과" : "아직" }))) + (s.live_rule ? `<div class="t-sub" style="margin-top:8px">${esc(s.live_rule)} · <a href="#goal">목표 계획</a></div>` : "")
+    ${tSmallcapCard(s.smallcap)}
+    ${tCard(`실제 계좌 연결 관문 ${nOk}/${(s.gates || []).length}`, tList((s.gates || []).map((g) => tStRow(g.title, g.detail, g.ok ? "good" : "idle", { label: g.ok ? "통과" : "아직" }))) + (s.live_rule ? `<div class="t-sub" style="margin-top:8px">${esc(s.live_rule)} · <a href="#goal">목표 계획</a></div>` : "")
       + `<div class="t-pro"><button class="t-btn ${c.live_requested ? "ghost" : "primary"}" id="ap-live">${c.live_requested ? "실제 계좌 연결 요청 취소" : "실제 계좌 연결 요청"}</button><button class="t-btn ghost" id="ap-paper">${c.paper_on ? "가상 자동 운용 멈추기" : "가상 자동 운용 다시 켜기"}</button></div>
       <div class="t-foot">요청해 두면 관문이 모두 통과되는 날 자동으로 연결돼요 · 연결되면 같은 계좌의 코어 전략 주문은 멈춰요 · 긴급 정지·하루 손실 한도·매매 준비 점검은 그대로 적용돼요</div>`)}
     ${tCard("봉인된 결정 기록 (최근)", tList((s.log || []).slice().reverse().slice(0, 10).map((d) => `<div class="t-li"><span class="t-co-t"><b class="num">${esc(d.date)}</b><span class="t2-wrap">${(d.actions || []).filter((a) => a.action !== "hold").map((a) => `${AP_ACT[a.action][0]} ${esc(a.symbol)}`).join(" · ") || "변화 없음"}${d.error ? ` · 오류 ${esc(d.error)}` : ""}</span></span><span class="t-li-r t-sub num">${esc(String(d.hash || "").slice(0, 8))}</span></div>`), "아직 기록 없음", "결정할 때마다 이유와 함께 봉인돼요"))}`);
   const act = async (body, ask, ok) => { if (ask && !confirm(ask)) return; try { await post("/api/autopilot", body); if (ok) toast({ title: ok, level: "good" }); } catch (err) { toast({ title: "실패", body: err.message || String(err), level: "warn" }); } TV.autopilot(el); };
   L.root.querySelector("#ap-run").onclick = (e) => { e.target.disabled = true; e.target.textContent = "실행 중…"; act({ action: "run" }, "", "가상 장부로 실행했어요"); };
-  L.root.querySelector("#ap-live").onclick = () => act({ action: "config", live_requested: !c.live_requested }, c.live_requested ? "" : "실제 돈으로 AI 가 자동 매매하도록 요청할까요? 관문 5개가 모두 통과되는 날부터 시작되고, 증명 프로젝트 규칙(원금·손실 한도) 안에서만 움직여요.", c.live_requested ? "요청을 취소했어요" : "요청했어요 — 관문 통과 후 시작");
+  L.root.querySelector("#ap-live").onclick = () => act({ action: "config", live_requested: !c.live_requested }, c.live_requested ? "" : "실제 돈으로 AI 가 자동 매매하도록 요청할까요? 관문 6개가 모두 통과되는 날부터 시작되고, 증명 프로젝트 규칙(원금·손실 한도) 안에서만 움직여요.", c.live_requested ? "요청을 취소했어요" : "요청했어요 — 관문 통과 후 시작");
   L.root.querySelector("#ap-paper").onclick = () => act({ action: "config", paper_on: !c.paper_on }, "", "바꿨어요");
   const gb = L.root.querySelector("#ap-goal");
   if (gb) gb.onclick = (e) => { e.target.disabled = true; e.target.textContent = "계산 중…"; act({ action: "goal" }, "", ""); };
+  const sb = L.root.querySelector("#ap-sc");
+  if (sb) sb.onclick = () => act({ action: "smallcap" }, "", "다시 계산을 시작했어요 — 1~2분 뒤 이 화면을 다시 열어 보세요");
 };
 
 // ------------------------------------------------------------ v30 회사 이해 (종목 화면 '회사' 탭)

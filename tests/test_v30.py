@@ -119,7 +119,7 @@ def test_run_trades_paper_book_and_seals_log(app):
 def test_gates_block_live_until_all_pass(app):
     from quant_ai import autopilot as AP
     g = {x["key"]: x for x in AP.gates(app)}
-    assert set(g) == {"forward", "paper", "kis", "proof", "user"} and not AP.live_enabled(app)
+    assert set(g) == {"forward", "paper", "kis", "proof", "user", "smallcap"} and not AP.live_enabled(app)
     assert not g["user"]["ok"]
     AP.set_config(app, {"live_requested": True})
     assert {x["key"]: x for x in AP.gates(app)}["user"]["ok"] and not AP.live_enabled(app)  # 다른 관문이 막고 있음

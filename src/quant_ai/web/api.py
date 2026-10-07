@@ -1104,7 +1104,11 @@ class DashboardAPI:
             return {"ok": True, "config": cfg}
         if act == "goal":
             return {"ok": True, "goal": AP.refresh_goal(self.app)}
-        raise ValueError("action 은 run / config / goal")
+        if act == "smallcap":  # v32: 소액 검증을 내 PC 의 16년 자료로 다시 계산 (백그라운드 1~2분)
+            from ..smallcap import run_background
+            self._audit("smallcap_run", "소액 검증 다시 계산")
+            return {"ok": True, **run_background(self.app)}
+        raise ValueError("action 은 run / config / goal / smallcap")
 
     def logo_queue(self) -> dict:
         """v30 로고 큐: 진짜 로고가 없는 종목 목록 (관심·보유 먼저) → 화면에서 한 번에 올리기."""
@@ -1274,6 +1278,7 @@ class DashboardAPI:
     def goal(self, q: dict | None = None) -> dict:
         """저장된 목표(또는 화면에서 바꿔 본 값)로 확률 계획 + 진행률."""
         from .. import goal
+        from ..smallcap import status as smallcap_status
         g = goal.get(self.app)
         q = {k: v for k, v in (q or {}).items() if v not in (None, "")}
         inp = {"principal": 5_000_000, "monthly": 500_000, "goal": 100_000_000, "target_years": 10, "strategy": "core", "raise_pct": 0.0} | \
@@ -1288,7 +1293,7 @@ class DashboardAPI:
         key = "goal:" + ":".join(str(inp[k]) for k in sorted(inp))
         p = self._cached(key, 600, lambda: goal.plan(**inp))
         return p | {"saved": g or None, "progress": goal.progress(self.app), "presets": goal.PRESETS, "etfs": goal.ETFS,
-                    "recommended": goal.RECOMMENDED, "ai_cap_max": goal.AI_CAP_MAX}
+                    "recommended": goal.RECOMMENDED, "ai_cap_max": goal.AI_CAP_MAX, "smallcap": smallcap_status(self.app)}
 
     def goal_save(self, body: dict) -> dict:
         from .. import goal

@@ -194,7 +194,7 @@ def test_static_v25_wiring():
     app_js = (STATIC / "app.js").read_text()
     assert "tossRender(el)" in app_js and "S.sub = sub" in app_js
     easy = (STATIC / "easy.js").read_text()
-    for v in ('["watch", "star", "관심종목"]', '["pos", "portfolio", "포트폴리오"]', '["market", "market", "시장"]', '["report", "ai", "AI 분석"]',
+    for v in ('["watch", "star", "관심종목"]', '["pos", "portfolio", "포트폴리오"]', '["market", "market", "시장"]', '["goal", "target", "내 목표"]',
               '["alerts", "bell", "알림 설정"]', '["more", "grid", "더보기"]'):
         assert v in easy, v
     verify = (STATIC / "verify.js").read_text()

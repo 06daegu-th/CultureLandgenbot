@@ -4,7 +4,8 @@
 // 쉬운 화면에서 보이는 메뉴 6개 (나머지는 '고급 메뉴'에 접혀 있다)
 // v25: 토스식 메뉴 — 홈 · 관심종목 · 포트폴리오 · 시장 · 뉴스/공시 · 일정 · AI 분석 · 알림 · 더보기 (종목은 검색·목록에서 바로)
 const NAV_EASY = [["dashboard", "home", "홈"], ["watch", "star", "관심종목"], ["pos", "portfolio", "포트폴리오"], ["market", "market", "시장"],
-  ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["picks", "ai", "AI 추천"], ["autopilot", "auto", "AI 자동매매"], ["report", "ai", "AI 분석"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
+  ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["picks", "ai", "AI 추천"], ["autopilot", "auto", "AI 자동매매"], ["goal", "target", "내 목표"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
+// v32: 'AI 분석'(종목별 판단)은 홈 'AI가 본 오늘의 종목' · 종목 화면 · 더보기에서 — 대신 날마다 보는 '내 목표'를 앞으로
 
 function uiMode() { return S.uiMode || safeGet("qa_ui") || "easy"; }
 function setUiMode(m) {

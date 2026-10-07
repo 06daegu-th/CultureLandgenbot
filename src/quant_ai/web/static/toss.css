@@ -779,11 +779,11 @@ a.t-li.on { background: var(--t-hover); }
 .t-chart-src { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 11px; color: var(--dim); margin-top: 6px; }
 .t-chart-src a { color: inherit; text-decoration: underline; }
 .tsk-chart { touch-action: pan-y; }
-.t2-goal { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 10px 0; }
+.t2-goal { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin: 10px 0; }  /* v32: minmax(0) — 넓은 표가 칸을 밀어 휴대폰에서 가로로 넘치던 것 */
 .t2-goal-c { background: var(--t-soft); border-radius: 14px; padding: 14px; min-width: 0; }
 .t2-goal-c > b { display: block; font-size: 30px; margin-top: 4px; }
 .t2-goal-c > em { font-style: normal; font-size: 12px; color: var(--dim); }
-@media (max-width: 760px) { .t2-goal { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .t2-goal { grid-template-columns: minmax(0, 1fr); } }
 .t2-e3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .t2-e3 > div { background: var(--t-soft); border-radius: 14px; padding: 12px 14px; min-width: 0; }
 .t2-e3 ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.55; }

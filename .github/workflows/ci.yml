@@ -37,3 +37,16 @@ jobs:
       - name: 주요 E2E·로고·문서 테스트 (추가 옵션 없이)
         env: { QUANT_TEST_NO_TEMP_PG: "1" }
         run: pytest -q tests/test_v23.py tests/test_docs_counts.py tests/test_marcap.py
+
+  ui-smoke:
+    # v32: 화면 회귀 — 사용자 메뉴·핵심 화면을 실제 브라우저(Chromium)로 열어 JS 오류 · 서버 5xx · 빈 화면 · 휴대폰 가로 넘침을 잡는다
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -e ".[dev]" playwright
+      - run: python -m playwright install --with-deps chromium
+      - name: 화면 테스트 (PC 1400px · 휴대폰 390px)
+        env: { QUANT_TEST_NO_TEMP_PG: "1" }
+        run: pytest -q tests_ui

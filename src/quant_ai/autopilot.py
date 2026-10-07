@@ -10,7 +10,7 @@
 
 단계
   - 가상 100만원 장부('autopilot')는 늘 자동 운용 — 실제 돈 없이 '실제로 굴려 본 기록'을 쌓는다
-  - 실제 계좌는 관문 5개를 모두 넘고 사용자가 직접 켜야 연결된다:
+  - 실제 계좌는 관문 6개(v32: 소액 검증 추가)를 모두 넘고 사용자가 직접 켜야 연결된다:
     전진 기록(매수 후보 60건+ · 이긴 비율 55%+ · 평균 초과수익 > 0) · 가상 장부 40거래일+ 코스피 초과 ·
     KIS 전 과정 검증 · 증명 프로젝트(실제 계좌) 진행 중 · 사용자 켜기
 목표 현실성: 같은 규칙을 '보지 않은 기간'에 돌려 본 일별 수익으로 6·12개월 결과를 수천 번 뽑아
@@ -151,6 +151,9 @@ def gates(app, cfg: dict | None = None) -> list[dict]:
     p = paper_performance(app)
     out.append({"key": "paper", "title": "가상 100만원 자동 운용 성적", "ok": p["days"] >= GATE_PAPER_DAYS and (p.get("excess") or 0) > 0,
                 "detail": f"{p['days']}/{GATE_PAPER_DAYS}거래일 · 누적 {_pc(p.get('ret'))} · 코스피 대비 {_pc(p.get('excess'))}"})
+    from .smallcap import gate as smallcap_gate
+    sg = smallcap_gate(app)  # v32: 작은 계좌로 실제 가능한 매매만 했을 때 지수 ETF 적립을 이겼나 (16년 KRX)
+    out.append({"key": "smallcap", "title": "소액 검증: 같은 돈 지수 ETF 적립보다 나았나", "ok": sg["ok"], "detail": sg["detail"]})
     v = ops.get_state(app.engine, "kis_validation")
     e2e = any(h.get("e2e") for h in (v.get("history") or [])) or bool(v.get("e2e_verified"))
     out.append({"key": "kis", "title": "KIS 주문 전 과정 검증", "ok": e2e,
@@ -383,7 +386,9 @@ def status(app) -> dict:
         ai_cap = goal_get(app).get("ai_cap")
     except Exception:  # noqa: BLE001
         ai_cap = None
+    from .smallcap import status as smallcap_status
     return {"config": cfg, "gates": g, "live": all(x["ok"] for x in g), "preview": pv, "paper": perf, "ai_cap": ai_cap,
+            "smallcap": smallcap_status(app),
             "live_rule": (f"실제 계좌에서는 계좌 평가금액의 {ai_cap:.0%} 까지만 · AI 가 직접 산 종목만 사고팔아요 (적립 ETF 등 나머지는 손대지 않음)"
                           if ai_cap else "실제 계좌에서는 AI 가 직접 산 종목만 사고팔아요 (나머지는 손대지 않음) · 목표 계획에서 AI 비중 상한을 정할 수 있어요"),
             "holdings": hold, "last_run": st.get("last_run"), "last_skip": st.get("last_skip"),

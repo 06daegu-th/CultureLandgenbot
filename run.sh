@@ -9,7 +9,8 @@
 #   ./run.sh data             KRX 주가 데이터 받기/갱신 + DB 적재
 #   ./run.sh doctor [--ai --kis --notify]   점검 (키·DB·데이터·AI·증권사·알림)
 #   ./run.sh kis-check        KIS 연결 + 모의 1주 주문→취소 (모의투자에서만)
-#   ./run.sh autopilot [status|run|goal]   AI 자동매매 (가상 100만원 자동 운용 · 실제 계좌는 관문 5개 + 켬 · goal = 100만원→1억 확률)
+#   ./run.sh autopilot [status|run|goal]   AI 자동매매 (가상 100만원 자동 운용 · 실제 계좌는 관문 6개 + 켬 · goal = 100만원→1억 확률)
+#   ./run.sh smallcap [--show]   소액 현실 검증 (200만원 + 매달 100만원 · 1주 단위 · 실비용 · 후보 규칙 vs 지수 ETF 적립, KRX 16년)
 #   ./run.sh proof-project [start|status|record|end]   증명 프로젝트 (100만원 실계좌 · 규칙·기준 봉인 · 매일 봉인 기록 · 공개 페이지 /proof)
 #   ./run.sh datacheck        데이터 정합성 점검 (일봉 최신성 · 자동 갱신 · 수정주가 · 52주 · 시가총액 · 외부 시세 대조)
 #   ./run.sh cycle            코어 1회 실행
