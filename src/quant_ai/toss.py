@@ -146,7 +146,7 @@ def _picks(app, n: int = 6) -> list[dict]:
     from .data.models import ConsensusRecord
     focus = list(focus_symbols(app))
     with session_scope(app.engine) as s:
-        rows = s.scalars(select(ConsensusRecord).order_by(ConsensusRecord.as_of.desc()).limit(400)).all()
+        rows = s.scalars(select(ConsensusRecord).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(400)).all()
         latest: dict[str, ConsensusRecord] = {}
         for r in rows:
             latest.setdefault(r.symbol, r)
@@ -234,9 +234,27 @@ def stock(app, sym: str, now: datetime | None = None) -> dict:
         for k, v in list(out["stats"].items()):
             if v is not None and pd.isna(v):
                 out["stats"][k] = None
+    kr = sym[:1].isdigit()
+    if out.get("bar_date"):  # v36: 일봉이 며칠 밀렸나 — 화면 가격 옆에 크게 (지금 주가와 다를 수 있음)
+        from .asof import stamp
+        st = stamp(b.index[-1], "bar_kr" if kr else "bar_us", now)
+        out["price_age"] = {"status": st["status"], "age": st["age"], "lag": st.get("lag_days")}
     q = (ops.get_state(app.engine, "live_quotes").get(sym) or {})
     if q.get("price"):
         out["live"] = {"price": q["price"], "chg_pct": q.get("chg_pct"), "at": q.get("at"), "src": q.get("src")}
+        # v36: 등락 기준 = '시세 날짜의 전 거래일 종가'. 일봉이 아직 어제까지면 마지막 봉 종가가 기준 (v35 까지는 그 전날 종가로 계산해 틀어짐)
+        try:
+            qt = pd.Timestamp(q["at"]) if q.get("at") else None
+            qt = None if qt is None else (qt.tz_localize("UTC") if qt.tzinfo is None else qt)
+            qd = None if qt is None else qt.tz_convert(ZoneInfo("Asia/Seoul" if kr else "America/New_York")).date()
+        except (TypeError, ValueError):
+            qd = None
+        if out.get("last") is not None:
+            ref = out["last"] if qd is not None and str(qd) > out["bar_date"] else out.get("prev")
+            out["live"]["prev_close"] = ref
+            if ref:
+                out["live"]["chg"] = float(q["price"]) - ref
+                out["live"]["chg_pct"] = float(q["price"]) / ref - 1
     prof = (ops.get_state(app.engine, f"profile:{sym}").get("data") or {})
     mc = (prof.get("stats") or {}).get("market_cap") or prof.get("market_cap")
     if mc:
@@ -475,7 +493,7 @@ def report(app, sym: str) -> dict:
     from .data.db import session_scope
     from .data.models import ConsensusRecord
     with session_scope(app.engine) as s:
-        rows = s.scalars(select(ConsensusRecord).where(ConsensusRecord.symbol == sym).order_by(ConsensusRecord.as_of.desc()).limit(30)).all()
+        rows = s.scalars(select(ConsensusRecord).where(ConsensusRecord.symbol == sym).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(30)).all()
         hist = [{"at": label(r.as_of), "date": r.as_of.strftime("%m.%d"), "action": r.action, "prob_up": round(r.prob_up, 3)} for r in reversed(rows)]
     prev = hist[-2] if len(hist) > 1 else None
     return {"symbol": sym, "history": hist, "prev": prev,

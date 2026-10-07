@@ -96,7 +96,7 @@ def test_run_trades_paper_book_and_seals_log(app):
     syms = [s for s in bars if s[:1].isdigit()][:3]
     rows = {s: _row(s, 2.0 - i * 0.3, last=float(bars[s]["close"].iloc[-1])) for i, s in enumerate(syms)}
     full = {"_rows": rows, "as_of": str(pd.Timestamp(bars[syms[0]].index[-1]).date()), "regime": {"above_200": True}, "calibration": {}}
-    r = AP.run(app, now=datetime(2026, 10, 5, 2, tzinfo=UTC), force=True, full=full)
+    r = AP.run(app, now=datetime(2026, 10, 5, 2, tzinfo=UTC), force=True, full=full, allow_stale=True)
     pl = r["books"][AP.BOOK]
     assert not pl.get("error") and {f["symbol"] for f in pl["fills"]} == set(syms) and all(f["side"] == "buy" for f in pl["fills"])
     pf = app.load_portfolio(AP.BOOK)
@@ -105,7 +105,7 @@ def test_run_trades_paper_book_and_seals_log(app):
     assert all(meta[s]["entry_date"] and meta[s]["stop"] for s in syms)
     # 다음 날: 첫 종목 점수 하락 → 팔기 · 기록은 앞 해시에 이어짐
     rows[syms[0]] = {**rows[syms[0]], "score": -1.0}
-    r2 = AP.run(app, now=datetime(2026, 10, 6, 2, tzinfo=UTC), force=True, full=full)
+    r2 = AP.run(app, now=datetime(2026, 10, 6, 2, tzinfo=UTC), force=True, full=full, allow_stale=True)
     assert any(f["symbol"] == syms[0] and f["side"] == "sell" for f in r2["books"][AP.BOOK]["fills"])
     log = ops.get_state(app.engine, AP.LOG)[AP.BOOK]
     assert len(log) == 2 and log[1]["prev"] == log[0]["hash"] and len(log[1]["hash"]) == 64

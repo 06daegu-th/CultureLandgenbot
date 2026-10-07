@@ -1376,6 +1376,7 @@ TV.picks = async (el) => {
     ${tChips("pk-mk", [["KR", "국내"], ["US", "미국"]], mk)}<div class="t-gap"></div>
     ${tHero({ k: `${esc(d.as_of)} 일봉 기준 · ${tN(d.eligible)}종목 중 (거래 적은 종목 제외)`, lv: tier.key, big: `${lvDot(tier.key)} ${esc(tier.label || "-")}`, sub: esc(tier.why || ""),
       foot: `${esc(d.regime?.text || "")} · 자동매매에는 아직 쓰지 않아요 — 아래 '실제로 지나 본 결과'가 기준을 넘으면 연결해요` })}
+    ${d.coverage && d.coverage.level !== "good" ? tAiCoverage(d.coverage) : ""}
     ${tTabs("pk-tab", [["buy", `매수 후보 ${(d.buy || []).length}`], ["sell", `비중 축소 ${(d.sell || []).length}`], ["avoid", `피할 종목 ${(d.avoid || []).length}`]], tab, "t-tabs-line")}
     <div class="t-sub" style="margin:8px 4px 12px">${tab === "buy" ? "여러 신호를 합친 점수가 높은 순 · 눌러서 근거 보기" : tab === "sell" ? "내가 가진·관심 종목 중 점수가 낮은 순 — 팔거나 줄일지 검토" : "전체에서 점수가 가장 낮은 종목 — 새로 사지 않기"}</div>
     ${list.length ? `<div class="t2-picks">${list.map((r) => tPickCard(r, tab)).join("")}</div>` : tCard("", tEmpty(...EMPTY[tab]))}
@@ -1597,9 +1598,11 @@ TV.autopilot = async (el) => {
       big: p.days ? `<span class="${tCls(p.ret)}">${tPct(p.ret, 2)}</span> <span class="t-sub" style="font-size:.5em">${tWon(p.equity)} · 코스피 대비 ${p.excess == null ? "-" : tPct(p.excess, 1)}</span>` : `${tWon(p.equity || c.principal)} <span class="t-sub" style="font-size:.5em">아직 하루치 기록 전</span>`,
       sub: s.last_skip ? esc(s.last_skip) : `마지막 결정 ${esc(s.last_run || "아직 없음")} · ${esc(s.rule || "")}`,
       foot: "AI 가 신호 엔진 점수로 매일 장중 한 번 스스로 사고팔아요. 실제 돈은 아래 관문 6개를 모두 넘고 직접 켜야 움직여요." })}
+    ${s.coverage && s.coverage.level !== "good" ? tAiCoverage(s.coverage, "AI 가 지금 보고 있는 자료 — 자동매매 판단 재료") : ""}
     ${(p.curve || []).length > 1 ? tCard("가상 장부 자산 흐름", tSpark(p.curve.map((x) => x[1]), { h: 90, w: 640 }) + `<div class="t-foot">${tN(p.days)}거래일 · 최대 낙폭 ${tPct(p.mdd, 1)}</div>`) : ""}
     ${tCard(`오늘 AI 가 할 일 ${pv.as_of ? `<span class="t-sub">${esc(pv.as_of)} 일봉 기준 · 자리 ${tN(pv.slots)}개 · 매수 기준 점수 +${pv.buy_min}</span>` : ""}`,
-      pv.error ? tEmpty("계산하지 못했어요", pv.error) : tList(acts.map((a) => `<div class="t2-item">${tSym(a.symbol, a.name, esc(a.reason || ""), `<span class="t-tag ${AP_ACT[a.action][1]}">${AP_ACT[a.action][0]}</span>${a.score != null ? tScore(a.score) : ""}`)}</div>`), "오늘은 할 일이 없어요", "점수 +0.8 이상 후보가 없고 가진 종목도 그대로 둬요")
+      (pv.stale ? `<div class="t-note warn" style="margin-bottom:10px"><b>오래된 가격</b> · ${esc(pv.stale)} <a href="#datahealth">시세 받기</a></div>` : "")
+      + (pv.error ? tEmpty("계산하지 못했어요", pv.error) : tList(acts.map((a) => `<div class="t2-item">${tSym(a.symbol, a.name, esc(a.reason || ""), `<span class="t-tag ${AP_ACT[a.action][1]}">${AP_ACT[a.action][0]}</span>${a.score != null ? tScore(a.score) : ""}`)}</div>`), "오늘은 할 일이 없어요", "점수 +0.8 이상 후보가 없고 가진 종목도 그대로 둬요"))
       + ((pv.skipped || []).length ? `<div class="t-foot">점수는 높지만 1주 가격이 종목당 상한(${tWon(pv.cap_value)})보다 비싸 못 사는 후보: ${pv.skipped.map((x) => `${esc(x.name)} ${x.score.toFixed(2)}`).join(" · ")}</div>` : "")
       + `<div class="t-pro"><button class="t-btn primary" id="ap-run">가상 장부로 지금 한 번 실행</button><a class="t-btn ghost" href="#picks">AI 추천 (점수 근거)</a></div>`)}
     ${tCard("가상 장부 보유 종목", tList(hold.map(([sym, h]) => tSym(sym, h.name || sym, `${tN(h.qty)}주 · 평균 ${tPx(h.avg_price, sym)}${h.entry_date ? ` · ${esc(h.entry_date)} 매수 · ${tN(h.held_days)}거래일` : ""}${h.stop ? ` · 손절선 ${tPx(h.stop, sym)}` : ""}`, "")), "보유 종목 없음", "장중에 AI 가 첫 결정을 하면 채워져요"))}
@@ -1610,7 +1613,14 @@ TV.autopilot = async (el) => {
       <div class="t-foot">요청해 두면 관문이 모두 통과되는 날 자동으로 연결돼요 · 연결되면 같은 계좌의 코어 전략 주문은 멈춰요 · 긴급 정지·하루 손실 한도·매매 준비 점검은 그대로 적용돼요</div>`)}
     ${tCard("봉인된 결정 기록 (최근)", tList((s.log || []).slice().reverse().slice(0, 10).map((d) => `<div class="t-li"><span class="t-co-t"><b class="num">${esc(d.date)}</b><span class="t2-wrap">${(d.actions || []).filter((a) => a.action !== "hold").map((a) => `${AP_ACT[a.action][0]} ${esc(a.symbol)}`).join(" · ") || "변화 없음"}${d.error ? ` · 오류 ${esc(d.error)}` : ""}</span></span><span class="t-li-r t-sub num">${esc(String(d.hash || "").slice(0, 8))}</span></div>`), "아직 기록 없음", "결정할 때마다 이유와 함께 봉인돼요"))}`);
   const act = async (body, ask, ok) => { if (ask && !confirm(ask)) return; try { await post("/api/autopilot", body); if (ok) toast({ title: ok, level: "good" }); } catch (err) { toast({ title: "실패", body: err.message || String(err), level: "warn" }); } TV.autopilot(el); };
-  L.root.querySelector("#ap-run").onclick = (e) => { e.target.disabled = true; e.target.textContent = "실행 중…"; act({ action: "run" }, "", "가상 장부로 실행했어요"); };
+  L.root.querySelector("#ap-run").onclick = async (e) => {  // v36: 가격이 밀려 쉬었으면 '실행했어요' 대신 이유를 보여 준다
+    e.target.disabled = true; e.target.textContent = "실행 중…";
+    try {
+      const r = (await post("/api/autopilot", { action: "run" })).result || {};
+      toast(r.skipped ? { title: "오늘은 사지 않았어요", body: r.skipped, level: "warn" } : { title: "가상 장부로 실행했어요", level: "good" });
+    } catch (err) { toast({ title: "실패", body: err.message || String(err), level: "warn" }); }
+    TV.autopilot(el);
+  };
   L.root.querySelector("#ap-live").onclick = () => act({ action: "config", live_requested: !c.live_requested }, c.live_requested ? "" : "실제 돈으로 AI 가 자동 매매하도록 요청할까요? 관문 6개가 모두 통과되는 날부터 시작되고, 증명 프로젝트 규칙(원금·손실 한도) 안에서만 움직여요.", c.live_requested ? "요청을 취소했어요" : "요청했어요 — 관문 통과 후 시작");
   L.root.querySelector("#ap-paper").onclick = () => act({ action: "config", paper_on: !c.paper_on }, "", "바꿨어요");
   const gb = L.root.querySelector("#ap-goal");

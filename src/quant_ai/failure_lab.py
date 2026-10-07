@@ -49,7 +49,7 @@ def analyze(app, days: int = 180, limit: int = 3000, now: datetime | None = None
         rows = s.execute(select(ConsensusRecord.id, ConsensusRecord.symbol, ConsensusRecord.as_of, ConsensusRecord.prob_up,
                                 ConsensusRecord.realized_return, ConsensusRecord.correct, ConsensusRecord.payload)
                          .where(ConsensusRecord.correct.is_not(None), ConsensusRecord.as_of >= since)
-                         .order_by(ConsensusRecord.as_of.desc()).limit(limit)).all()
+                         .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(limit)).all()
         syms = sorted({r.symbol for r in rows})
         news = defaultdict(list)
         for n in s.scalars(select(NewsArticle).where(NewsArticle.published_at >= since - timedelta(days=1)).limit(50000)):

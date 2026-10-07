@@ -58,10 +58,10 @@ def test_dashboard_role_info_never_contains_keys():
 
 def test_build_analysts_includes_panel_and_risk_llm():
     names = [a.name for a in build_analysts(Settings.from_env(ALL_KEYS), None)]
-    assert names == ["primary", "nvidia", "panel", "quant", "regime", "risk"]
+    assert names == ["primary", "nvidia", "panel", "quant", "chart", "regime", "risk"]  # v36: 학습 모델이 없으면 차트 신호
     risk = build_analysts(Settings.from_env(ALL_KEYS), None)[-1]
     assert risk.llm is not None and risk.llm.client.provider == "groq"
-    assert [a.name for a in build_analysts(Settings.from_env({}), None)] == ["primary", "nvidia", "quant", "regime",
+    assert [a.name for a in build_analysts(Settings.from_env({}), None)] == ["primary", "nvidia", "quant", "chart", "regime",
                                                                                "risk"]
 
 

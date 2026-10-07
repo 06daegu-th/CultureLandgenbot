@@ -55,7 +55,7 @@ def discover(app, limit: int = 8) -> dict:
         names = {i.symbol: i.name for i in s.scalars(select(Instrument))}
         latest = {}
         for c in s.scalars(select(ConsensusRecord).where(ConsensusRecord.as_of >= datetime.now(UTC) - timedelta(days=14))
-                           .order_by(ConsensusRecord.as_of.desc()).limit(5000)):
+                           .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(5000)):
             latest.setdefault(c.symbol, c)
         stats = {r.key.split(":", 1)[1]: ((r.value or {}).get("data") or {}).get("stats") or {}
                  for r in s.scalars(select(SystemState).where(SystemState.key.like("profile:%")))}

@@ -44,6 +44,7 @@ def evidence_snapshot(ctx) -> dict:
            if getattr(ctx, "community", None) else {}),
         **({"sector": ctx.sector} if getattr(ctx, "sector", None) else {}),
         **({"flow": ctx.flow} if getattr(ctx, "flow", None) else {}),
+        **({"signal": {k: ctx.signal.get(k) for k in ("score", "tier", "bin")}} if getattr(ctx, "signal", None) else {}),
         **({"related": ctx.related[:5]} if getattr(ctx, "related", None) else {}),
         **({"agents": {"news_for_this_stock": (ctx.market_agents or {}).get("news_for_this_stock")}}
            if (getattr(ctx, "market_agents", None) or {}).get("news_for_this_stock") else {}),
@@ -222,7 +223,11 @@ def provider_of(model: str | None, provider: str | None = None) -> str:
     if m.startswith("rules"):
         return "리스크 규칙"
     if m == "heuristic":
-        return "휴리스틱"
+        return "휴리스틱 (v35 이전)"
+    if m.startswith("heuristic"):
+        return "규칙 (키 없음)"
+    if m.startswith("signals2"):
+        return "차트 신호"
     return model or "?"
 
 

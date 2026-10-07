@@ -82,7 +82,7 @@ def _scored_since(app, since: datetime) -> list[dict]:
         names = _names(s)
         rows = s.scalars(select(ConsensusRecord).where(ConsensusRecord.correct.is_not(None),
                                                        ConsensusRecord.as_of >= since - timedelta(days=12))
-                         .order_by(ConsensusRecord.as_of.desc()).limit(300)).all()
+                         .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(300)).all()
         return [{"symbol": r.symbol, "name": names.get(r.symbol, r.symbol), "correct": r.correct, "actual": r.realized_return,
                  "expected": (r.payload or {}).get("expected_return"), "as_of": str(r.as_of)[:10]} for r in rows][:40]
 

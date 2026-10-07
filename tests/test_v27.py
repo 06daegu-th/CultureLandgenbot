@@ -94,7 +94,7 @@ def test_intraday_points_and_failure_message():
     assert len(r["points"]) == 3 and r["prev_close"] and r["gmtoffset"] == 32400 and "Yahoo" in r["source"]
     assert I.yahoo_symbol("005930") == "005930.KS" and I.yahoo_symbol("247540", "KOSDAQ") == "247540.KQ" and I.yahoo_symbol("BRK.B") == "BRK-B"
     bad = I.intraday("NVDA", get=lambda u: (_ for _ in ()).throw(OSError("blocked")), ttl=0)
-    assert bad["points"] == [] and "분봉을 받지 못했어요" in bad["error"]
+    assert bad["points"] == [] and "1주 이상 차트" in bad["error"] and "http" not in bad["error"] and "blocked" in bad["detail"]  # v36: 쉬운 말
     js = (STATIC / "toss.js").read_text()
     assert '[[1, "1일"]' in js and "/api/t/intraday" in js and "tStockIntraday" in js
 

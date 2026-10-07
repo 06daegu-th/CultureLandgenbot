@@ -47,6 +47,7 @@ class MarketContext:
     related: list[dict] = field(default_factory=list)  # 연관 종목 움직임 + 관계 근거 (지식 그래프)
     market_agents: dict = field(default_factory=dict)  # 뉴스·매크로·섹터 에이전트의 시장 요약 (이 종목 관련 사건 포함)
     flow: dict = field(default_factory=dict)  # 외국인·기관 수급 요약 (국내)
+    signal: dict = field(default_factory=dict)  # v36 신호 엔진 2.0: 검증된 가격 신호 점수 + 보지 않은 기간 점수대별 결과
 
     def to_prompt(self) -> str:
         d = asdict(self)

@@ -506,7 +506,7 @@ class DashboardAPI:
                          .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()))
             scen = s.scalar(select(Scenario).where(Scenario.symbol == symbol).order_by(Scenario.id.desc()))
             hist = s.scalars(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol)
-                             .order_by(ConsensusRecord.as_of.desc()).limit(30)).all()
+                             .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(30)).all()
             from ..data.models import AnalystOpinionRecord
             ops = s.scalars(select(AnalystOpinionRecord).where(AnalystOpinionRecord.consensus_id == c.id)).all() if c else []
             terms = self._news_terms(symbol, inst[symbol].name if symbol in inst else None)
@@ -1111,7 +1111,15 @@ class DashboardAPI:
         from .. import signals2 as S2
         m = "US" if market.upper() == "US" else "KR"
         out = S2.cached(self.app, m)
-        return {k: v for k, v in out.items() if k != "_rows"}
+        return {k: v for k, v in out.items() if k != "_rows"} | {"coverage": self.ai_inputs()}
+
+    def ai_inputs(self) -> dict:
+        """v36: AI 가 지금 보고 있는 자료 (뉴스·공시·수급·커뮤니티·경제지표·차트·AI 키) — 꺼진 것과 이유."""
+        from .. import aiinputs
+        try:
+            return self._cached("ai_inputs", 60, lambda: aiinputs.coverage(self.app))
+        except Exception as e:  # noqa: BLE001 - 보조 정보: 실패해도 화면은 뜬다
+            return {"rows": [], "headline": f"자료 상태를 읽지 못했어요 ({type(e).__name__})", "level": "warn"}
 
     def datacheck(self, run: bool = False) -> dict:
         """v29 데이터 정합성 점검 (최신성 · 자동 갱신 · 원천 자체 정합성 · 외부 시세 대조). 저장된 결과가 없으면 한 번 실행."""
@@ -1133,7 +1141,7 @@ class DashboardAPI:
     def autopilot(self) -> dict:
         """v30 AI 자동매매: 오늘의 결정 미리보기 · 관문 · 가상 장부 성적 · 봉인 기록 · 목표 현실성."""
         from .. import autopilot as AP
-        return self._cached("autopilot", 60, lambda: AP.status(self.app))
+        return self._cached("autopilot", 60, lambda: AP.status(self.app)) | {"coverage": self.ai_inputs()}
 
     def autopilot_write(self, body: dict) -> dict:
         from .. import autopilot as AP

@@ -83,7 +83,7 @@ def report(app, mode: str = "paper", days: int = 30, symbol: str | None = None, 
             .where(ConsensusRecord.action == "BUY", ConsensusRecord.as_of >= since)
         if symbol:
             cq = cq.where(ConsensusRecord.symbol == symbol)
-        ai_buys = s.execute(cq.order_by(ConsensusRecord.as_of.desc()).limit(500)).all()
+        ai_buys = s.execute(cq.order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(500)).all()
     plan = ops.get_state(app.engine, f"cs-plan:{mode}")
     cfg = plan.get("config") or {}
     ai_on = cfg.get("use_ai", not app.settings.core_only) if cfg else not getattr(app.settings, "core_only", False)

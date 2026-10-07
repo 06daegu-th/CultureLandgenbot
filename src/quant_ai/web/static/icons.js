@@ -77,7 +77,8 @@ function providerOf(model, provider) {
   if (m.startsWith("sklearn")) return "Quant 모델";
   if (m.startsWith("regime")) return "국면 엔진";
   if (m.startsWith("rules")) return "리스크 규칙";
-  if (m === "heuristic") return "휴리스틱";
+  if (m.startsWith("heuristic")) return "휴리스틱";
+  if (m.startsWith("signals2")) return "Quant 모델";
   return null;
 }
 
@@ -85,7 +86,7 @@ function providerOf(model, provider) {
 const LLM_ROLES = new Set(["primary", "nvidia", "panel"]);
 function aiIcon(provider, role, model, size = 30) {
   // LLM 역할인데 공급자가 없으면 = 키 미설정 → 휴리스틱 (브랜드 아이콘을 잘못 보여주지 않는다)
-  const name = provider || providerOf(model) || (model === "heuristic" || LLM_ROLES.has(role) ? "휴리스틱" : ROLE_ICON[role]) || "휴리스틱";
+  const name = provider || providerOf(model) || (String(model || "").startsWith("heuristic") || LLM_ROLES.has(role) ? "휴리스틱" : ROLE_ICON[role]) || "휴리스틱";
   const b = AI_BRAND[name] || AI_BRAND["휴리스틱"];
   return `<span class="ai-ic" style="width:${size}px;height:${size}px;background:${b.bg}" title="${name}">${b.svg}</span>`;
 }

@@ -351,11 +351,17 @@ class QuantAI:
             macro = macro_snapshot(s, as_of or datetime.now(UTC))
             # 백엔드가 바뀌면(예: 휴리스틱 → Claude) 이전 성적을 물려받지 않는다
             backends = {a.name: backend_id(a.client) for a in analysts if getattr(a, "client", None) is not None}
+            backends |= {a.name: a.BACKEND for a in analysts if getattr(a, "BACKEND", None)}  # v36 규칙 AI: 예전 휴리스틱 성적 분리
             # Point-in-Time: 과거 재생(as_of)이면 그 시점에 알 수 있던 성적·보정기만 쓴다 (미래 누수 방지)
             board = records_for(scoreboard(s, backends={k: v for k, v in backends.items() if v},
                                            until=pd.Timestamp(as_of).to_pydatetime() if as_of is not None else None))
             calibrators = calibrators_as_of(ops.get_state(self.engine, "calibration_history"),
                                             ops.get_state(self.engine, "calibration"), as_of)
+            if as_of is None and ops.get_state(self.engine, "calibration_meta").get("v", 0) < 36:
+                # v36 이전 보정기는 '모멘텀 휴리스틱' 시절 기록으로 적합 → 규칙 AI · 합의 보정은 다음 재적합까지 쓰지 않는다
+                from .ensemble.engine import CONSENSUS_KEY
+                calibrators = {k: v for k, v in calibrators.items()
+                               if k != CONSENSUS_KEY and k not in {a.name for a in analysts if getattr(a, "BACKEND", None)}}
             macro_series = load_macro(s, [k for k in FACTORS if k != "KOSPI"], as_of=as_of or datetime.now(UTC))
             factors = {**macro_series, **({("KOSPI" if market == "KR" else "SPY"): bench["close"]} if bench is not None else {})}
             mstate = market_state(bench, bars, vix=macro_series.get("VIXCLS"))
@@ -370,6 +376,13 @@ class QuantAI:
                 "macro": {x: mb.get(x) for x in ("view", "risk_level", "stance")} if mb.get("view") else None,
                 "sectors": {x: sv.get(x) for x in ("view", "leaders", "laggards")} if sv.get("view") else None,
                 "news_today": nd.get("summary")}.items() if v} if as_of is None else {}
+            sig_rows = {}
+            if as_of is None and model is None:  # v36: 차트 신호 의견용 (과거 재생에는 그날 점수가 없어 넣지 않음)
+                try:
+                    from .signals2 import context_rows
+                    sig_rows = context_rows(self, market)
+                except Exception as exc:  # noqa: BLE001 - 보조 재료: 실패해도 판단은 계속
+                    log.info("신호 엔진 재료 실패: %s", exc)
             jobs = []
             for sym in symbols or list(bars):
                 if sym not in bars or bars[sym].empty:
@@ -391,6 +404,7 @@ class QuantAI:
                     if sym.isdigit():
                         from .data.collectors.investor_flow import for_context as flow_for_context
                         ctx.flow = flow_for_context(self.engine, sym)
+                    ctx.signal = sig_rows.get(sym) or {}
                 jobs.append((sym, t, frow, rrow, ctx))
 
         # 2) AI 의견 — 공급자마다 동시에 (공급자별 분당 한도는 클라이언트가 지킨다). 서로의 의견은 모른다.
@@ -1532,6 +1546,7 @@ class QuantAI:
         with session_scope(self.engine) as s:  # 채점이 끝난 의견으로 AI 별·합의 확률 보정 다시 적합
             fitted = fit_calibrators(s)
         ops.set_state(self.engine, "calibration", fitted)
+        ops.set_state(self.engine, "calibration_meta", {"v": 36, "at": datetime.now(UTC).isoformat()})  # v36 기준 적합 표시
         hist = ops.get_state(self.engine, "calibration_history").get("fits", [])
         hist.append({"at": datetime.now(UTC).isoformat(), "fitted": {k: {kk: v[kk] for kk in ("a", "b", "n")}
                                                                     for k, v in fitted.items()}})

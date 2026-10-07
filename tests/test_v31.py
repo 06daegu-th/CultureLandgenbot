@@ -126,7 +126,7 @@ def test_live_run_trades_only_ai_symbols_within_budget(app, monkeypatch):
     monkeypatch.setattr(AP, "live_enabled", lambda a: True)
     rows = {s: {"symbol": s, "name": s, "score": 2.0, "last": px[s], "stop": px[s] * 0.9, "signals": [], "evidence": {}} for s in syms}
     full = {"_rows": rows, "as_of": "2026-10-07", "regime": {"above_200": True}, "calibration": {}}
-    r = AP.run(app, now=datetime(2026, 10, 8, 2, tzinfo=UTC), force=True, full=full)
+    r = AP.run(app, now=datetime(2026, 10, 8, 2, tzinfo=UTC), force=True, full=full, allow_stale=True)
     pl = r["books"]["live"]
     assert calls and calls[0]["protect"] == {"069500"} and pl["scope"]["protect"] == ["069500"]
     assert all(a["symbol"] != "069500" for a in pl["actions"])  # ETF 는 '계산 대상에서 빠짐 → 팔기' 가 되지 않는다

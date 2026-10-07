@@ -231,8 +231,12 @@ def _holdings(app, book: str, today) -> dict:
     return out
 
 
-def run(app, now: datetime | None = None, force: bool = False, full: dict | None = None) -> dict:
-    """하루 한 번 결정 → 가상 장부(늘) · 실제 계좌(관문 통과 + 켬) 주문. force 면 시간·하루 한 번 제한 없이."""
+def run(app, now: datetime | None = None, force: bool = False, full: dict | None = None, allow_stale: bool = False) -> dict:
+    """하루 한 번 결정 → 가상 장부(늘) · 실제 계좌(관문 통과 + 켬) 주문. force 면 시간·하루 한 번 제한 없이.
+
+    v36: '지금 실행'(force)도 일봉이 밀렸으면 사지 않는다 — 오래된 가격으로 산 가상 기록은 성적을 속인다.
+    allow_stale 은 과거 자료로 돌리는 시험·재현용.
+    """
     from .config import Mode
     from .trading.execution import Signal
     now = now or datetime.now(UTC)
@@ -251,15 +255,12 @@ def run(app, now: datetime | None = None, force: bool = False, full: dict | None
         full = cached(app, "KR")
     if full.get("error"):
         return {"skipped": full["error"]}
-    if not force:
-        from .clock import KRX
-        try:
-            lag = KRX.trading_days_between(datetime.fromisoformat(str(full["as_of"])).date(), k.date())
-        except (KeyError, ValueError):
-            lag = 99
-        if lag > 1:
-            _set_state(app, {"last_run": today, "last_skip": f"일봉이 {lag}거래일 밀려 오늘은 쉬어요 (오래된 가격으로 사지 않음)"})
-            return {"skipped": f"일봉 {lag}거래일 밀림"}
+    if not allow_stale:
+        lag = price_lag(full, now)
+        if lag >= 1:
+            why = f"일봉이 {lag}거래일 밀려 오늘은 쉬어요 (오래된 가격으로 사지 않음) — 시세를 새로 받으면 다시 결정해요"
+            _set_state(app, {"last_skip": why, **({} if force else {"last_run": today})})
+            return {"skipped": f"일봉 {lag}거래일 밀림 — 오래된 가격으로 사지 않아요", "lag": lag}
     out = {"date": today, "books": {}}
     books = []
     if cfg.get("paper_on", True):
@@ -353,6 +354,18 @@ def _seal(app, book: str, pl: dict, now: datetime) -> None:
     ops.set_state(app.engine, LOG, {**lg, book: days[-400:]})
 
 
+def price_lag(full: dict, now: datetime) -> int:
+    """신호 계산에 쓴 일봉이 '마지막으로 끝난 거래일'보다 몇 거래일 밀렸나 (휴장 반영 · 화면 위 '데이터 N거래일 밀림'과 같은 계산).
+    0 = 최신. 모르면 99 — 모르면 사지 않는다."""
+    from .asof import stamp
+    try:
+        d = datetime.fromisoformat(str(full["as_of"])[:10]).replace(tzinfo=UTC)
+    except (KeyError, ValueError, TypeError):
+        return 99
+    lag = stamp(d, "bar_kr", now).get("lag_days")
+    return 99 if lag is None else int(lag)
+
+
 def preview(app) -> dict:
     """주문 없이 '지금 돌리면 이렇게 하겠다' (화면용)."""
     from .signals2 import cached
@@ -367,7 +380,12 @@ def preview(app) -> dict:
     for s, p in pf.positions.items():
         prices.setdefault(s, p.avg_price)
     k = _kst(datetime.now(UTC))
-    return plan(full, _holdings(app, BOOK, k.date()), pf.cash, pf.equity(prices), cfg, k.date().isoformat())
+    out = plan(full, _holdings(app, BOOK, k.date()), pf.cash, pf.equity(prices), cfg, k.date().isoformat())
+    lag = price_lag(full, datetime.now(UTC))
+    out["lag"] = lag
+    if lag >= 1:  # v36: 화면에 '이 가격으로는 사지 않는다'를 먼저 보여 준다
+        out["stale"] = f"가격이 {full.get('as_of')} 일봉이라 {lag}거래일 밀려 있어요 — 시세를 새로 받기 전에는 AI 가 사고팔지 않아요"
+    return out
 
 
 def status(app) -> dict:

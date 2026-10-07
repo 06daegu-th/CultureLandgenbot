@@ -83,3 +83,31 @@ def test_stock_page_opens(browser, base_url):
     errors, bad, text, _ = _open(browser, base_url, "analysis/000010", 1400)
     assert not errors and not bad, f"{errors[:2]} {bad[:2]}"
     assert len(text.strip()) > 20
+
+
+def test_stock_page_shows_inputs_staleness_and_clean_axis(browser, base_url):
+    """v36: 오래된 가격 경고 · 'AI 가 확인한 자료' · 1년 차트 축에 '0.000' 같은 이상한 눈금 없음 · 1일 차트 실패 문구에 주소 없음."""
+    ctx = browser.new_context(viewport={"width": 1400, "height": 1000})
+    ctx.route("**/fonts.googleapis.com/**", lambda r: r.fulfill(body="", content_type="text/css"))
+    ctx.route("**/query1.finance.yahoo.com/**", lambda r: r.abort())
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base_url}/#analysis/000020", wait_until="networkidle")
+    page.wait_for_selector(".tsk-stale", timeout=15000)
+    assert "실제 주가와 다를 수 있어요" in page.inner_text(".tsk-stale")
+    page.wait_for_selector("#analyze-btn, .ai-inputs", timeout=20000)
+    if page.locator("#analyze-btn").count():  # 판단 기록이 없으면 화면의 '지금 AI 분석'으로 만든다 (주문 없음)
+        page.click("#analyze-btn")
+    page.wait_for_selector(".ai-inputs", timeout=90000)
+    box = page.inner_text(".ai-inputs")
+    assert "AI 가 확인한 자료" in box and "뉴스" in box and "차트" in box
+    page.click('#tsk-per button[data-k="252"]')
+    page.wait_for_timeout(1200)
+    axis = page.inner_text(".tsk-chart-w")
+    assert "0.000" not in axis
+    page.click('#tsk-per button[data-k="1"]')
+    page.wait_for_timeout(2500)
+    assert "http" not in page.inner_text(".tsk-chart-w")
+    ctx.close()
+    assert not errors, errors

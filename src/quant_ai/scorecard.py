@@ -76,7 +76,7 @@ def scorecard(app, symbol: str | None = None, horizon_note: str = "5거래일") 
             .where(ConsensusRecord.realized_return.is_not(None))
         if symbol:
             q = q.where(ConsensusRecord.symbol == symbol)
-        rows = s.execute(q.order_by(ConsensusRecord.as_of.desc()).limit(max(WINDOWS))).all()
+        rows = s.execute(q.order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(max(WINDOWS))).all()
         flt = [ConsensusRecord.symbol == symbol] if symbol else []
         total = s.scalar(select(func.count()).select_from(ConsensusRecord).where(*flt)) or 0
         n_scored = s.scalar(select(func.count()).select_from(ConsensusRecord).where(ConsensusRecord.realized_return.is_not(None), *flt)) or 0
@@ -110,9 +110,9 @@ def verify_now(app, symbol: str, prob: float | None = None, band: float = 0.05) 
     with session_scope(app.engine) as s:
         rows = s.execute(select(ConsensusRecord.prob_up, ConsensusRecord.realized_return, ConsensusRecord.symbol, ConsensusRecord.as_of)
                          .where(ConsensusRecord.realized_return.is_not(None), ConsensusRecord.prob_up >= prob - band,
-                                ConsensusRecord.prob_up <= prob + band).order_by(ConsensusRecord.as_of.desc()).limit(5000)).all()
+                                ConsensusRecord.prob_up <= prob + band).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(5000)).all()
         recent = s.execute(select(ConsensusRecord.prob_up, ConsensusRecord.realized_return).where(ConsensusRecord.realized_return.is_not(None))
-                           .order_by(ConsensusRecord.as_of.desc()).limit(100)).all()
+                           .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(100)).all()
     n = len(rows)
     up = float(np.mean([r.realized_return > 0 for r in rows])) if n else None
     ci = wilson(int(round((up or 0) * n)), n) if n else None
@@ -139,7 +139,7 @@ def public_report(app, n: int = 1000) -> dict:
     with session_scope(app.engine) as s:
         rows = s.execute(select(ConsensusRecord.id, ConsensusRecord.as_of, ConsensusRecord.symbol, ConsensusRecord.action, ConsensusRecord.prob_up,
                                 ConsensusRecord.realized_return, ConsensusRecord.payload)
-                         .where(ConsensusRecord.realized_return.is_not(None)).order_by(ConsensusRecord.as_of.desc()).limit(n)).all()
+                         .where(ConsensusRecord.realized_return.is_not(None)).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(n)).all()
         names = {i.symbol: i.name for i in s.scalars(select(Instrument))}
     if not rows:
         return {"n": 0, "message": "채점된 예측 없음"}
@@ -197,7 +197,7 @@ def plain(app, n: int = 100, symbol: str | None = None) -> dict:
     if symbol:
         q = q.where(ConsensusRecord.symbol == symbol)
     with session_scope(app.engine) as s:
-        rows = s.execute(q.order_by(ConsensusRecord.as_of.desc()).limit(n)).all()
+        rows = s.execute(q.order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(n)).all()
         names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_({r.symbol for r in rows} or {""})))}
     if not rows:
         return {"n": 0, "headline": "아직 채점된 AI 판단이 없습니다 — 판단 뒤 5거래일이 지나야 맞았는지 알 수 있습니다"}
@@ -300,7 +300,7 @@ def by_context(app, n: int = 500, min_n: int = 10) -> dict:
     from .news_llm import EVENT_KO
     with session_scope(app.engine) as s:
         rows = s.execute(select(ConsensusRecord.symbol, ConsensusRecord.correct, ConsensusRecord.realized_return, ConsensusRecord.payload)
-                         .where(ConsensusRecord.correct.is_not(None)).order_by(ConsensusRecord.as_of.desc()).limit(n)).all()
+                         .where(ConsensusRecord.correct.is_not(None)).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(n)).all()
         names = {i.symbol: i.name for i in s.scalars(select(Instrument).where(Instrument.symbol.in_({r.symbol for r in rows} or {""})))}
     groups: dict[str, dict[str, list]] = {"news": defaultdict(list), "earnings": defaultdict(list), "symbol": defaultdict(list)}
     for r in rows:

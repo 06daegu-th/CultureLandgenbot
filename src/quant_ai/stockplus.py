@@ -136,7 +136,7 @@ def freshness(app, symbol: str, now: datetime | None = None) -> dict:
                   if symbol in (x.symbols or [])), None)
         d = s.scalar(select(Disclosure.filed_at).where(Disclosure.symbol == symbol).order_by(Disclosure.filed_at.desc()))
         c = s.execute(select(ConsensusRecord.created_at, ConsensusRecord.as_of).where(ConsensusRecord.symbol == symbol)
-                      .order_by(ConsensusRecord.as_of.desc())).first()
+                      .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc())).first()
     add("news", "뉴스", n, "RSS · 네이버 · Yahoo")
     add("disclosure", "공시", d, "DART" if kr else "-", sla_applies=kr)
     add("ai", "AI 분석", (c[0] or c[1]) if c else None, "AI 합의", note=f"기준 데이터 {label(c[1], with_time=False)}" if c else None)
@@ -578,7 +578,7 @@ def horizon_probs(app, prob: float, width: float = 0.05, min_n: int = 30) -> lis
     with session_scope(app.engine) as s:
         rows = s.execute(select(ConsensusRecord.prob_up, ConsensusRecord.payload).where(
             ConsensusRecord.prob_up >= prob - width, ConsensusRecord.prob_up <= prob + width,
-            ConsensusRecord.realized_return.is_not(None)).order_by(ConsensusRecord.as_of.desc()).limit(3000)).all()
+            ConsensusRecord.realized_return.is_not(None)).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(3000)).all()
     out = []
     for h in (1, 5, 20):
         v = [float(o[str(h)]) for _, p in rows if (o := (p or {}).get("outcomes") or {}).get(str(h)) is not None]
@@ -610,7 +610,7 @@ def today_important(app, symbol: str, now: datetime | None = None, evs=None, bar
                                                                                   NewsArticle.published_at < now - timedelta(days=7)).limit(5000))
                  if symbol in (n.symbols or [])]
         recs = s.execute(select(ConsensusRecord.action, ConsensusRecord.as_of).where(ConsensusRecord.symbol == symbol)
-                         .order_by(ConsensusRecord.as_of.desc()).limit(2)).all()
+                         .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(2)).all()
     imp = [t for t in discs if any(k in t for k in IMPORTANT_DISC)]
     if discs:
         out.append({"icon": "📄", "level": "bad" if imp else "info", "text": f"{'중요 ' if imp else ''}공시 {len(imp) or len(discs)}건 (3일)"})

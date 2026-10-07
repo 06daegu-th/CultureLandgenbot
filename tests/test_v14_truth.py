@@ -277,7 +277,7 @@ def test_explain_for_symbol_uses_sealed_record(app):
     sym = next(s for s in app.market_data()[0] if s[:1].isdigit())
     e = for_symbol(app, sym)
     assert e and e["action"] in ("BUY", "SELL", "HOLD", "NO_TRADE") and e["headline"].split()[0] in ("BUY", "SELL", "HOLD", "NO")
-    assert e["as_of"].endswith("KST") and e["sealed"] and e["thresholds"]["buy_prob"] == 0.58
+    assert e["as_of"].endswith(("KST", "일봉")) and e["sealed"] and e["thresholds"]["buy_prob"] == 0.58
 
 
 # ------------------------------------------------------------------ MODEL: purged walk-forward · challenger

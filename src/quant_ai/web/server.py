@@ -374,6 +374,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.t_collect())
                     if url.path == "/api/signals2":  # v28: 신호 엔진 2.0 · 매수/매도 후보
                         return self._json(api.signals2(arg("market", "KR")[:2]))
+                    if url.path == "/api/ai-inputs":  # v36: AI 가 보는 자료
+                        return self._json(api.ai_inputs())
                     if url.path == "/api/datacheck":  # v29: 데이터 정합성 점검
                         return self._json(api.datacheck())
                     if url.path == "/api/proof-project":  # v29: 증명 프로젝트

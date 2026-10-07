@@ -75,7 +75,7 @@ def track(app, symbol: str, limit: int = 500) -> dict:
     with session_scope(app.engine) as s:
         rows = s.execute(select(ConsensusRecord.as_of, ConsensusRecord.action, ConsensusRecord.prob_up, ConsensusRecord.correct,
                                 ConsensusRecord.realized_return)
-                         .where(ConsensusRecord.symbol == symbol).order_by(ConsensusRecord.as_of.desc()).limit(limit)).all()
+                         .where(ConsensusRecord.symbol == symbol).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(limit)).all()
     scored = [r for r in rows if r.correct is not None]
     by = {}
     for act in ("BUY", "SELL", "HOLD", "NO_TRADE"):
@@ -142,7 +142,7 @@ def today(app, now: datetime | None = None) -> dict:
         since = now - timedelta(days=2)
         sigs = s.execute(select(ConsensusRecord.symbol, ConsensusRecord.action, ConsensusRecord.prob_up, ConsensusRecord.confidence,
                                 ConsensusRecord.as_of).where(ConsensusRecord.as_of >= since, ConsensusRecord.symbol.in_(list(mine) or [""]))
-                         .order_by(ConsensusRecord.as_of.desc())).all()
+                         .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc())).all()
         alerts = s.scalar(select(func.count()).select_from(AlertRecord).where(AlertRecord.ts >= now - timedelta(hours=24),
                                                                                 AlertRecord.level.in_(("warn", "bad")))) or 0
     if stuck:

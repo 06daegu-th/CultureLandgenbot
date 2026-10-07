@@ -136,7 +136,7 @@ def _ai_change(app, symbol: str, pub: datetime) -> dict | None:
     from .data.models import ConsensusRecord
     with session_scope(app.engine) as s:
         before = s.scalar(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol, ConsensusRecord.as_of < pub)
-                          .order_by(ConsensusRecord.as_of.desc()))
+                          .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()))
         after = s.scalar(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol, ConsensusRecord.as_of >= pub)
                          .order_by(ConsensusRecord.as_of))
         if before is None and after is None:

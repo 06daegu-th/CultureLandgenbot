@@ -15,7 +15,7 @@ from .ensemble.engine import EnsembleConfig
 
 CODE_KO = {"veto": "Risk AI 거부권", "few_responders": "방향 의견을 낸 AI 부족", "high_conflict": "AI 간 의견 충돌 높음",
            "weak_signal": "확률·신뢰도가 매매 기준 미달"}
-LABELS = {"primary": "뉴스 AI", "nvidia": "경제·시장 AI", "panel": "공시·실적 AI", "quant": "차트·Quant AI", "regime": "시장 국면",
+LABELS = {"primary": "뉴스 AI", "nvidia": "경제·시장 AI", "panel": "공시·실적 AI", "quant": "차트·Quant AI", "chart": "차트 신호", "regime": "시장 국면",
           "risk": "Risk AI", "challenger": "도전자 모델"}
 
 
@@ -150,7 +150,7 @@ def for_symbol(app, symbol: str) -> dict | None:
     return out | {"id": rec.id, "as_of": label(rec.as_of), "sealed": bool(rec.row_hash)}
 
 
-ROLE_SHORT = {"primary": "News", "nvidia": "Macro", "panel": "Earnings", "quant": "Quant", "regime": "Regime", "risk": "Risk", "challenger": "Challenger"}
+ROLE_SHORT = {"primary": "News", "nvidia": "Macro", "panel": "Earnings", "quant": "Quant", "chart": "Chart", "regime": "Regime", "risk": "Risk", "challenger": "Challenger"}
 FINAL_ICON = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡", "NO_TRADE": "⚪"}
 VOL_MAX = 0.05  # 하루 평균 움직임(20일 σ)이 5% 이상이면 새로 사지 않는다 (연 80% 수준)
 MIN_BARS = 60  # 일봉이 이보다 적으면 판단 근거 부족
@@ -243,9 +243,15 @@ def verdict(app, symbol: str, now=None) -> dict:
               "view": _view(c, cfg), "prob_up": None if c.get("prob_up") is None else round(c["prob_up"], 3),
               "weight": round(float(c.get("weight") or 0), 3), "summary": (c.get("summary") or "")[:100]}
              for c in p.get("contributions") or []]
-    junk = ("휴리스틱", "국면 ", "기권")
+    junk = ("휴리스틱", "국면 ", "기권", "재료 없음")
+    from .aiinputs import for_record
+    inputs = for_record(p)
+    # v36: 재료 없이 낸 의견(키 없는 규칙 AI · 뉴스 0건 등)은 '근거'가 아니다 — 근거 목록에서 뺀다
+    empty_ai = {r["analyst"] for r in inputs["readers"] if r["empty"]}
+    empty_lab = {LABELS.get(a, a) for a in empty_ai}
     pro = [f"{x['ai']}: {x['summary']}" if x.get("summary") and not any(j in x["summary"] for j in junk) else f"{x['ai']} 상승 확률 {x['prob_up']:.0%}"
-           for x in (ex.get("for") or [])] if rec.prob_up >= 0.5 else []
+           for x in (ex.get("for") or []) if x["ai"] not in empty_lab] if rec.prob_up >= 0.5 else []
+    reasons = [w for w in p.get("reasons") or [] if not any(str(w).startswith(f"[{a}]") for a in empty_ai)]
     regime_ko = {"bull_quiet": "안정적 상승", "bull_volatile": "변동성 상승", "sideways": "횡보", "bear_quiet": "완만한 하락",
                  "bear_volatile": "변동성 하락", "crisis": "위기"}
 
@@ -257,7 +263,7 @@ def verdict(app, symbol: str, now=None) -> dict:
         for k, v in regime_ko.items():
             w = w.replace(k, v)
         return w
-    why_buy = [_ko(w) for w in list(p.get("reasons") or []) + pro if w and not any(j in w for j in junk)][:3]
+    why_buy = [_ko(w) for w in reasons + pro if w and not any(j in w for j in junk)][:3]
     why_not = (all_blocks + list(p.get("risks") or []) + [x["summary"] for x in (ex.get("against") or []) if x.get("summary")])
     why_not = [_ko(w) for w in dict.fromkeys(why_not) if w and "휴리스틱" not in w][:3]
     from .scorecard import verify_now
@@ -293,7 +299,7 @@ def verdict(app, symbol: str, now=None) -> dict:
             "prob_up": round(rec.prob_up, 3), "confidence": round(rec.confidence, 1), "horizon": int(p.get("horizon") or 5),
             "big": f"{FINAL_ICON.get(final, '⚪')} {shown}" + (f" {rec.prob_up:.0%}" if final in ("BUY", "SELL", "HOLD") else ""),
             "changed_by_gate": final != rec.action, "headline": ex.get("headline"), "plain": ex.get("plain") or [],
-            "votes": votes, "why_buy": why_buy, "why_not": why_not, "no_trade": all_blocks, "warn": warn, "used": used,
+            "votes": votes, "inputs": inputs, "why_buy": why_buy, "why_not": why_not, "no_trade": all_blocks, "warn": warn, "used": used,
             "expected_return": p.get("expected_return"), "plan": {k: (p.get("plan") or {}).get(k) for k in ("stop", "target", "stop_pct")},
             "trust": trust, "as_of": label(rec.as_of), "id": rec.id,
             "note": "FINAL = 여러 AI 의견을 성적 가중으로 합친 뒤, 거래하면 안 되는 이유(NO TRADE)를 먼저 검사한 결과"}

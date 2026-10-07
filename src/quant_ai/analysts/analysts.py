@@ -159,39 +159,75 @@ class LLMAnalyst(Analyst):
 
 
 class HeuristicAnalyst(Analyst):
-    """API 키가 없을 때 쓰는 오프라인 대체 애널리스트 (파이프라인 테스트/데모용).
+    """API 키가 없을 때 쓰는 오프라인 대체 애널리스트 — 역할에 맞는 재료만 본다 (v36).
 
-    primary 는 모멘텀+뉴스 중심, nvidia 는 거시+뉴스 중심으로 가중치를 달리해 서로 다른 관점을 흉내 낸다.
+    primary(뉴스 AI) = 뉴스·공시(+커뮤니티 약하게), nvidia(경제·시장 AI) = 경제지표 위험선호·시장 상태·국면.
+    v35 까지는 둘 다 '20일 모멘텀'을 가장 크게 봐서, 뉴스가 0건이어도 '뉴스 AI 78% 확신' 처럼 보였다.
+    재료가 없으면 0.5·확신 아주 낮게 → 앙상블에서 거의 영향 없음, 화면에는 '재료 없음'으로 정직하게.
+    주가 흐름(모멘텀)은 차트·Quant AI 와 신호 엔진이 이미 본다 — 같은 재료를 두 번 세지 않는다.
     """
 
     categories = (DIRECTION, NEWS, MACRO)
-    WEIGHTS = {"primary": (0.6, 0.3, 0.1), "nvidia": (0.3, 0.4, 0.3)}  # (momentum, news, macro)
+    BACKEND = "heuristic-v36"  # v35 까지의 '모멘텀 휴리스틱'과 다른 판단 — 성적·확률 보정을 물려받지 않게 백엔드 이름을 나눈다
+    MAX_CONF = 0.45  # 규칙 기반 의견은 LLM 보다 확신을 낮게 (과신 방지)
 
     def __init__(self, name: str):
         self.name = name
 
-    def analyze(self, ctx: MarketContext) -> Opinion:
-        wm, wn, wmac = self.WEIGHTS.get(self.name, (0.5, 0.3, 0.2))
-        p = ctx.price
-        mom = math.tanh(8 * (p.get("ret_20") or 0) + 4 * (p.get("dist_ma20") or 0))
-        sents = [n["sentiment"] for n in ctx.news if n.get("sentiment") is not None]
-        news = float(np.mean(sents)) if sents else 0.0
-        macro = float(ctx.macro.get("_risk_appetite", 0.0))
-        score = wm * mom + wn * news + wmac * macro
+    def _empty(self, ctx: MarketContext, why: str, sub: dict) -> Opinion:
+        # 재료가 없으면 '중립 50%'도 의견이 아니다 → 기권 (확률 보정이 0.5 를 비틀어 판단을 끌고 가는 일 방지)
+        return Opinion(analyst=self.name, symbol=ctx.symbol, prob_up=None, confidence=0.0, reasons=[why],
+                       sub_scores=sub, summary=f"재료 없음 — {why}", backend=self.BACKEND, meta={"inputs": 0})
+
+    def _news(self, ctx: MarketContext) -> Opinion:
+        items = [(n.get("sentiment"), n.get("importance") or 0.5) for n in ctx.news if n.get("sentiment") is not None]
+        items += [(d.get("sentiment"), 0.8) for d in ctx.disclosures if d.get("sentiment") is not None]
+        comm = getattr(ctx, "community", None) or {}
+        if not items:
+            return self._empty(ctx, "최근 72시간 이 종목 뉴스·공시 0건 — 뉴스로 판단할 것이 없어 중립", {NEWS: 0.0})
+        w = sum(i for _, i in items) or 1.0
+        news = sum(float(s) * i for s, i in items) / w
+        score, reasons = news, [f"뉴스·공시 {len(items)}건 · 중요도 가중 분위기 {news:+.2f}"]
+        r5 = ctx.price.get("ret_5") or 0.0
+        if news * r5 > 0 and abs(r5) >= 0.05:  # 이미 같은 방향으로 크게 움직였으면 선반영으로 보고 절반만
+            score *= 0.5
+            reasons.append(f"최근 5일 {r5:+.1%} 이미 움직여 반영됐을 수 있음 (절반만 반영)")
+        mood = comm.get("mood")
+        if isinstance(mood, (int, float)) and abs(mood) >= 0.6:  # 커뮤니티 과열은 약한 역지표
+            score -= 0.1 * float(np.sign(mood))
+            reasons.append(f"커뮤니티 {'과열' if mood > 0 else '공포'} ({comm.get('posts') or 0}건) — 약한 반대 신호")
+        prob = 1 / (1 + math.exp(-1.6 * score))
+        conf = min(self.MAX_CONF, 0.12 + 0.04 * len(items) + 0.25 * abs(score))
+        return Opinion(analyst=self.name, symbol=ctx.symbol, prob_up=prob, confidence=conf, reasons=reasons,
+                       sub_scores={NEWS: news}, summary="규칙으로 읽은 뉴스·공시 의견 (AI 키를 넣으면 LLM 이 대신 읽어요)",
+                       backend=self.BACKEND, meta={"inputs": len(items)})
+
+    def _macro(self, ctx: MarketContext) -> Opinion:
+        parts, reasons = [], []
+        app_ = ctx.macro.get("_risk_appetite")
+        if app_ is not None:
+            parts.append(float(app_))
+            reasons.append(f"경제지표 위험선호 {float(app_):+.2f} (금리·환율·변동성 5일 변화)")
+        ms = getattr(ctx, "market_state", None) or {}
+        if ms.get("score") is not None and not ms.get("insufficient"):
+            parts.append((float(ms["score"]) - 50) / 50)
+            reasons.append(f"시장 상태 {ms.get('label')} ({ms.get('score')}점)")
+        r = (ctx.regime or {}).get("regime")
+        if r:
+            parts.append(max(min(REGIME_SCORE[Regime(r)], 1.0), -1.0) * 0.5)
+            reasons.append(f"시장 국면 {r}")
+        if not parts:
+            return self._empty(ctx, "경제지표·시장 상태 자료가 없어 중립", {MACRO: 0.0})
+        score = float(np.mean(parts))
         prob = 1 / (1 + math.exp(-1.2 * score))
-        reasons = []
-        if abs(mom) > 0.2:
-            reasons.append(f"20일 모멘텀 {'상승' if mom > 0 else '하락'} ({p.get('ret_20', 0):+.1%})")
-        if ctx.news:
-            reasons.append(f"최근 뉴스 {len(ctx.news)}건, 평균 감성 {news:+.2f}")
-        if macro:
-            reasons.append(f"거시 위험선호 {macro:+.2f}")
-        return Opinion(
-            analyst=self.name, symbol=ctx.symbol, prob_up=prob,
-            confidence=min(0.9, 0.3 + abs(score)), reasons=reasons,
-            sub_scores={NEWS: news, MACRO: macro}, summary="오프라인 휴리스틱 의견 (API 키 설정 시 LLM 으로 대체)",
-            backend="heuristic",
-        )
+        conf = min(self.MAX_CONF, 0.1 + 0.05 * len(parts) + 0.2 * abs(score))
+        return Opinion(analyst=self.name, symbol=ctx.symbol, prob_up=prob, confidence=conf, reasons=reasons,
+                       sub_scores={MACRO: float(app_ or 0.0)},
+                       summary="규칙으로 읽은 경제·시장 의견 (AI 키를 넣으면 LLM 이 대신 읽어요)", backend=self.BACKEND,
+                       meta={"inputs": len(parts)})
+
+    def analyze(self, ctx: MarketContext) -> Opinion:
+        return self._macro(ctx) if self.name == "nvidia" else self._news(ctx)
 
 
 class QuantAnalyst(Analyst):
@@ -231,6 +267,36 @@ class QuantAnalyst(Analyst):
             reasons=reasons, sub_scores={TREND: trend}, summary=summary,
             backend=f"sklearn:{self.predictor.kind}", meta={"model_version": self.version, "target": target},
         )
+
+
+class SignalAnalyst(Analyst):
+    """v36 '차트 신호' — 학습 모델(Quant)이 검증에서 탈락했거나 없을 때, 과거 근거로 가중치를 정한 가격 신호(신호 엔진 2.0)로 의견.
+
+    확률은 말로 정하지 않는다: 이 종목 점수대가 '보지 않은 기간'에 시장을 이긴 비율(n 으로 0.5 쪽 수축).
+    확신은 신호 엔진의 근거 등급(근거 있음 / 약한 근거 / 근거 부족)에 묶는다.
+    """
+
+    name = "chart"
+    categories = (DIRECTION, TREND)
+    CONF = {"good": 0.45, "warn": 0.25, "bad": 0.1}
+
+    def analyze(self, ctx: MarketContext) -> Opinion:
+        sg = getattr(ctx, "signal", None) or {}
+        if sg.get("score") is None:
+            return Opinion.abstain(self.name, ctx.symbol, "신호 엔진 점수 없음 (거래 적은 종목이거나 일봉 부족)", "signals2")
+        score = float(sg["score"])
+        b = sg.get("bin") or {}
+        n, hit = int(b.get("n") or 0), b.get("hit")
+        prob = 0.5 if hit is None else 0.5 + (float(hit) - 0.5) * n / (n + 200)
+        tier = sg.get("tier") or {}
+        reasons = [f"{x['label']}: {x['text']}" for x in (sg.get("top") or [])[:2]]
+        if hit is not None:
+            reasons.append(f"이 점수대({b.get('label')})는 보지 않은 기간 {n}번 중 {float(hit):.0%} 가 시장보다 올랐음"
+                           + (f" · 평균 {float(b['mean']):+.1%}" if b.get("mean") is not None else ""))
+        return Opinion(analyst=self.name, symbol=ctx.symbol, prob_up=prob, confidence=self.CONF.get(tier.get("key"), 0.1),
+                       reasons=reasons, sub_scores={TREND: max(-1.0, min(1.0, score / 3))},
+                       summary=f"검증된 가격 신호 점수 {score:+.1f} · {tier.get('label') or '근거 미상'} (20거래일 시장 대비)",
+                       backend="signals2", meta={"tier": tier.get("key"), "bin_n": n})
 
 
 class RegimeAnalyst(Analyst):
@@ -419,6 +485,8 @@ def build_analysts(settings, predictor: Predictor | None, model_version: str | N
     if "panel" in llms:
         analysts.append(llms["panel"])
     analysts.append(QuantAnalyst(predictor, model_version))
+    if predictor is None:  # v36: 학습 모델이 없거나 검증 탈락 → 차트는 검증된 가격 신호로 본다 (차트를 아예 안 보는 일이 없게)
+        analysts.append(SignalAnalyst())
     analysts.append(RegimeAnalyst())
     analysts.append(RiskAnalyst(llms.get("risk")))
     return analysts

@@ -120,6 +120,8 @@ def fit_calibrators(session: Session, window_days: int = 180, min_n: int = 50,
     for analyst, prob, rr, _payload, t in _direction_rows(session, since):
         if as_of is not None and _aware(t) > now - KNOWN_AFTER:
             continue
+        if (_payload or {}).get("backend") == "heuristic":  # v36: 예전 '모멘텀 휴리스틱' 기록은 지금 규칙 AI 와 다른 판단
+            continue
         # prob_up 은 AI 가 말한 원래 확률 (보정값은 payload.prob_cal) → 이중 보정 없음
         by[analyst].append((prob, 1.0 if (rr or 0) > 0 else 0.0))
     q = select(ConsensusRecord.prob_up, ConsensusRecord.realized_return, ConsensusRecord.payload,
@@ -127,9 +129,11 @@ def fit_calibrators(session: Session, window_days: int = 180, min_n: int = 50,
     for prob, rr, payload, t in session.execute(q):
         if as_of is not None and _aware(t) > now - KNOWN_AFTER:
             continue
+        if _legacy_consensus(payload):
+            continue
         raw = (payload or {}).get("prob_raw")  # 이미 보정된 합의 확률은 원래 값으로 다시 적합
         by[CONSENSUS_KEY].append((raw if raw is not None else prob, 1.0 if (rr or 0) > 0 else 0.0))
-    out = {}
+    out: dict = {}
     for analyst, rows in by.items():
         if len(rows) < min_n:
             continue
@@ -138,6 +142,17 @@ def fit_calibrators(session: Session, window_days: int = 180, min_n: int = 50,
         after = [cal.apply(x) for x in p]
         out[analyst] = {**asdict(cal), "before": _brief(metrics(p, y)), "after": _brief(metrics(after, y))}
     return out
+
+
+def _legacy_consensus(payload: dict | None) -> bool:
+    """v36 이전 · 키 없는 '모멘텀 휴리스틱'이 섞인 합의 기록 — 지금 합의와 구성이 달라 보정에 쓰지 않는다."""
+    v = (payload or {}).get("versions") or {}
+    try:
+        major, minor = (int(x) for x in str(v.get("code") or "0.0").split(".")[:2])
+    except ValueError:
+        return False
+    roles = v.get("roles") or {}
+    return (major, minor) < (0, 36) and any((r or {}).get("backend") == "HeuristicAnalyst" for r in roles.values())
 
 
 def _brief(m: dict) -> dict:

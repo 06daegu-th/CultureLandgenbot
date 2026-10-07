@@ -179,7 +179,11 @@ def intraday(sym: str, market: str | None = None, get: Callable[[str], bytes] | 
         if not out["points"]:
             out["error"] = "분봉 자료가 비어 있어요 (장 시작 전이거나 휴장)"
     except Exception as e:  # noqa: BLE001
-        out = {"symbol": sym, "points": [], "error": f"분봉을 받지 못했어요 — {str(e)[:120]}"}
+        msg = str(e)
+        why = ("인터넷 연결이 안 되거나 시세 서버에 닿지 못했어요" if any(k in msg for k in ("URLError", "timed out", "Tunnel", "Connection", "Name or service"))
+               else "시세 서버가 응답하지 않았어요 (잠시 뒤 다시)" if any(k in msg for k in ("429", "500", "502", "503")) else "분봉 자료를 읽지 못했어요")
+        out = {"symbol": sym, "points": [], "error": f"{why} — 1주 이상 차트는 저장된 일봉으로 볼 수 있어요",
+               "detail": msg[:160]}  # v36: 화면에는 쉬운 말, 기술 내용은 detail 로만
     _INTRA[sym] = (now, out)
     if len(_INTRA) > 300:
         for k in sorted(_INTRA, key=lambda k: _INTRA[k][0])[:100]:

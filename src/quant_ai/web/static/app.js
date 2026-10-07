@@ -165,7 +165,8 @@ function chartOpts(el) {
     width: el.clientWidth, height: el.clientHeight,
     // v29: 차트 라이브러리 로고 대신 화면 아래 글로 출처 표기 · 가격 콤마
     layout: { background: { type: "solid", color: "transparent" }, textColor: css("--muted"), fontFamily: "Pretendard, sans-serif", attributionLogo: false },
-    localization: { locale: "ko-KR", priceFormatter: (p) => Math.abs(p) >= 1000 ? num(p, 0) : num(p, Math.abs(p) < 10 ? 3 : 2) },
+    // v36: 아래 여백 때문에 축이 0 이하까지 내려가면 '0.000' 같은 이상한 눈금이 보였다 → 0 이하 눈금은 비움 · 정수는 소수점 없이
+    localization: { locale: "ko-KR", priceFormatter: (p) => p <= 0 ? "" : Math.abs(p) >= 1000 || Number.isInteger(p) ? num(p, 0) : num(p, Math.abs(p) < 10 ? 3 : 2) },
     grid: { vertLines: { color: css("--line") }, horzLines: { color: css("--line") } },
     rightPriceScale: { borderColor: css("--line-2") }, timeScale: { borderColor: css("--line-2") },
     crosshair: { mode: 0 },

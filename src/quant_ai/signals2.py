@@ -509,6 +509,26 @@ def for_symbol(app, symbol: str) -> dict:
             "why": "후보 계산 대상이 아니에요 (거래대금이 작거나 일봉이 부족)"}
 
 
+def context_rows(app, market: str = "KR") -> dict[str, dict]:
+    """v36: AI 합의 판단(차트 신호 의견)에 넘길 종목별 요약 — 점수 · 근거 등급 · 그 점수대의 '보지 않은 기간' 결과."""
+    full = cached(app, market)
+    if full.get("error"):
+        return {}
+    cal = full.get("calibration") or {}
+    bins = {b["bin"]: b for b in cal.get("bins") or []}
+    out = {}
+    for sym, r in (full.get("_rows") or {}).items():
+        sc = r.get("score")
+        if sc is None:
+            continue
+        bi = int(np.digitize([sc], BINS[1:-1])[0])
+        top = sorted((x for x in r.get("signals") or [] if x.get("verified") and x.get("weight")),
+                     key=lambda x: -abs(float(x.get("score") or 0) * float(x.get("weight") or 0)))
+        out[sym] = {"score": sc, "tier": cal.get("tier"), "bin": bins.get(bi), "as_of": full.get("as_of"),
+                    "top": [{"label": x["label"], "text": x["text"]} for x in top[:3]]}
+    return out
+
+
 _CACHE: dict[str, tuple[float, dict]] = {}
 
 

@@ -55,7 +55,7 @@ def trust(app, symbol: str, now: datetime | None = None) -> dict:
         add("halt", "거래정지 의심", "bad" if flat else "warn" if v0 else "ok",
             "최근 3봉 가격 고정 · 거래량 0 — 거래정지 가능성" if flat else "마지막 봉 거래량 0" if v0 else "정상 거래")
     with session_scope(app.engine) as s:
-        c = s.scalar(select(ConsensusRecord.as_of).where(ConsensusRecord.symbol == symbol).order_by(ConsensusRecord.as_of.desc()))
+        c = s.scalar(select(ConsensusRecord.as_of).where(ConsensusRecord.symbol == symbol).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()))
     if c is None:
         add("ai", "AI 판단", "warn", "이 종목 AI 판단 기록 없음")
     else:
@@ -157,7 +157,7 @@ def story(app, symbol: str, mode: str = "paper", days: int = 90) -> dict:
         timeline = [{"ts": label(r.ts), "kind": r.kind, "message": r.message,
                      "reason": (r.data or {}).get("reason"), "reasons": (r.data or {}).get("reasons") or [],
                      "status": (r.data or {}).get("status")} for r in rows]
-        cons = s.scalar(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol).order_by(ConsensusRecord.as_of.desc()))
+        cons = s.scalar(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()))
     ranks, scores = plan.get("ranks") or {}, plan.get("scores") or {}
     top_k, buf = cfg.get("core_top_k"), cfg.get("core_buffer_k")
     rk = ranks.get(symbol)

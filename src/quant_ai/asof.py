@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from datetime import time as dtime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -55,6 +56,8 @@ def label(ts, with_time: bool = True) -> str | None:
     if t is None:
         return None
     k = t.astimezone(KST)
+    if with_time and t.astimezone(UTC).time() == dtime(0, 0):  # v36: 일봉 날짜(자정 UTC)는 '09:00 KST' 가 아니라 날짜만 — 판단 시각으로 오해 방지
+        return t.astimezone(UTC).strftime("%Y-%m-%d") + " 일봉"
     return k.strftime("%Y-%m-%d %H:%M KST") if with_time else k.strftime("%Y-%m-%d")
 
 

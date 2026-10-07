@@ -35,7 +35,7 @@ def _rows(app, n: int = 2000):
     with session_scope(app.engine) as s:
         out = []
         for r in s.scalars(select(ConsensusRecord).where(ConsensusRecord.realized_return.is_not(None))
-                           .order_by(ConsensusRecord.as_of.desc()).limit(n)):
+                           .order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()).limit(n)):
             ex = ((r.payload or {}).get("outcomes") or {}).get("excess")
             if ex is not None:
                 out.append({"symbol": r.symbol, "as_of": r.as_of, "p": r.prob_up, "ret": r.realized_return, "excess": float(ex),

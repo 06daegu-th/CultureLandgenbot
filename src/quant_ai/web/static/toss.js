@@ -126,7 +126,7 @@ function tArea(el, bars, sym, onHover, o = {}) {
   const kr = isKR(sym);
   // v29: 가격 축·마지막 값에 콤마 (360000 → 360,000) · 미국은 소수 2자리
   const s = chart.addAreaSeries({ lineColor: c, topColor: c + "38", bottomColor: c + "00", lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
-    priceFormat: { type: "custom", minMove: kr ? 1 : 0.01, formatter: (p) => num(p, kr ? 0 : 2) } });
+    priceFormat: { type: "custom", minMove: kr ? 1 : 0.01, formatter: (p) => p <= 0 ? "" : num(p, kr ? 0 : 2) } });
   s.setData(bars.map((b) => ({ time: b.time, value: b.close })));
   // v29: 기준선 점선 — 1일은 어제 종가, 기간 차트는 기간 시작가 (오르내림을 한눈에)
   const ref = o.refPrice ?? first;
@@ -207,7 +207,7 @@ async function tHome(el) {
     <div id="th-goal"></div>
     ${tSec("지수", idxB, '<a href="#market">시장 전체</a>', "t-sec-idx")}
     <div id="th-picks2"></div>
-    ${typeof adviceOn === "function" && !adviceOn() ? "" : tSec("AI가 본 오늘의 종목", trustLine + picksB, '<a href="#report">AI 분석</a>')}
+    ${typeof adviceOn === "function" && !adviceOn() ? "" : tSec(`AI가 본 오늘의 종목${picks[0]?.as_of ? ` <span class="t-sub">${esc(String(picks[0].as_of).replace(" 일봉", ""))} 종가 기준</span>` : ""}`, trustLine + picksB, '<a href="#report">AI 분석</a>')}
     <div class="t-grid2">
       ${tSec("오늘의 주요 이벤트", evB, '<a href="#calendar">일정 전체</a>', "t-card")}
       ${tSec(/mode=live/.test(q) ? "내 보유 종목 현황" : "모의투자 장부 <span class=\"t-tag\">가상 돈</span>", hdB, '<a href="#pos">포트폴리오</a>', "t-card")}
@@ -263,7 +263,10 @@ async function tStock(el, sym) {
   const isStar = (starred.starred || []).some((x) => (x.symbol || x) === sym);
   const live = st.live;
   const last = live?.price ?? st.last, chgP = live?.chg_pct ?? st.chg_pct;
-  const chgAbs = live ? (st.prev ? live.price - st.prev : null) : st.chg;
+  const chgAbs = live ? (live.chg ?? (st.prev ? live.price - st.prev : null)) : st.chg;
+  const pa = st.price_age || {};
+  const staleNote = !live && pa.status && pa.status !== "fresh" && pa.status !== "none"
+    ? `<div class="tsk-stale ${pa.status === "old" ? "old" : ""}" role="note"><b>${esc(pa.age || "")}</b> · 마지막 거래일 종가예요 — 지금 실제 주가와 다를 수 있어요 <a href="#datahealth">시세 받기</a></div>` : "";
   const m = st.market || {};
   const when = live ? `실시간 · ${esc(time(live.at))}` : st.bar_date ? `${esc(st.bar_date.slice(5).replace("-", "."))} 종가` : "가격 자료 없음";
   const mkt = `<span class="t-mk ${m.state === "장중" ? "open" : ""}">${m.state === "장중" ? '<i class="live-dot"></i>' : ""}${esc(m.state || "")}${m.holiday ? `<em>${esc(m.holiday)}</em>` : ""}${m.state !== "장중" && m.next_kst ? `<em>${m.next === "폐장" ? "마감" : "개장"} ${esc(String(m.next_kst).replace(" KST", ""))}</em>` : ""}</span>`;
@@ -275,7 +278,7 @@ async function tStock(el, sym) {
         <div class="tsk-id">${stockLogo(sym, name, 52)}<div><h1>${esc(name)}</h1><div class="t-sub">${sub}${idt.name_en && idt.name_en !== name ? ` · ${esc(idt.name_en)}` : ""}${isKR(sym) ? ` · <button class="t-link" data-logo-up="${esc(sym)}" data-logo-name="${esc(name)}">로고 바꾸기</button>` : ""}</div></div></div>
         <div class="tsk-px" id="tsk-px">${last == null ? `<b class="tsk-price dim">가격 자료 없음</b><span class="t-sub">${isKR(sym) ? "국내 일봉을 받으면 나와요 (./run.sh)" : "해외 시세는 인터넷 연결이 되면 받아와요 — 데이터 상태에서 확인"}</span>`
           : `<b class="num tsk-price">${tPx(last, sym)}</b><span class="num tsk-chg ${tCls(chgP)}">${chgAbs != null ? tSigned(chgAbs, sym) + " " : ""}(${tPct(chgP)})</span>`}</div>
-        <div class="tsk-when">${when} ${mkt}</div>
+        <div class="tsk-when">${when} ${mkt}</div>${staleNote}
       </header>
       <aside class="tsk-side" id="tsk-side"><div class="tsk-cards"><div class="tsk-card sk"></div><div class="tsk-card sk"></div></div></aside>
       <div class="tsk-main">
@@ -309,7 +312,7 @@ function tStockSide(ctx) {
   const banned = v.trust?.key === "banned";
   const ai = v.final ? `<a class="tsk-card ai fin-${esc(v.final)}" href="#report/${encodeURIComponent(sym)}">
       <span class="t-k">AI 판단</span><div class="tsk-ai">${tPill(v.final, v.prob_up)}</div>
-      <span class="t-sub">${v.horizon}거래일 기준 · ${esc(String(v.as_of || "").slice(5, 16))}${banned ? " · 참고만" : ""}</span></a>`
+      <span class="t-sub">${v.prob_up != null ? `${v.horizon}거래일 뒤 오를 확률 ${Math.round(v.prob_up * 100)}%` : `${v.horizon}거래일 기준`} · ${esc(String(v.as_of || "").slice(5, 16))}${banned ? " · 참고만" : ""}</span></a>`
     : `<div class="tsk-card ai"><span class="t-k">AI 판단</span><div class="tsk-ai">${tPill(null)}</div><span class="t-sub" id="analyze-msg">아직 판단 기록이 없어요 · 지금 바로 판단할 수 있어요 (주문 없음)</span>
       <button class="t-btn primary sm" id="analyze-btn">지금 AI 분석</button></div>`;
   const e = v.earnings;
@@ -343,7 +346,7 @@ async function tStockTab(ctx, k) {
         <div class="t-chart-src"><span>누른 채 끌면 구간 수익률 · 점선 = 기간 시작가 (1일은 어제 종가)</span><span>${isKR(sym) ? "시세 KRX 일봉 (장중은 지연)" : "시세 일봉 (지연)"} · 차트 <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView</a></span></div>
         ${tChips("tsk-per", PERIODS.map(([n, l]) => [String(n), l]), String(T.period))}${isKR(sym) ? `<label class="t2-check" style="margin-top:8px"><input type="checkbox" id="tsk-cmp"${T.cmpIdx ? " checked" : ""}> 코스피와 비교 (점선)</label>` : ""}<div class="t-foot">1일 = 5분봉 (조금 늦을 수 있어요) · 나머지는 일봉 종가 기준</div></div>
       ${tSec("시세", `<div class="t-stats">${stat("시가", tPx(s.open, sym))}${stat("고가", `<span class="up">${tPx(s.high, sym)}</span>`)}${stat("저가", `<span class="down">${tPx(s.low, sym)}</span>`)}
-        ${stat("거래량", tVol(s.volume))}${stat("52주 최고", tPx(s.high52, sym))}${stat("52주 최저", tPx(s.low52, sym))}${stat("시가총액", tCap(st.market_cap, sym))}${stat("20일 평균 거래량", tVol(s.avg_volume20))}</div>
+        ${stat("거래량", tVol(s.volume))}${stat("52주 최고 (장중)", tPx(s.high52, sym))}${stat("52주 최저 (장중)", tPx(s.low52, sym))}${stat("시가총액", tCap(st.market_cap, sym))}${stat("20일 평균 거래량", tVol(s.avg_volume20))}</div>
         ${st.bar_date ? `<div class="t-foot">${esc(st.bar_date)} 일봉 기준${st.market_cap ? (st.market_cap_src ? ` · 시가총액 ${esc(st.market_cap_src)}` : "") : " · 시가총액은 종목 상세 자료를 받으면 나와요"} · <a href="#datacheck">데이터 점검</a></div>` : ""}`, "", "t-card")}
       <div id="tsk-sum-ai"></div><div id="tsk-sum-sig"></div><div id="tsk-sum-news"></div>`;
     const cmpBox = body.querySelector("#tsk-cmp");
@@ -466,8 +469,37 @@ function tStockSumAI(ctx) {
   const li = (xs) => xs.slice(0, 3).map((x, i) => `<li><span class="t-num">${i + 1}</span>${esc(koText(x))}</li>`).join("");
   box.innerHTML = tSec("AI 한 줄 요약", `<div class="t-ai-sum">${tPill(v.final, v.prob_up)}<span>${esc(koText((v.plain || [])[2] || (v.plain || [])[0] || v.headline || ""))}</span></div>
     <div class="t-why2"><div><div class="t-k up">근거</div><ol class="t-ol">${li(v.why_buy || []) || "<li>뚜렷한 근거 없음</li>"}</ol></div>
-      <div><div class="t-k down">주의할 점</div><ol class="t-ol">${li(v.why_not || []) || "<li>막는 이유 없음</li>"}</ol></div></div>`,
+      <div><div class="t-k down">주의할 점</div><ol class="t-ol">${li(v.why_not || []) || "<li>막는 이유 없음</li>"}</ol></div></div>
+    ${tAiInputs(v.inputs)}`,
   `<a href="#report/${encodeURIComponent(ctx.sym)}">AI 리포트</a>`, "t-card");
+}
+// v36: 지금 AI 가 보고 있는 자료 (서버 전체) — 꺼진 자료는 이유와 켜는 방법까지
+function tAiCoverage(cov, title = "AI 가 지금 보고 있는 자료") {
+  if (!cov || !(cov.rows || []).length) return "";
+  const ST = { ok: "들어옴", stale: "오래됨", off: "안 들어옴" };
+  const when = (r) => r.key === "chart" ? (r.at ? `${esc(r.at)} 일봉 · ${tN(r.n)}종목${r.lag ? ` · ${r.lag}거래일 밀림` : ""}` : "없음")
+    : r.key === "llm" ? (r.status === "ok" ? Object.entries(r.roles || {}).map(([k, v]) => `${esc({ primary: "뉴스", nvidia: "경제", risk: "위험", panel: "공시" }[k] || k)}:${esc(v)}`).join(" · ") : "키 없음 — 규칙으로 해석")
+    : r.at ? `${tN(r.n)} ${esc(r.unit || "")} · 마지막 ${esc(String(r.at).slice(0, 16).replace("T", " "))}` : "수집 기록 없음";
+  const chips = cov.rows.map((r) => `<span class="ai-src ${r.status === "ok" ? "on" : "off"}" title="${esc(ST[r.status] || "")}"><i>${r.status === "ok" ? "✓" : r.status === "stale" ? "!" : "–"}</i>${esc(r.name)}</span>`).join("");
+  return tSec(title, `<div class="ai-in-head"><b>${esc(cov.headline || "")}</b></div>
+    <div class="ai-srcs">${chips}</div>
+    <details class="ai-in-more"><summary>왜 안 들어오나 · 켜는 방법</summary>
+      <div class="ai-cov">${cov.rows.map((r) => `<div class="ai-cov-it ${esc(r.status)}"><span class="st">${ST[r.status] || ""}</span><b>${esc(r.name)}</b><span class="t-sub">${when(r)}</span>${r.why ? `<div class="t-sub" style="margin-top:4px">${esc(r.why)}</div>` : ""}</div>`).join("")}</div>
+      <div class="t-foot">자료가 안 들어오면 그 자료는 판단에서 빠져요 (지어내지 않음) · 종목마다 '이번 판단에 들어간 자료'는 종목 화면 'AI 한 줄 요약'에서 · <a href="#datahealth">데이터 상태 · 키 진단</a></div></details>`, "", `t-card ai-cov-card ${cov.level === "good" ? "" : "warn"}`);
+}
+// v36: 'AI 가 정말 뉴스·공시·커뮤니티·경제까지 보고 판단했나' — 봉인된 판단에 들어간 재료 / 빠진 재료
+function tAiInputs(inp, opts = {}) {
+  if (!inp || !(inp.sources || []).length) return "";
+  const chips = inp.sources.map((x) => `<span class="ai-src ${x.used ? "on" : "off"}" title="${esc(x.detail)} · 읽는 쪽: ${esc(x.reader)}"><i>${x.used ? "✓" : "–"}</i>${esc(x.name)}</span>`).join("");
+  const rd = (inp.readers || []).filter((r) => r.analyst !== "regime").map((r) => `<span class="ai-rd${r.empty ? " empty" : ""}"><b>${esc(r.label)}</b> ${esc(r.abstain ? r.kind : r.empty ? "재료 없음 · 판단에 거의 영향 없음" : r.kind)}</span>`).join("");
+  const detail = inp.sources.map((x) => `<li class="${x.used ? "" : "t-sub"}"><b>${esc(x.name)}</b> — ${esc(x.detail)} <span class="t-sub">· ${esc(x.reader)}</span></li>`).join("");
+  return `<div class="ai-inputs ${esc(inp.level || "")}">
+    <div class="ai-in-h"><b>AI 가 확인한 자료</b> <span class="num">${inp.n_used}/${inp.n_core}</span> <span class="t-sub">(뉴스·공시·수급·커뮤니티·경제지표 중)</span></div>
+    <div class="ai-in-head">${esc(inp.headline || "")}</div>
+    <div class="ai-srcs">${chips}</div>
+    ${opts.brief ? "" : `<details class="ai-in-more"><summary>자세히 · 누가 어떻게 읽었나</summary><ul class="ai-in-list">${detail}</ul><div class="ai-rds">${rd}</div>
+      <div class="t-foot">판단을 봉인할 때 함께 저장한 재료 그대로예요 — 나중에 봐도 같은 내용 · ✓ 들어감 / – 없어서 빠짐 · <a href="#aitrust">AI 가 보는 자료 전체</a></div></details>`}
+  </div>`;
 }
 function tNewsList(n, lim) {
   const xs = (n.items || []).slice(0, lim);
