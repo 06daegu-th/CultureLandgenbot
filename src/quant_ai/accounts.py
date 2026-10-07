@@ -180,6 +180,16 @@ def summary(app) -> dict:
                           "holdings": [{"symbol": s, "qty": p.qty, "avg_price": p.avg_price} for s, p in pf.positions.items() if p.qty]})
     bars, _ = app._all_bars()
     prices = {s: float(b["close"].iloc[-1]) for s, b in bars.items() if len(b)}
+    missing = {h["symbol"] for a in accts for h in a.get("holdings") or []} - set(prices)
+    if missing:  # v33: 적립 ETF(069500 등)는 종목 일봉 묶음 밖 — DB 에 받아 둔 마지막 종가로 평가 (없으면 평균단가)
+        from .data.models import PriceBar
+        with session_scope(app.engine) as s:
+            for sym in missing:
+                for cand in (sym, f"{sym}.KS"):
+                    b = s.scalar(select(PriceBar).where(PriceBar.symbol == cand, PriceBar.interval == "1d").order_by(PriceBar.ts.desc()).limit(1))
+                    if b is not None and b.close:
+                        prices[sym] = float(b.close)
+                        break
     with session_scope(app.engine) as s:
         fxs = load_macro(s, ["DEXKOUS"], days=30).get("DEXKOUS")
         names = {i.symbol: i.name for i in s.scalars(select(Instrument))}

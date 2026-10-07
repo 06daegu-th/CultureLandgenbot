@@ -1293,10 +1293,23 @@ class DashboardAPI:
         key = "goal:" + ":".join(str(inp[k]) for k in sorted(inp))
         p = self._cached(key, 600, lambda: goal.plan(**inp))
         return p | {"saved": g or None, "progress": goal.progress(self.app), "presets": goal.PRESETS, "etfs": goal.ETFS,
-                    "recommended": goal.RECOMMENDED, "ai_cap_max": goal.AI_CAP_MAX, "smallcap": smallcap_status(self.app)}
+                    "recommended": goal.RECOMMENDED, "ai_cap_max": goal.AI_CAP_MAX, "smallcap": smallcap_status(self.app),
+                    "buy_est": goal.buy_estimate(self.app)}
+
+    def goal_home(self) -> dict:
+        """v33 홈 '내 목표' 카드 (가벼움 · 1분 캐시)."""
+        from .. import goal
+        return self._cached("goal_home", 60, lambda: goal.home_card(self.app))
 
     def goal_save(self, body: dict) -> dict:
         from .. import goal
+        if body.get("record_buy"):  # v33: 실계좌 적립 '샀어요' 기록
+            rb = body["record_buy"]
+            r = goal.record_buy(self.app, float(str(rb.get("qty")).replace(",", "")), float(str(rb.get("price")).replace(",", "")),
+                                float(str(rb["deposit"]).replace(",", "")) if rb.get("deposit") not in (None, "") else None, rb.get("etf"))
+            self._risk_cache = {k: v for k, v in self._risk_cache.items() if not k.startswith(("goal", "home5"))}
+            self._audit("goal_buy", f"적립 기록 {r['lot']['etf']} {r['lot']['qty']:g}주 × {r['lot']['price']:,.0f}원")
+            return r
         if body.get("apply"):  # v31: 추천 계획 한 번에 적용
             r = goal.apply_recommended(self.app, str(body["apply"]), str(body.get("mode") or "paper"),
                                        monthly=float(str(body["monthly"]).replace(",", "")) if body.get("monthly") else None)

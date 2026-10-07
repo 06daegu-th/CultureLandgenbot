@@ -248,7 +248,7 @@ def current_assets(app) -> tuple[float, str]:
     d = get(app).get("dca") or {}
     if d.get("mode") == "paper" and d.get("target") == "etf":
         pf = _load_book(app, ETF_BOOK)
-        return float(pf.equity(_book_prices(app, pf))), f"ETF 적립 모의 장부 ({ETFS.get(d.get('etf') or '069500')})"
+        return float(pf.equity(_book_prices(app, pf))), f"ETF 적립 모의 장부 · {ETFS.get(d.get('etf') or '069500', '').split(' (')[0]}"
     try:
         vals, cash, total, names = _book(app, d.get("mode", "paper"))
     except Exception:  # noqa: BLE001
@@ -272,7 +272,8 @@ def progress(app, now: datetime | None = None) -> dict:
     ahead = total - exp
     out = {"set": True, "goal": g["goal"], "total": round(total), "source": src, "pct": round(min(pct, 9.99), 4),
            "months": months, "expected": round(exp), "ahead": round(ahead), "on_track": ahead >= -0.05 * exp,
-           "text": f"목표 {g['goal'] / 1e8:,.2f}억 중 {pct:.1%} · 계획보다 {'앞섬' if ahead >= 0 else '뒤처짐'} {abs(ahead) / 1e4:,.0f}만원",
+           "text": f"목표 {g['goal'] / 1e8:,.2f}억 중 {pct:.1%} · "
+                   + ("계획대로" if abs(ahead) < 10_000 else f"계획보다 {'앞섬' if ahead >= 0 else '뒤처짐'} {abs(ahead) / 1e4:,.0f}만원"),
            "dca": g.get("dca"), "ai_cap": g.get("ai_cap"), "preset": g.get("preset"), "as_of": label(now)}
     cps = g.get("checkpoints") or []
     if cps:
@@ -357,6 +358,86 @@ def apply_recommended(app, key: str = "m100", mode: str = "paper", monthly: floa
     else:
         out["next"] = f"모의 ETF 장부에 {body['principal'] / 1e4:,.0f}만원으로 시작했어요 · 매달 {d['day']}일에 {body['monthly'] / 1e4:,.0f}만원씩 자동으로 넣고 사요"
     return out
+
+
+GOAL_ACCOUNT = "goal-plan"  # 실계좌 적립을 손으로 기록하는 계좌 (계좌·세금 화면에도 그대로 보임)
+
+
+def record_buy(app, qty: float, price: float, deposit: float | None = None, etf: str | None = None, account_type: str = "isa",
+               now: datetime | None = None) -> dict:
+    """v33 실계좌 적립을 '샀어요' 한 번으로 기록 — KIS 를 연결하지 않아도 목표 진행률이 실제 산 것을 따라간다.
+
+    · 계좌 '목표 적립 계좌'(기본 ISA)에 ETF 수량·평균단가를 더하고, 넣은 돈에서 쓴 돈을 뺀 나머지를 현금으로 둔다
+    · 이번 달 적립을 '했음'으로 표시 (적립일 알림이 멈춘다) · 기록은 목표 상태의 'lots' 에 남는다
+    """
+    from . import accounts
+    now = now or datetime.now(UTC)
+    qty, price = float(qty), float(price)
+    if qty <= 0 or price <= 0:
+        raise ValueError("수량과 1주 가격을 0보다 크게 넣어 주세요")
+    g = get(app)
+    if not g.get("goal"):
+        raise ValueError("먼저 목표 계획을 정해 주세요")
+    d = g.get("dca") or {}
+    etf = etf or d.get("etf") or "069500"
+    if etf not in ETFS:
+        raise ValueError(f"ETF 는 {', '.join(ETFS)} 중 하나")
+    lots = list(g.get("lots") or [])
+    if deposit is None:
+        deposit = g["principal"] if not lots else float(d.get("amount") or g.get("monthly") or 0)
+    cost = qty * price * (1 + app.settings.costs.commission_bps / 1e4)
+    acct = next((a for a in accounts.load(app.engine) if a["id"] == GOAL_ACCOUNT), None)
+    hold = {h["symbol"]: dict(h) for h in (acct or {}).get("holdings", [])}
+    h = hold.get(etf) or {"symbol": etf, "qty": 0.0, "avg_price": 0.0}
+    tot = h["qty"] + qty
+    h["avg_price"] = (h["qty"] * h["avg_price"] + qty * price) / tot
+    h["qty"] = tot
+    hold[etf] = h
+    cash = max(0.0, float((acct or {}).get("cash") or 0) + float(deposit) - cost)
+    accounts.upsert(app.engine, {"id": GOAL_ACCOUNT, "name": "목표 적립 계좌", "type": (acct or {}).get("type") or account_type,
+                                 "broker": (acct or {}).get("broker") or "", "cash": cash, "holdings": list(hold.values())})
+    today = now.astimezone(KST).date().isoformat()
+    lots.append({"date": today, "etf": etf, "qty": qty, "price": price, "deposit": float(deposit), "cost": round(cost)})
+    g = g | {"lots": lots[-240:]}
+    if d:
+        g["dca"] = d | {"last": today}
+    ops.set_state(app.engine, KEY, g)
+    return {"ok": True, "lot": lots[-1], "holding": h, "cash": round(cash), "n_lots": len(lots)}
+
+
+def buy_estimate(app) -> dict | None:
+    """'샀어요' 입력칸 미리 채우기: 이번에 넣을 돈 · 살 ETF · 어제 종가 기준 몇 주."""
+    g = get(app)
+    d = g.get("dca") or {}
+    if not g.get("goal") or d.get("mode") != "live" or d.get("target") != "etf":
+        return None
+    etf = d.get("etf") or "069500"
+    deposit = g["principal"] if not g.get("lots") else float(d.get("amount") or g.get("monthly") or 0)
+    lc = last_close(app, etf)
+    out = {"etf": etf, "name": ETFS.get(etf, etf).split(" (")[0], "deposit": deposit}
+    if lc:
+        out |= {"price": lc[0], "price_date": lc[1], "qty": int(deposit // (lc[0] * 1.001))}
+    return out
+
+
+def home_card(app, now: datetime | None = None) -> dict:
+    """v33 홈 맨 위 '내 목표' 카드 — 진행률 · 정상 범위 판정 · 다음 적립일(금액·살 것) · 계획 확률."""
+    now = now or datetime.now(UTC)
+    g = get(app)
+    if not g.get("goal"):
+        r = RECOMMENDED["m100"]
+        return {"set": False, "hint": f"목표를 정하면 여기서 진행률과 적립일을 챙겨 드려요 — 추천: {r['title']} ({r['target_years']}년)"}
+    pr = progress(app, now)
+    nd = next_dca(g, now.astimezone(KST).date())
+    if nd:
+        nd["what"] = ETFS.get(nd["etf"], nd["etf"]).split(" (")[0] if nd.get("target") == "etf" else "코어 전략"
+        if nd["mode"] == "live" and nd["d_day"] <= 3 and nd.get("target") == "etf":
+            nd["sheet"] = order_sheet(app, nd["etf"], nd["amount"])
+    years_left = max(0.0, g["target_years"] - pr.get("months", 0) / 12)
+    lots = g.get("lots") or []
+    return {"set": True, "goal": g["goal"], "principal": g["principal"], "monthly": g["monthly"], "target_years": g["target_years"],
+            "start": g.get("start"), "p_target": g.get("p_target"), "progress": pr, "next_dca": nd, "years_left": round(years_left, 1),
+            "mode": (g.get("dca") or {}).get("mode"), "preset": g.get("preset"), "n_lots": len(lots), "last_lot": lots[-1] if lots else None}
 
 
 # ------------------------------------------------------------------ 월 적립식
@@ -462,6 +543,29 @@ def etf_buy(app, symbol: str = "069500") -> dict:
     return {"bought": qty, "price": round(fill_px, 2), "price_date": day, "cost": round(fill_px * qty), "cash": round(pf.cash)}
 
 
+def next_dca(g: dict, today: date) -> dict | None:
+    """다음 적립일 (휴장이면 다음 거래일) · 며칠 남았나 · 이번 달 했나. 적립이 꺼져 있으면 None."""
+    from datetime import timedelta
+
+    from .clock import MARKETS
+    d = g.get("dca") or {}
+    if not d.get("on"):
+        return None
+    done_this_month = (d.get("last") or "")[:7] == today.strftime("%Y-%m")
+    y, m = today.year, today.month
+    if done_this_month:
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    day = date(y, m, min(int(d.get("day") or 25), 28))
+    if not done_this_month and day < today:  # 적립일이 지났는데 아직 안 함 (휴장 · 서버 꺼짐) → 오늘
+        day = today
+    for _ in range(10):
+        if MARKETS["KRX"].is_trading_day(day):
+            break
+        day += timedelta(days=1)
+    return {"date": day.isoformat(), "d_day": (day - today).days, "amount": float(d.get("amount") or g.get("monthly") or 0),
+            "mode": d.get("mode"), "target": d.get("target"), "etf": d.get("etf") or "069500", "done_this_month": done_this_month}
+
+
 def dca_due(g: dict, today: date, trading_day: bool) -> bool:
     d = g.get("dca") or {}
     if not d.get("on") or not trading_day:
@@ -510,4 +614,4 @@ def dca_run(app, now: datetime | None = None) -> dict:
 
 
 __all__ = ["PRESETS", "ACCOUNTS", "ETFS", "ETF_BOOK", "RECOMMENDED", "AI_CAP_MAX", "apply_recommended", "band_at", "order_sheet", "simulate", "required_monthly", "plan", "tax_compare", "get", "save", "progress",
-           "deposit", "etf_buy", "last_close", "dca_due", "dca_run"]
+           "deposit", "etf_buy", "last_close", "dca_due", "dca_run", "next_dca", "home_card", "record_buy", "buy_estimate", "GOAL_ACCOUNT"]

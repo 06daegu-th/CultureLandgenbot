@@ -75,8 +75,9 @@ def test_today3_priorities_and_start_guide(app, monkeypatch):
     from quant_ai.ux import set_star
     a, b = _syms(app)[:2]
     g = center.start_guide(app)
-    assert [x["key"] for x in g["steps"]] == ["data", "budget", "watch", "today"]
-    assert g["steps"][0]["done"] and not g["steps"][1]["done"] and g["next"] == "budget" and not g["done"]
+    assert [x["key"] for x in g["steps"]] == ["data", "goal", "watch", "today"]  # v33: ② 투자 한도 → 내 목표 계획 (한도는 선택)
+    assert g["steps"][0]["done"] and not g["steps"][1]["done"] and g["next"] == "goal" and not g["done"]
+    assert any("투자 한도" in o["title"] for o in g["optional"])
     t = center.today3(app)
     assert t["items"] == [] or len(t["items"]) <= 3
     # 관심종목 실적 D-1 · 시장 CPI 내일 · 자동 정지 → 정지가 맨 위, 3개까지

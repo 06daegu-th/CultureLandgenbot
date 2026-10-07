@@ -427,6 +427,28 @@ def today3(app, mode: str = "paper", now: datetime | None = None, n: int = 3, in
                 add(95 if it["key"] == "scheduler" else 92, "🔌" if it["key"] == "scheduler" else "🗓️", it["text"], "#server", it["fix"], kind="ops_" + it["key"])
     except Exception:  # noqa: BLE001, S110 - 상태 확인 실패가 할 일을 막지 않게
         pass
+    try:  # v33: 목표 계획 — 적립일 · 계획보다 많이 뒤처짐 (이 사이트를 쓰는 가장 큰 이유)
+        from zoneinfo import ZoneInfo as _Z
+
+        from . import goal as G
+        g = G.get(app)
+        nd = G.next_dca(g, now.astimezone(_Z("Asia/Seoul")).date()) if g.get("goal") else None
+        if nd and nd["d_day"] <= 2:
+            amt = f"{nd['amount'] / 1e4:,.0f}만원"
+            etf = G.ETFS.get(nd["etf"], nd["etf"]).split(" (")[0] if nd.get("target") == "etf" else "코어 전략"
+            if nd["mode"] == "live":
+                text = (f"오늘은 적립일 — 증권 계좌에 {amt} 넣고 {etf} 사기" if nd["d_day"] == 0
+                        else f"적립일 {_d_word(nd['d_day'])} — 증권 계좌에 {amt} 준비")
+                why = "프로그램은 돈을 옮기지 않아요 · 목표 화면에 주문표가 있어요"
+            else:
+                text = f"적립일 {_d_word(nd['d_day'])} — 모의 장부가 {amt} 넣고 {etf}를 자동으로 사요"
+                why = "모의 장부 · 실제 돈은 움직이지 않아요"
+            add(88 if nd["d_day"] == 0 and nd["mode"] == "live" else 58, "💰", text, "#goal", why, kind="dca")
+        pr = G.progress(app, now) if g.get("goal") else {}
+        if pr.get("band_level") == "low":
+            add(62, "🎯", "목표 진행이 정상 범위(하위 10%)보다 아래 — 적립을 빼먹었는지 확인", "#goal", pr.get("band_text", ""), kind="goal_low")
+    except Exception:  # noqa: BLE001, S110 - 목표 계산 실패가 할 일 전체를 막지 않게
+        pass
     a = action_center(app, mode, now)
     br = breaches(app)[:2]
     if br:
@@ -525,7 +547,10 @@ def ops_status(app, now: datetime | None = None) -> dict:
 
 
 def start_guide(app) -> dict:
-    """처음 쓰는 사람을 위한 순서: ① 데이터 ② 투자 한도 ③ 관심종목 3개 ④ 오늘 할 일. 다 하면 사라진다."""
+    """처음 쓰는 사람을 위한 순서: ① 데이터 ② 내 목표 계획 ③ 관심종목 3개 ④ 오늘 할 일. 다 하면 사라진다.
+
+    v33: ② 를 '투자 한도' → '내 목표 계획' 으로 — 이 사이트의 본체는 목표(예: 200만원 + 매달 100만원 → 1억)에 맞춘 적립이고,
+    투자 한도는 AI 자동매매·증명 프로젝트를 쓸 때 필요한 선택 단계다."""
     from sqlalchemy import func
 
     from .budget import get as budget_get
@@ -534,7 +559,9 @@ def start_guide(app) -> dict:
     from .ux import starred
     with session_scope(app.engine) as s:
         has_bars = (s.scalar(select(func.count()).select_from(select(PriceBar.id).limit(1).subquery())) or 0) > 0
+    from .goal import get as goal_get
     b = budget_get(app)
+    g = goal_get(app)
     n_star = len(starred(app))
     held = 0
     try:
@@ -545,9 +572,11 @@ def start_guide(app) -> dict:
         {"key": "data", "n": 1, "title": "주가 데이터 받기", "done": has_bars,
          "how": "터미널에서 ./run.sh 를 실행하면 처음 한 번 자동으로 받습니다 (1~3분)", "link": None,
          "detail": "받았음" if has_bars else "아직 없음 — 대부분의 화면이 비어 보이는 이유"},
-        {"key": "budget", "n": 2, "title": "투자 한도 정하기", "done": bool(b.get("principal")),
-         "how": "넣을 돈(원금)과 최대로 잃어도 되는 돈만 정하면 나머지 한도는 자동", "link": "#budget",
-         "detail": f"원금 {b['principal']:,}원 · 최대 손실 {b['max_loss']:,}원" if b.get("principal") else "아직 안 정함"},
+        {"key": "goal", "n": 2, "title": "내 목표 계획 정하기", "done": bool(g.get("goal")),
+         "how": "추천 계획(200만원 + 매달 100만원 → 1억)을 한 번에 적용하거나 금액을 바꿔 저장 — 매달 적립일 알림과 진행률이 켜집니다",
+         "link": "#goal",
+         "detail": (f"{g['principal'] / 1e4:,.0f}만원 + 매달 {g['monthly'] / 1e4:,.0f}만원 → {g['goal'] / 1e8:,.2f}억 · {g['target_years']}년"
+                    if g.get("goal") else "아직 안 정함")},
         {"key": "watch", "n": 3, "title": "관심종목 3개 담기", "done": n_star >= 3,
          "how": "위 검색창(단축키 /)에서 종목을 찾아 ★ 를 누르세요 — 매일 AI 판단·뉴스·일정을 챙겨 드립니다", "link": "search",
          "detail": f"{n_star}/3개" + (f" · 보유 {held}종목" if held else "")},
@@ -557,7 +586,9 @@ def start_guide(app) -> dict:
     need = [x for x in steps[:3] if not x["done"]]
     nxt = need[0] if need else steps[3]
     return {"steps": steps, "done": not need, "next": nxt["key"], "progress": sum(1 for x in steps[:3] if x["done"]),
-            "optional": [{"title": "AI 키 넣기 (선택)", "done": bool(app.settings.has_llm),
+            "optional": [{"title": "투자 한도 정하기 (AI 자동매매·증명 프로젝트를 쓸 때)", "done": bool(b.get("principal")),
+                          "how": "넣을 돈(원금)과 최대로 잃어도 되는 돈만 정하면 나머지 한도는 자동", "link": "#budget"},
+                         {"title": "AI 키 넣기 (선택)", "done": bool(app.settings.has_llm),
                           "how": "없어도 규칙 AI 로 동작합니다. 무료 Gemini 키를 .env 에 넣으면 뉴스 번역·쉬운 설명이 켜집니다", "link": "#settings"}]}
 
 

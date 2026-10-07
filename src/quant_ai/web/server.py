@@ -243,6 +243,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.start_guide())
                     if url.path == "/api/goal":
                         return self._json(api.goal({k: arg(k) for k in ("principal", "monthly", "goal", "target_years", "strategy", "raise_pct")}))
+                    if url.path == "/api/goal-home":
+                        return self._json(api.goal_home())
                     if url.path == "/api/ops-status":
                         return self._json(api.ops_status())
                     if url.path == "/api/baseline":

@@ -92,8 +92,8 @@ function goalBar(pr) {
   const w = Math.max(1, Math.min(100, pr.pct * 100));
   return `<div class="goal-bar"><i style="width:${w}%"></i></div>
     <div class="small"><b>${won(pr.total)}원</b> / ${won(pr.goal)}원 <span class="muted">(${(pr.pct * 100).toFixed(1)}%)</span> ·
-      <span class="${pr.on_track ? "up" : "down"}">${pr.on_track ? "계획대로 가는 중" : "계획보다 뒤처짐"} (${pr.ahead >= 0 ? "+" : "−"}${won(Math.abs(pr.ahead))}원)</span></div>
-    <div class="xs dim">${esc(pr.source || "")} 기준 · 시작 ${pr.months}개월째${pr.dca?.on ? ` · 매달 ${pr.dca.day}일 ${won(pr.dca.amount)}원 적립` : ""}</div>`;
+      ${Math.abs(pr.ahead || 0) < 10000 ? `<span class="muted">계획대로 가는 중</span>` : `<span class="${pr.on_track ? "up" : "down"}">${pr.on_track ? "계획대로 가는 중" : "계획보다 뒤처짐"} (${pr.ahead >= 0 ? "+" : "−"}${won(Math.abs(pr.ahead))}원)</span>`}</div>
+    <div class="xs dim">${esc(pr.source || "")} 기준 · ${pr.months ? `시작 ${pr.months}개월째` : "이번 달 시작"}${pr.dca?.on ? ` · 매달 ${pr.dca.day}일 ${won(pr.dca.amount)}원 적립` : ""}</div>`;
 }
 
 // v20: 코어 vs '그냥 지수 ETF 를 샀다면' — 이 시스템을 쓸 이유가 돈으로 있는가

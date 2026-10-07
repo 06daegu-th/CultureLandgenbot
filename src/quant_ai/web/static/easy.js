@@ -19,6 +19,7 @@ function setUiMode(m) {
 function guideAct(x) {
   if (x.key === "data") return `<div class="sg-cmd"><code>./run.sh</code><button class="btn-sm" data-copy="./run.sh">복사</button><span class="xs muted">터미널에 붙여 넣고 Enter · 다 받으면 이 화면이 저절로 바뀝니다</span></div>`;
   if (x.key === "budget") return `<a class="btn-sm primary" href="#budget">투자 한도 정하기 →</a>`;
+  if (x.key === "goal") return `<a class="btn-sm primary" href="#goal">목표 계획 정하기 →</a>`;
   if (x.key === "watch") return `<button class="btn-sm primary" data-focus-search>종목 검색하기 ( / )</button>`;
   return `<a class="btn-sm primary" href="#action">오늘 할 일 보기 →</a>`;
 }

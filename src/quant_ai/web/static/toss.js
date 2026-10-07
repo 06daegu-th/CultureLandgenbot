@@ -204,12 +204,13 @@ async function tHome(el) {
   root.innerHTML = `
     <section class="t-hello"><div><div class="t-date">${esc(h.date || "")} · ${esc(h.as_of || "")}</div><h1>${esc(h.greeting || "안녕하세요")}</h1></div><div class="t-mks">${mk}</div></section>
     <div id="th-guide"></div>
+    <div id="th-goal"></div>
     ${tSec("지수", idxB, '<a href="#market">시장 전체</a>', "t-sec-idx")}
     <div id="th-picks2"></div>
     ${tSec("AI가 본 오늘의 종목", trustLine + picksB, '<a href="#report">AI 분석</a>')}
     <div class="t-grid2">
       ${tSec("오늘의 주요 이벤트", evB, '<a href="#calendar">일정 전체</a>', "t-card")}
-      ${tSec("내 보유 종목 현황", hdB, '<a href="#pos">포트폴리오</a>', "t-card")}
+      ${tSec(/mode=live/.test(q) ? "내 보유 종목 현황" : "모의투자 장부 <span class=\"t-tag\">가상 돈</span>", hdB, '<a href="#pos">포트폴리오</a>', "t-card")}
     </div>
     <div class="t-grid2" id="th-todo">${tSec("오늘 확인할 것", tSkel(2), "", "t-card")}${tSec("오늘 주의할 것", tSkel(2), "", "t-card")}</div>
     <div id="th-news"></div>
@@ -218,6 +219,7 @@ async function tHome(el) {
   root.querySelector("#th-pro").onclick = () => { S.homeDetail = true; render(); };
   tBindBar(root);
   if (typeof tPicksHome === "function") tPicksHome(root.querySelector("#th-picks2"));  // v28: 신호 엔진 매수 후보
+  if (typeof tGoalHome === "function") tGoalHome(root.querySelector("#th-goal"));  // v33: 홈 맨 위 '내 목표' (진행률 · 다음 적립일)
   tHomeMore(root, q);
 }
 async function tHomeMore(root, q) {  // 느린 칸: 할 일·주의·뉴스·결론·시작 안내 (홈 첫 계산 ~2초)
