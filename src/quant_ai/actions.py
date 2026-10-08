@@ -475,7 +475,9 @@ def start_action(app, name: str, params: dict | None = None) -> dict:
     from .analytics import event_reactions
     from .global_market import run_cycle as us_cycle
     from .global_market import sync as us_sync
-    fns = {"us_cycle": lambda say: (say("미국 일봉 받는 중…"), {"sync": us_sync(app), "cycle": us_cycle(app)})[1],"warmup": lambda say: warmup(app, say), "db_clean": lambda say: db_maintenance(app, dry_run=False),
+    from . import refresh as _refresh
+    fns = {"refresh_all": lambda say: _refresh.run(app, say),  # v37 '지금 최신으로' — 자료 전부 새로 받기 + 단계별 결과
+           "us_cycle": lambda say: (say("미국 일봉 받는 중…"), {"sync": us_sync(app), "cycle": us_cycle(app)})[1],"warmup": lambda say: warmup(app, say), "db_clean": lambda say: db_maintenance(app, dry_run=False),
            "guardian": lambda say: {"state": app.guardian()["state"]}, "ai_snapshot": lambda say: ai_snapshot(app),
            "event_reactions": lambda say: {"types": len(event_reactions(app, refresh=True)["types"])},
            "ladder": lambda say: {k: v for k, v in app.ladder().items() if k in ("stage", "changed", "reasons", "ready")},

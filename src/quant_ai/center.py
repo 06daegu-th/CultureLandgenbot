@@ -80,16 +80,15 @@ def watchlist(app) -> dict:
         sig = _signal_pairs(s, syms)
     rows = []
     for sym in syms:
-        b = bars.get(sym)
-        q = live.get(sym) or {}
-        last = q.get("price") or (float(b["close"].iloc[-1]) if b is not None and len(b) else None)
-        chg = q.get("chg_pct") if q.get("price") else (float(b["close"].iloc[-1] / b["close"].iloc[-2] - 1) if b is not None and len(b) > 1 else None)
+        from .pricenow import resolve
+        pn = resolve(sym, bars.get(sym), live.get(sym))  # v37: 묵은 시세가 새 일봉을 덮지 않게 · 등락 기준 통일
+        last, chg = pn["price"], pn["chg_pct"]
         pr = sig.get(sym) or []
         cur, prev = (pr[0] if pr else None), (pr[1] if len(pr) > 1 else None)
         change = f"{prev.action}→{cur.action}" if cur and prev and cur.action != prev.action else None
         rows.append({"symbol": sym, "name": names.get(sym, sym), "type": market_type(sym, names.get(sym)), "starred": sym in star,
                      "group": groups.get(sym) or ("기본" if sym in star else "보유" if member else "최근 본 종목"), "held": sym in held,
-                     "last": last, "chg_pct": chg, "price_src": "실시간" if q.get("price") else "일봉 종가",
+                     "last": last, "chg_pct": chg, "price_src": "실시간" if pn["src"] == "live" else "일봉 종가", "price_label": pn["label"],
                      "ai": cur.action if cur else None, "prob_up": round(cur.prob_up, 3) if cur else None, "ai_at": label(cur.as_of) if cur else None,
                      "change": change, "change_dir": (1 if cur.action == "BUY" else -1 if cur.action in ("SELL",) or prev.action == "BUY" else 0) if change else 0})
     return {"rows": rows, "groups": sorted({r["group"] for r in rows}), "types": ["국내", "미국", "ETF"], "n_star": len(star)}

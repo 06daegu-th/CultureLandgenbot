@@ -210,7 +210,8 @@ def verdict(app, symbol: str, now=None) -> dict:
         extra.append(f"판단이 오래됨 — {age_d:.0f}일 전 판단 (새로 판단하기 전까지 거래하지 않음)")
     if _market_open(symbol, now):
         q = (ops.get_state(app.engine, "live_quotes").get(symbol) or {})
-        qa = pd.Timestamp(q["at"]) if q.get("at") else None
+        from .pricenow import quote_ts
+        qa = pd.Timestamp(quote_ts(q)) if quote_ts(q) else None  # v37: 무료 폴링은 'ts' 로 저장 — 'at' 만 보면 늘 '실시간 없음'이었다
         if qa is not None and qa.tzinfo is None:
             qa = qa.tz_localize("UTC")
         mins = None if qa is None else (pd.Timestamp(now) - qa).total_seconds() / 60

@@ -1601,7 +1601,7 @@ TV.autopilot = async (el) => {
     ${s.coverage && s.coverage.level !== "good" ? tAiCoverage(s.coverage, "AI 가 지금 보고 있는 자료 — 자동매매 판단 재료") : ""}
     ${(p.curve || []).length > 1 ? tCard("가상 장부 자산 흐름", tSpark(p.curve.map((x) => x[1]), { h: 90, w: 640 }) + `<div class="t-foot">${tN(p.days)}거래일 · 최대 낙폭 ${tPct(p.mdd, 1)}</div>`) : ""}
     ${tCard(`오늘 AI 가 할 일 ${pv.as_of ? `<span class="t-sub">${esc(pv.as_of)} 일봉 기준 · 자리 ${tN(pv.slots)}개 · 매수 기준 점수 +${pv.buy_min}</span>` : ""}`,
-      (pv.stale ? `<div class="t-note warn" style="margin-bottom:10px"><b>오래된 가격</b> · ${esc(pv.stale)} <a href="#datahealth">시세 받기</a></div>` : "")
+      (pv.stale ? `<div class="t-note warn" style="margin-bottom:10px"><b>오래된 가격</b> · ${esc(pv.stale)} ${tRefreshBtn()}</div>` : "")
       + (pv.error ? tEmpty("계산하지 못했어요", pv.error) : tList(acts.map((a) => `<div class="t2-item">${tSym(a.symbol, a.name, esc(a.reason || ""), `<span class="t-tag ${AP_ACT[a.action][1]}">${AP_ACT[a.action][0]}</span>${a.score != null ? tScore(a.score) : ""}`)}</div>`), "오늘은 할 일이 없어요", "점수 +0.8 이상 후보가 없고 가진 종목도 그대로 둬요"))
       + ((pv.skipped || []).length ? `<div class="t-foot">점수는 높지만 1주 가격이 종목당 상한(${tWon(pv.cap_value)})보다 비싸 못 사는 후보: ${pv.skipped.map((x) => `${esc(x.name)} ${x.score.toFixed(2)}`).join(" · ")}</div>` : "")
       + `<div class="t-pro"><button class="t-btn primary" id="ap-run">가상 장부로 지금 한 번 실행</button><a class="t-btn ghost" href="#picks">AI 추천 (점수 근거)</a></div>`)}

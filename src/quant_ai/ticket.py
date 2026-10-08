@@ -53,9 +53,10 @@ def _ctx(app, symbol: str, side: str, qty: int | None, amount: float | None, now
     if b is None or b.empty:
         raise ValueError("미국 일봉이 없는 종목이에요 — 인터넷이 되는 곳에서 종목 화면을 한 번 열면 받아요" if us
                          else "국내 일봉이 있는 종목만 모의 주문할 수 있습니다")
-    q = (ops.get_state(app.engine, "live_quotes") or {}).get(symbol) or {}
-    price = float(q.get("price") or b["close"].iloc[-1])
-    src = q.get("source") or q.get("src") or f"{label(b.index[-1], with_time=False)} 종가"
+    from .pricenow import resolve
+    pn = resolve(symbol, b, (ops.get_state(app.engine, "live_quotes") or {}).get(symbol))
+    price = float(pn["price"])
+    src = pn["label"] if pn["src"] == "live" else f"{label(b.index[-1], with_time=False)} 종가"
     pf = app.load_portfolio(mode)
     prices = {s: float(x["close"].iloc[-1]) for s, x in bars.items() if len(x)}
     prices[symbol] = price

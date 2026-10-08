@@ -503,12 +503,10 @@ def header(app, symbol: str, now: datetime | None = None) -> dict:
     sc, sl = detail_session(MARKETS["KRX" if kr else "US"], now)
     bars, _ = app._all_bars()
     b = bars.get(symbol)
+    from .pricenow import resolve
     q = (ops.get_state(app.engine, "live_quotes") or {}).get(symbol) or {}
-    last = q.get("price") or (float(b["close"].iloc[-1]) if b is not None and len(b) else None)
-    prev = float(b["close"].iloc[-2]) if b is not None and len(b) > 1 else None
-    if q.get("price") and b is not None and len(b) and _aware(b.index[-1]).astimezone(KST).date() < now.astimezone(KST).date():
-        prev = float(b["close"].iloc[-1])  # 오늘 봉이 아직 없으면 어제 종가 대비
-    chg = q.get("chg_pct") if q.get("chg_pct") is not None else (last / prev - 1 if last and prev else None)
+    pn = resolve(symbol, b, q, now)  # v37: 모든 화면 같은 규칙 (묵은 시세 무시 · 시세 날짜의 전 거래일 종가 대비)
+    last, prev, chg = pn["price"], pn["prev_close"], pn["chg_pct"]
     rec = latest_consensus(app.engine, symbol)
     ai = {"action": rec.action, "prob_up": round(rec.prob_up, 3), "as_of": label(rec.as_of, with_time=False)} if rec else None
     evs = events(app, symbol, now)

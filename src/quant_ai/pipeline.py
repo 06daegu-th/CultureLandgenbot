@@ -1300,8 +1300,10 @@ class QuantAI:
                     ref = float(b["close"].iloc[-1])
                     if ref > 0 and abs(q.last / ref - 1) > 0.30:  # 국내 가격제한폭 ±30% 밖 = 데이터 문제
                         conflicts.append(s)
-        ops.set_state(self.engine, "live_quotes", {"ts": datetime.now(UTC).isoformat(), "n": len(quotes),
-                                                   "bad": len(bad), "conflicts": conflicts[:20]})
+        # v37: 합쳐서 저장 — 예전에는 칸 전체를 이 요약으로 바꿔 종목별 실시간 시세(화면 가격)가 지워졌다
+        st = ops.get_state(self.engine, "live_quotes") or {}
+        st.update({"ts": datetime.now(UTC).isoformat(), "n": len(quotes), "bad": len(bad), "conflicts": conflicts[:20]})
+        ops.set_state(self.engine, "live_quotes", st)
 
     def champion_forward(self) -> dict:
         """champion 모델의 승격 이후 전진(forward) 성적: 적중률 · Brier vs 기저율 · 최근 확률 분산."""

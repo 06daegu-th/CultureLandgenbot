@@ -67,9 +67,8 @@ def breaches(app, today: date | None = None) -> list[dict]:
     live = ops.get_state(app.engine, "live_quotes")
     out = []
     for sym, t in items.items():
-        px = (live.get(sym) or {}).get("price")
-        if px is None and sym in bars and len(bars[sym]):
-            px = float(bars[sym]["close"].iloc[-1])
+        from .pricenow import resolve
+        px = resolve(sym, bars.get(sym), live.get(sym))["price"]
         if px is not None and t.get("stop") and px <= t["stop"]:
             out.append({"symbol": sym, "kind": "stop", "message": f"무효화 가격 {t['stop']:,.2f} 이탈 (현재 {px:,.2f}) — 매도 조건 점검", "price": px})
         elif px is not None and t.get("target") and px >= t["target"]:

@@ -60,6 +60,14 @@ function tPill(action, prob, o = {}) {
 }
 const tRow = (href, left, right, o = {}) => `<a class="t-li${o.cls ? ` ${o.cls}` : ""}" href="${esc(href)}"${o.attr || ""}>${left}<span class="t-li-r">${right}</span>${o.chev ? `<span class="t-chev">${TI.chev}</span>` : ""}</a>`;
 const tName = (sym, name, sub = "", size = 40) => `<span class="t-co">${stockLogo(sym, name, size)}<span class="t-co-t"><b>${esc(name || sym)}</b><span>${sub}</span></span></span>`;
+// v37: 목록 가격이 무엇인지 한 줄로 — '실시간 3종목 · 나머지 09.23 종가' (모든 화면 같은 규칙: pricenow.py)
+function tPriceNote(rows) {
+  const xs = (rows || []).filter((r) => r && r.price_label && r.price_label !== "가격 없음");
+  if (!xs.length) return "";
+  const live = xs.filter((r) => String(r.price_label).startsWith("실시간"));
+  const close = [...new Set(xs.filter((r) => !String(r.price_label).startsWith("실시간")).map((r) => r.price_label))];
+  return `<div class="t-foot t-pnote">가격: ${live.length ? `실시간(지연 가능) ${live.length}종목` : ""}${live.length && close.length ? " · 나머지 " : ""}${close.map(esc).join(" · ")}</div>`;
+}
 const tPrice = (last, chg, sym) => `<b class="num t-pv">${tPx(last, sym)}</b><span class="num t-pc ${tCls(chg)}">${tPct(chg)}</span>`;
 function tTabs(id, items, cur, cls = "") { return `<div class="t-tabs ${cls}" id="${id}" role="tablist">${items.map(([k, l]) => `<button role="tab" data-k="${esc(k)}" class="${k === cur ? "on" : ""}" aria-selected="${k === cur}">${l}</button>`).join("")}</div>`; }
 function tChips(id, items, cur) { return `<div class="t-chips" id="${id}">${items.map(([k, l]) => k === "|" ? '<i class="t-chip-sep"></i>' : `<button data-k="${esc(k)}" class="${k === cur || (Array.isArray(cur) && cur.includes(k)) ? "on" : ""}">${l}</button>`).join("")}</div>`; }
@@ -106,6 +114,37 @@ function tSheet(html, onMount) {
   if (onMount) onMount(ov.querySelector(".t-sheet-b"), close);
   return close;
 }
+
+// v37 '지금 최신으로' — 일봉·시세·지수·뉴스·공시·경제지표·커뮤니티·수급·신호·AI 를 한 번에 새로 받고 단계별 결과를 그대로
+const canRefresh = () => !(typeof isMember === "function" && isMember());
+const tRefreshBtn = (label = "지금 최신으로", cls = "") => canRefresh() ? `<button type="button" class="t-btn sm ${cls}" data-refresh>${esc(label)}</button>` : "";
+const RF_IC = { ok: ["✓", "good"], skip: ["–", "idle"], fail: ["✕", "bad"] };
+function tRefreshResult(r) {
+  if (!r || !r.steps) return "";
+  return `<div class="rf-head ${r.fail ? (r.ok ? "warn" : "bad") : "good"}"><b>${esc(r.headline || "")}</b><span class="t-sub">${tN(r.sec)}초 · 받음 ${tN(r.ok)} · 건너뜀 ${tN(r.skip)} · 실패 ${tN(r.fail)}</span></div>
+    <ul class="rf-list">${r.steps.map((x) => `<li class="rf-${esc(x.status)}"><span class="rf-ic">${RF_IC[x.status]?.[0] || ""}</span><div><b>${esc(x.name)}</b>
+      <span class="t-sub">${x.status === "ok" ? "받음" : esc(x.why || "")}</span>${x.detail ? `<details class="rf-det"><summary>기술 내용</summary><code>${esc(x.detail)}</code></details>` : ""}</div></li>`).join("")}</ul>
+    ${r.online === false ? `<div class="t-note warn">인터넷 연결이 확인되지 않았어요. PC·서버의 인터넷(회사·학교망은 방화벽)을 확인하고 다시 눌러 주세요 · <a href="#datahealth">연결 점검</a></div>` : ""}`;
+}
+async function startRefresh() {
+  if (!canRefresh()) return;
+  let done = false;
+  tSheet(`<h3 class="t-sheet-t">지금 최신으로</h3><div class="t-sub" style="margin-bottom:10px">화면에 쓰는 자료를 모두 새로 받아요 · 주문은 내지 않아요</div>
+    <div id="rf-body"><div class="rf-prog"><span class="rf-spin"></span><span id="rf-msg">시작하는 중…</span></div></div>
+    <div class="t-pro"><button class="t-btn primary" id="rf-close" disabled>받는 중…</button></div>`, async (b, close) => {
+    const btn = b.querySelector("#rf-close");
+    btn.onclick = () => { close(); if (done && typeof render === "function") render(); };
+    try {
+      const st = await runAction("refresh_all", (m) => { const e = b.querySelector("#rf-msg"); if (e) e.textContent = m || "받는 중…"; });
+      done = true;
+      b.querySelector("#rf-body").innerHTML = st.error ? tEmpty("새로 받지 못했어요", st.error) : tRefreshResult(st.result);
+    } catch (err) {
+      b.querySelector("#rf-body").innerHTML = tEmpty("새로 받지 못했어요", err.message || String(err));
+    }
+    btn.disabled = false; btn.textContent = "닫고 화면 새로 보기";
+  });
+}
+document.addEventListener("click", (e) => { const t = e.target.closest && e.target.closest("[data-refresh]"); if (t) { e.preventDefault(); startRefresh(); } });
 
 // 면적 차트 (가격 흐름 + 거래량) — 손가락/마우스를 올리면 위 가격 칸이 그 날로 바뀐다
 function tArea(el, bars, sym, onHover, o = {}) {
@@ -197,7 +236,7 @@ async function tHome(el) {
       <span class="num ${tCls(hd.pnl)}">${tSigned(hd.pnl)} (${tPct(hd.pnl_pct)})</span></div>${TI.chev}</a>
       <div class="t-hold-ch">${(hd.spark || []).length > 1 ? tSpark(hd.spark, { h: 64, w: 300 }) : '<div class="t-sub">자산 흐름은 하루 이상 운용하면 그려져요</div>'}</div>
       ${pos.length ? `<div class="t-list">${pos.slice(0, 3).map((r) => tRow(`#analysis/${encodeURIComponent(r.symbol)}`, tName(r.symbol, r.name, `${num(r.qty)}주 · 평균 ${tPx(r.avg_price, r.symbol)}`),
-        `<b class="num t-pv">${tWon(r.value)}</b><span class="num t-pc ${tCls(r.pnl_pct)}">${tPct(r.pnl_pct)}</span>`)).join("")}</div>
+        `<b class="num t-pv">${tWon(r.value)}</b><span class="num t-pc ${tCls(r.pnl_pct)}">${tPct(r.pnl_pct)}</span>`)).join("")}</div>${tPriceNote(pos)}
         ${pos.length > 3 ? `<a class="t-more" href="#pos">${pos.length - 3}종목 더 보기</a>` : ""}`
       : `<div class="t-sub">아직 보유 종목이 없어요 · 현금 ${tWon(pf.cash)}</div>`}`;
   const mk = (h.markets || []).map((m) => `<span class="t-mk ${m.open ? "open" : ""}">${m.open ? '<i class="live-dot"></i>' : ""}${esc(m.name)} ${esc(m.state)}${m.holiday ? `<em>${esc(m.holiday)}</em>` : ""}${!m.open && m.next_kst ? `<em>${esc(m.next === "개장" ? "개장" : "마감")} ${esc(String(m.next_kst).replace(" KST", ""))}</em>` : ""}</span>`).join("");
@@ -266,9 +305,9 @@ async function tStock(el, sym) {
   const chgAbs = live ? (live.chg ?? (st.prev ? live.price - st.prev : null)) : st.chg;
   const pa = st.price_age || {};
   const staleNote = !live && pa.status && pa.status !== "fresh" && pa.status !== "none"
-    ? `<div class="tsk-stale ${pa.status === "old" ? "old" : ""}" role="note"><b>${esc(pa.age || "")}</b> · 마지막 거래일 종가예요 — 지금 실제 주가와 다를 수 있어요 <a href="#datahealth">시세 받기</a></div>` : "";
+    ? `<div class="tsk-stale ${pa.status === "old" ? "old" : ""}" role="note"><b>${esc(pa.age || "")}</b> · 마지막 거래일 종가예요 — 지금 실제 주가와 다를 수 있어요 ${tRefreshBtn()}</div>` : "";
   const m = st.market || {};
-  const when = live ? `실시간 · ${esc(time(live.at))}` : st.bar_date ? `${esc(st.bar_date.slice(5).replace("-", "."))} 종가` : "가격 자료 없음";
+  const when = live ? `${esc(live.label || `실시간 · ${time(live.at)}`)} <span class="t-sub">(지연 가능)</span>` : st.bar_date ? `${esc(st.bar_date.slice(5).replace("-", "."))} 종가` : "가격 자료 없음";
   const mkt = `<span class="t-mk ${m.state === "장중" ? "open" : ""}">${m.state === "장중" ? '<i class="live-dot"></i>' : ""}${esc(m.state || "")}${m.holiday ? `<em>${esc(m.holiday)}</em>` : ""}${m.state !== "장중" && m.next_kst ? `<em>${m.next === "폐장" ? "마감" : "개장"} ${esc(String(m.next_kst).replace(" KST", ""))}</em>` : ""}</span>`;
   const sub = [sym, idt.exchange, idt.industry || idt.sector].filter(Boolean).map(esc).join(" · ");
   root.innerHTML = `
@@ -485,7 +524,7 @@ function tAiCoverage(cov, title = "AI 가 지금 보고 있는 자료") {
     <div class="ai-srcs">${chips}</div>
     <details class="ai-in-more"><summary>왜 안 들어오나 · 켜는 방법</summary>
       <div class="ai-cov">${cov.rows.map((r) => `<div class="ai-cov-it ${esc(r.status)}"><span class="st">${ST[r.status] || ""}</span><b>${esc(r.name)}</b><span class="t-sub">${when(r)}</span>${r.why ? `<div class="t-sub" style="margin-top:4px">${esc(r.why)}</div>` : ""}</div>`).join("")}</div>
-      <div class="t-foot">자료가 안 들어오면 그 자료는 판단에서 빠져요 (지어내지 않음) · 종목마다 '이번 판단에 들어간 자료'는 종목 화면 'AI 한 줄 요약'에서 · <a href="#datahealth">데이터 상태 · 키 진단</a></div></details>`, "", `t-card ai-cov-card ${cov.level === "good" ? "" : "warn"}`);
+      <div class="t-foot">자료가 안 들어오면 그 자료는 판단에서 빠져요 (지어내지 않음) · 종목마다 '이번 판단에 들어간 자료'는 종목 화면 'AI 한 줄 요약'에서 · <a href="#datahealth">데이터 상태 · 키 진단</a></div></details>${tRefreshBtn("지금 최신으로 받기", "rf-cov")}`, "", `t-card ai-cov-card ${cov.level === "good" ? "" : "warn"}`);
 }
 // v36: 'AI 가 정말 뉴스·공시·커뮤니티·경제까지 보고 판단했나' — 봉인된 판단에 들어간 재료 / 빠진 재료
 function tAiInputs(inp, opts = {}) {
@@ -584,7 +623,7 @@ async function tWatch(el) {
       ${tTabs("tw-tab", [["all", `전체 ${all.length}`], ["kr", `국내 ${n((r) => isKR(r.symbol))}`], ["us", `해외 ${n((r) => !isKR(r.symbol))}`], ["held", `보유 ${n((r) => r.held)}`], ...groups.filter((g) => g !== "기본").map((g) => [`g:${g}`, esc(g)])], T.watchTab, "t-tabs-line")}
       <div class="t-sortrow">${tChips("tw-sort", [["default", "기본"], ["up", "상승률"], ["down", "하락률"], ...(typeof adviceOn !== "function" || adviceOn() ? [["ai", "AI 확률"]] : []), ["name", "이름"]], T.watchSort)}</div>
       <div class="t-card t-sec">${tWatchRows(rows)}</div>
-      <div class="t-foot">가격은 ${esc((all[0] || {}).price_src || "일봉 종가")}${typeof adviceOn !== "function" || adviceOn() ? ` · AI 판단 시각 ${esc((all.find((r) => r.ai_at) || {}).ai_at || "-")}` : ""}</div>`;
+      ${tPriceNote(all) || `<div class="t-foot">가격: 일봉 종가</div>`}${typeof adviceOn !== "function" || adviceOn() ? `<div class="t-foot">AI 판단 시각 ${esc((all.find((r) => r.ai_at) || {}).ai_at || "-")}</div>` : ""}`;
     tBind(root, "tw-tab", (k) => { T.watchTab = k; draw(); });
     tBind(root, "tw-sort", (k) => { T.watchSort = k; draw(); });
     tBindBar(root);
@@ -704,7 +743,7 @@ async function tPortfolio(el) {
   const tabB = () => {
     if (T.pfTab === "hold") return pos.length ? `<div class="t-list">${pos.map((r) => tRow(`#analysis/${encodeURIComponent(r.symbol)}`,
       tName(r.symbol, r.name, `${num(r.qty)}주 · 평균 ${tPx(r.avg_price, r.symbol)}`),
-      `<b class="num t-pv">${tWon(r.value)}</b><span class="num t-pc ${tCls(r.pnl)}">${tSigned(r.pnl)} (${tPct(r.pnl_pct)})</span>`)).join("")}</div>`
+      `<b class="num t-pv">${tWon(r.value)}</b><span class="num t-pc ${tCls(r.pnl)}">${tSigned(r.pnl)} (${tPct(r.pnl_pct)})</span>`)).join("")}</div>${tPriceNote(pos)}`
       : tEmpty("보유 종목이 없어요", mode === "live" ? "실계좌 연결(KIS)과 주문이 있어야 보여요" : "AI 자동 모의매매나 종목 화면의 '모의 매수'로 담을 수 있어요");
     if (T.pfTab === "alloc") {
       const al = (p.alloc || []).filter((a) => a.value > 0);

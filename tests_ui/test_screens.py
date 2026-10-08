@@ -111,3 +111,24 @@ def test_stock_page_shows_inputs_staleness_and_clean_axis(browser, base_url):
     assert "http" not in page.inner_text(".tsk-chart-w")
     ctx.close()
     assert not errors, errors
+
+
+def test_refresh_button_shows_step_results(browser, base_url):
+    """v37: 오래된 가격 경고의 '지금 최신으로' → 단계별 결과 (받음/건너뜀/실패 + 이유) · 닫으면 화면 새로."""
+    ctx = browser.new_context(viewport={"width": 390, "height": 844})
+    ctx.route("**/fonts.googleapis.com/**", lambda r: r.fulfill(body="", content_type="text/css"))
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"{base_url}/#analysis/000020", wait_until="networkidle")
+    page.wait_for_selector(".tsk-stale [data-refresh]", timeout=15000)
+    page.click(".tsk-stale [data-refresh]")
+    page.wait_for_selector(".rf-list", timeout=120000)
+    txt = page.inner_text(".t-sheet")
+    assert "국내 일봉" in txt and "AI 판단" in txt and ("받음" in txt or "건너뜀" in txt)
+    page.click("#rf-close")
+    page.wait_for_timeout(800)
+    assert not page.query_selector(".t-sheet-ov")
+    assert page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth") <= 2
+    ctx.close()
+    assert not errors, errors

@@ -153,10 +153,12 @@ def _picks(app, n: int = 6) -> list[dict]:
     ranked = sorted(latest.values(), key=lambda r: (r.symbol not in focus, -(r.prob_up if r.action == "BUY" else r.prob_up - 0.5)))[:n]
     names = _names(app, [r.symbol for r in ranked])
     out = []
+    from .pricenow import resolve
+    live = ops.get_state(app.engine, "live_quotes") or {}
     for r in ranked:
-        last, chg = _chg(_bars_for(app, r.symbol))
+        pn = resolve(r.symbol, _bars_for(app, r.symbol), live.get(r.symbol))
         out.append({"symbol": r.symbol, "name": names.get(r.symbol, r.symbol), "action": r.action, "prob_up": round(r.prob_up, 3),
-                    "last": last, "chg_pct": chg, "as_of": label(r.as_of), "focus": r.symbol in focus})
+                    "last": pn["price"], "chg_pct": pn["chg_pct"], "price_label": pn["label"], "as_of": label(r.as_of), "focus": r.symbol in focus})
     return out
 
 
@@ -239,22 +241,10 @@ def stock(app, sym: str, now: datetime | None = None) -> dict:
         from .asof import stamp
         st = stamp(b.index[-1], "bar_kr" if kr else "bar_us", now)
         out["price_age"] = {"status": st["status"], "age": st["age"], "lag": st.get("lag_days")}
-    q = (ops.get_state(app.engine, "live_quotes").get(sym) or {})
-    if q.get("price"):
-        out["live"] = {"price": q["price"], "chg_pct": q.get("chg_pct"), "at": q.get("at"), "src": q.get("src")}
-        # v36: 등락 기준 = '시세 날짜의 전 거래일 종가'. 일봉이 아직 어제까지면 마지막 봉 종가가 기준 (v35 까지는 그 전날 종가로 계산해 틀어짐)
-        try:
-            qt = pd.Timestamp(q["at"]) if q.get("at") else None
-            qt = None if qt is None else (qt.tz_localize("UTC") if qt.tzinfo is None else qt)
-            qd = None if qt is None else qt.tz_convert(ZoneInfo("Asia/Seoul" if kr else "America/New_York")).date()
-        except (TypeError, ValueError):
-            qd = None
-        if out.get("last") is not None:
-            ref = out["last"] if qd is not None and str(qd) > out["bar_date"] else out.get("prev")
-            out["live"]["prev_close"] = ref
-            if ref:
-                out["live"]["chg"] = float(q["price"]) - ref
-                out["live"]["chg_pct"] = float(q["price"]) / ref - 1
+    from .pricenow import resolve
+    pn = resolve(sym, b, (ops.get_state(app.engine, "live_quotes") or {}).get(sym), now)
+    if pn["src"] == "live":  # v37: 마지막 일봉보다 새 시세일 때만 · 등락 기준은 그 시세 날짜의 전 거래일 종가
+        out["live"] = {k: pn[k] for k in ("price", "chg_pct", "chg", "prev_close", "at", "label")} | {"src": pn.get("quote_src")}
     prof = (ops.get_state(app.engine, f"profile:{sym}").get("data") or {})
     mc = (prof.get("stats") or {}).get("market_cap") or prof.get("market_cap")
     if mc:
@@ -346,15 +336,19 @@ def portfolio(app, mode: str = "paper", now: datetime | None = None) -> dict:
     pf = app.load_portfolio(mode)
     bars, _ = app._all_bars()
     names = _names(app, list(pf.positions))
+    from .pricenow import resolve
+    live = ops.get_state(app.engine, "live_quotes") or {}
     rows, px = [], {}
     for sym, p in pf.positions.items():
         if not p.qty:
             continue
         b = bars.get(sym) if sym in bars else _bars_for(app, sym)
-        last, chg = _chg(b)
+        pn = resolve(sym, b, live.get(sym), now)  # v37: 종목 화면·관심종목과 같은 가격 (실시간이 새것이면 실시간)
+        last, chg = pn["price"], pn["chg_pct"]
         last = last if last is not None else p.avg_price
         px[sym] = last
         rows.append({"symbol": sym, "name": names.get(sym, sym), "qty": p.qty, "avg_price": p.avg_price, "last": last, "chg_pct": chg,
+                     "price_label": pn["label"],
                      "value": round(p.qty * last), "cost": round(p.qty * p.avg_price),
                      "pnl": round(p.qty * (last - p.avg_price)), "pnl_pct": (last / p.avg_price - 1) if p.avg_price else None})
     eq = pf.cash + sum(r["value"] for r in rows)
@@ -477,14 +471,12 @@ def quotes(app, syms: list[str]) -> dict:
     """관련 종목 카드 등에 쓰는 가벼운 시세 묶음 (일봉 종가 기준 · 실시간 시세가 있으면 그것)."""
     syms = [s_ for s_ in dict.fromkeys(syms) if s_][:20]
     names = _names(app, syms)
-    live = ops.get_state(app.engine, "live_quotes")
+    from .pricenow import resolve
+    live = ops.get_state(app.engine, "live_quotes") or {}
     out = []
     for s_ in syms:
-        q = live.get(s_) or {}
-        last, chg = _chg(_bars_for(app, s_))
-        if q.get("price"):
-            last, chg = q["price"], q.get("chg_pct", chg)
-        out.append({"symbol": s_, "name": names.get(s_, s_), "last": last, "chg_pct": chg})
+        pn = resolve(s_, _bars_for(app, s_), live.get(s_))
+        out.append({"symbol": s_, "name": names.get(s_, s_), "last": pn["price"], "chg_pct": pn["chg_pct"], "price_label": pn["label"]})
     return {"rows": out}
 
 

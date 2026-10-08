@@ -30,6 +30,14 @@ async function refreshAsOfChip() {
     const bar = it.bar_kr || it.bar_us || {};
     el.className = `asof-chip s-${f.status}`;
     el.innerHTML = `<span class="dot"></span>데이터 ${esc(bar.label || "-")}${bar.age && bar.status !== "fresh" ? ` · ${esc(bar.age)}` : ""}`;
+    // v37: 밀렸으면 바로 옆에 '최신으로' (누르면 자료 전부 새로 받기 + 단계별 결과)
+    let rb = $("#asof-refresh");
+    const stale = bar.status && bar.status !== "fresh" && typeof canRefresh === "function" && canRefresh();
+    if (stale && !rb) {
+      rb = document.createElement("button");
+      rb.id = "asof-refresh"; rb.type = "button"; rb.className = "asof-refresh"; rb.setAttribute("data-refresh", ""); rb.textContent = "최신으로";
+      el.after(rb);
+    } else if (!stale && rb) rb.remove();
     el.title = Object.values(it).map((v) => `${v.name}: ${v.label || "없음"} (${v.age || "-"})`).join("\n");
   } catch { el.textContent = "데이터 기준 -"; }
 }
