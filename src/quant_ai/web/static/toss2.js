@@ -695,9 +695,27 @@ TV.execution = async (el) => {
     ${tHero({ k: `증권사 연결 · ${esc(x.kis_env === "demo" ? "모의투자 서버" : x.kis_env || "")}`, lv: k.ok ? "good" : "warn", big: k.ok ? "한국투자증권 연결됨" : "증권사가 연결되지 않았어요", sub: esc(koText(k.message || "")), foot: k.at ? `마지막 확인 ${esc(tAgo(k.at))}` : "" })}
     ${(k.steps || []).length ? tCard("연결 점검 단계", tList(k.steps.map((s) => tStRow(s.name || s.title, s.detail || s.message, s.ok === true ? "good" : s.ok === false ? "bad" : s.status)))) : ""}
     ${ae && !ae.error ? tCard(`최근 ${tN(ae.days)}일 체결`, tKV([["주문", `${tN(ae.orders)}건`], ["체결률", tPr(ae.fill_rate)], [tG("슬리피지", "체결 차이"), `${tN(ae.slippage_bps?.mean, 1)}bp`, "", `가운데 ${tN(ae.slippage_bps?.median, 1)} · 나쁜 10% ${tN(ae.slippage_bps?.p90, 1)}`], ["숨은 비용", tWon(ae.implementation_shortfall_krw)]])) : ""}
+    ${tKbCard(x.kb)}
     ${tCard("비용 가정 (백테스트·모의에 쓰는 값)", tKV([["수수료", `${tN(ca.commission_bps, 1)}bp`], ["체결 차이", `${tN(ca.slippage_bps, 1)}bp`], ["매도세", `${tN(ca.sell_tax_bps, 1)}bp`], ["큰 주문 충격", `계수 ${tN(ca.impact_coef, 2)}`]]) + `<div class="t-sub">${esc(koText(sl.live?.verdict || ""))} · 실제 체결이 쌓이면 자동으로 보정해요${sl.autocal ? " (자동 보정 켜짐)" : ""}</div>`)}
     ${tFull("execution", '<a class="t-btn ghost" href="#orders">주문 내역</a><a class="t-btn ghost" href="#validation">실전 검증 진행표</a>')}`);
 };
+// v40 KB증권 — 공식 샘플에 있는 읽기 전용 TR(토큰·현재가·장 상태·환율)만. 잔고·주문은 공식 가이드 확인 전까지 막힘
+function tKbCard(kb) {
+  if (!kb || kb.error) return "";
+  const v = kb.last || {};
+  const head = kb.configured ? (v.at ? (v.ok ? "읽기 연결 확인됨" : "점검 실패") : "키 있음 · 아직 점검 전") : "키 없음 (.env 에 KB_OPENAPI_APP_KEY · KB_OPENAPI_APP_SECRET)";
+  return tCard(`KB증권 · 읽기 전용${kb.selected ? " · 선택됨" : ""}`, `<div class="t-sub">${esc(head)}${v.at ? ` · ${esc(tAgo(v.at))}` : ""}</div>
+    ${(v.steps || []).length ? tList(v.steps.map((s) => tStRow(s.title, s.detail, s.ok === true ? "good" : s.ok === false ? "bad" : "warn"))) : ""}
+    <div class="t-foot">주문·잔고·체결 조회는 막혀 있어요 — KB 공식 샘플에 해당 요청 경로가 없어 추측해서 만들지 않았어요. <a href="${esc(kb.guide)}" target="_blank" rel="noopener">공식 가이드</a></div>
+    ${kb.configured ? '<div class="t-pro"><button class="t-btn ghost" id="kb-run">KB 연결 점검 (주문 없음)</button></div>' : ""}`);
+}
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest && ev.target.closest("#kb-run");
+  if (!b) return;
+  b.disabled = true;
+  try { await runAction("kb_check", (p) => { b.textContent = p || "점검 중…"; }); } catch (_) { /* 결과는 다시 그린 화면에 */ }
+  if (typeof render === "function") render();
+});
 TV.sheet = async (el) => {
   el.innerHTML = `<div class="ts t2 t2-sheet"></div>`;
   const root = el.querySelector(".ts");
@@ -1693,7 +1711,7 @@ TV.radar = async (el) => {
   });
   if (!L) return;
   const r = L.d, us = r.us || {}, G = r.groups || {}, C = r.counts || {}, ec = r.earncal || {};
-  const sub = (e) => [e.at ? e.kst + " 한국시간" : e.kst, e.label, e.detail || "", (e.tags || []).join("·"), e.scope === "웹 발견" ? `웹 기사 · 미확인${e.source ? " · " + pubName(e.source) : ""}` : e.estimated ? "추정" : ""].filter(Boolean).join(" · ");
+  const sub = (e) => [e.at ? e.kst + " 한국시간" : e.kst, e.label, e.detail || "", e.move ? `변동 ${e.move.replace(/^예상 변동 /, "")}` : "", (e.tags || []).join("·"), e.scope === "웹 발견" ? `웹 기사 · 미확인${e.source ? " · " + pubName(e.source) : ""}` : e.estimated ? "추정" : ""].filter(Boolean).join(" · ");
   const row = (e) => e.symbol
     ? tSym(e.symbol, e.name || e.symbol, esc(koText(e.title)) + `<br><span class="t-sub">${esc(sub(e))}</span>`, tDday(e))
     : `<div class="t-li"><span class="t-co"><span class="t-ev-ic">${TI.cal}</span><span class="t-co-t"><b class="t2-wrap">${esc(koText(e.title))}</b><span>${esc(sub(e))}</span></span></span><span class="t-li-r">${tDday(e)}</span></div>`;

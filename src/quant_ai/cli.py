@@ -172,6 +172,16 @@ def cmd_readiness(args):
         print(f"  {icon.get(c['status'], '·')} {c['key']:<11} {c['detail']}")
 
 
+def cmd_kb_check(args):
+    """KB증권 읽기 전용 점검 — 공식 샘플에 있는 TR 만 부른다. 키 값은 출력하지 않는다."""
+    from .trading.kb import check
+    r = check(_app(args), symbol=args.symbol)
+    for s in r["steps"]:
+        mark = "✅" if s["ok"] else "⏭" if s["ok"] is None else "❌"
+        print(f"{mark} {s['title']:<10} {s['detail']}  ({s['ms']}ms)")
+    print("결과:", "통과 (읽기 전용)" if r["ok"] else "실패", "·", r["orders"])
+
+
 def cmd_kis_check(args):
     """KIS 연결 점검: 토큰 → 잔고 → 현재가/호가 (주문은 내지 않음). --suite 는 8단계 검증을 기록한다."""
     if getattr(args, "suite", False):
@@ -515,6 +525,10 @@ def cmd_doctor(args):
     add("ok" if sys.version_info >= (3, 11) else "fail", "Python", sys.version.split()[0] + " (3.11 이상 필요)")
     add("ok" if Path(".env").exists() else "warn", ".env", "있음" if Path(".env").exists()
         else "없음 → cp .env.example .env 후 값 입력 (./run.sh setup)")
+    import importlib.util
+    miss = [m for m in ("pyarrow", "holidays", "pandas", "sqlalchemy") if importlib.util.find_spec(m) is None]
+    add("fail" if miss else "ok", "필수 패키지", f"없음: {', '.join(miss)} → pip install -e . (pyproject 에 선언됨)" if miss
+        else "pyarrow · holidays · pandas · sqlalchemy 설치됨")
     try:
         app = _app(args)
     except Exception as e:  # noqa: BLE001
@@ -572,6 +586,10 @@ def cmd_doctor(args):
                 add("ok", "KIS 연결", f"잔고 조회 OK · 예수금 {cash:,.0f}원 · 보유 {len(pos)}종목")
             except Exception as e:  # noqa: BLE001
                 add("fail", "KIS 연결", str(e)[:200])
+    elif st.broker == "kb":
+        from .trading.kb import configured
+        add("ok" if configured() else "fail", "KB 키", "설정됨 (값은 표시 안 함)" if configured() else "누락: KB_OPENAPI_APP_KEY · KB_OPENAPI_APP_SECRET")
+        add("warn", "KB 주문", "읽기 전용 — 공식 샘플에 잔고·주문 TR 이 없어 주문·계좌 대조는 막혀 있어요 (./run.sh kb-check)")
     else:
         add("warn", "증권사", "KIS 미연결 → 가상매매(PAPER). .env 에 KIS 모의투자 키 3개를 넣으면 ./run.sh 가 모의계좌로 자동매매")
     add("ok" if app.notifier.enabled else "warn", "알림", "설정됨" if app.notifier.enabled
@@ -1047,6 +1065,9 @@ def main(argv: list[str] | None = None) -> None:
     kc.add_argument("--fill", action="store_true", help="--suite 와 함께: 모의투자에서 1주 실제 체결 → 되팔기 (슬리피지 실측)")
     kc.add_argument("--e2e", action="store_true", help="--suite 와 함께: 모의투자 장중 · 이 시스템의 주문 경로 그대로 주문→체결→장부→잔고 대조→중복 방지→되팔기→재시작 복구")
     kc.set_defaults(fn=cmd_kis_check)
+    kb = sub.add_parser("kb-check", help="KB증권 OpenAPI 읽기 전용 점검 (토큰·현재가·장 상태·환율 · 주문 없음)")
+    kb.add_argument("--symbol", default="005930")
+    kb.set_defaults(fn=cmd_kb_check)
     ps = sub.add_parser("power-study", help="실제 KRX 데이터로 코어 점수의 예측력 사후 검증 (IC · 분위 · 비용 후 초과)")
     ps.add_argument("--marcap-dir", required=True)
     ps.add_argument("--start", type=int, default=2010)

@@ -125,7 +125,7 @@ class Settings:
     ai_roles: str = ""  # 예: "primary=gemini,second=nvidia,risk=groq,panel=cloudflare" (비우면 자동 배정)
     # 증권사
     strategy: str = "core_satellite"  # core_satellite (검증된 팩터 코어 + AI) / consensus (AI 합의만)
-    broker: str = "none"  # none / kis
+    broker: str = "none"  # none / kis / kb (kb = 읽기 전용 시세, 주문 없음)
     # 주가 데이터가 이 영업일 수보다 오래되면 자동매매를 멈춘다 (데이터 갱신 장애 시 낡은 순위로 매매 방지). 0 = 끔
     max_data_age_days: int = 5
     service_level: str = "personal"  # QUANT_SERVICE_LEVEL: personal(본인 사용) — 다른 사람에게 제공하면 governance 단계 검토

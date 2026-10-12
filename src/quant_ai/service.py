@@ -104,7 +104,7 @@ MEMBER_GET = frozenset({
     "/api/thesis", "/api/myjournal", "/api/rules", "/api/ticket", "/api/ticket/book", "/api/holdings", "/api/start-guide",
     "/api/push/key", "/api/chat", "/api/discover", "/api/mistakes", "/api/t/portfolio", "/api/t/alerts", "/api/risk-simple",
     "/api/habit", "/api/together", "/api/club", "/api/explore",  # v35
-    "/api/radar", "/api/ai-models", "/api/us-brief",  # v38 · v39 (모델 지정 저장은 운영자만 — POST 는 허용 목록에 없음)
+    "/api/radar", "/api/ai-models", "/api/us-brief", "/api/earnings-prep", "/api/committee",  # v38 · v39 · v40 (모델 지정 저장은 운영자만 — POST 는 허용 목록에 없음)
 })
 MEMBER_GET_PREFIX = ("/api/news/", "/api/disclosure/", "/api/stock/")
 MEMBER_POST = frozenset({

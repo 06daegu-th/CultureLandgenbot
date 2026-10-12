@@ -355,7 +355,7 @@ _ACTIONS: dict[str, dict] = {}
 _LOCK = threading.Lock()
 ACTION_LABELS = {"us_cycle": "미국 장부 갱신", "warmup": "데이터·AI 판단 채우기", "db_clean": "DB 정리", "guardian": "자동 감시 점검",
                  "ai_snapshot": "AI 판단 지금 실행", "event_reactions": "공시 반응 통계 갱신", "radar_web": "웹에서 다가오는 일정 찾기",
-                 "earnings_cal_us": "미국 실적 캘린더 받기", "ai_selftest": "AI · 웹 검색 연결 시험"}
+                 "earnings_cal_us": "미국 실적 캘린더 받기", "ai_selftest": "AI · 웹 검색 연결 시험", "kb_check": "KB증권 연결 점검 (읽기 전용)"}
 
 
 def get_action(name: str) -> dict:
@@ -500,6 +500,7 @@ def start_action(app, name: str, params: dict | None = None) -> dict:
            "readiness": lambda say: _brief(desk.readiness(app), ("status", "blockers")),
            "event_calendar": lambda say: {"events": len(desk.event_calendar(app)["events"])},
            "event_impact": lambda say: {"stock_events": desk.event_impact(app)["n_stock_events"]},
+           "kb_check": lambda say: _brief(_kb_check(app), ("ok", "orders")),
            "kis_validate": lambda say: _brief(desk.kis_validate(app), ("ok", "failed", "env")),
            "slippage_cal": lambda say: _brief(desk.slippage_calibrate(app)["model"], ("n", "fixed_bps", "impact_coef", "verdict")),
            "model_decay": lambda say: _brief(desk.model_decay(app), ("status", "message")),
@@ -523,6 +524,10 @@ def _prereg_new(app) -> dict:
     from .review.power import preregister
     return {k: v for k, v in preregister(app, force=True).items() if k in ("version", "h1", "hash")}
 
+
+def _kb_check(app) -> dict:
+    from .trading.kb import check
+    return check(app)
 
 def _brief(d: dict, keys) -> dict:
     return {k: d.get(k) for k in keys}

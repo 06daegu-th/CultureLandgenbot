@@ -426,6 +426,12 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.radar(arg("days"), arg("symbol")))
                     if url.path == "/api/ai-models":
                         return self._json(api.ai_models())
+                    if url.path == "/api/committee":
+                        return self._json(api.committee(arg("symbol", "")))
+                    if url.path == "/api/trust-strip":
+                        return self._json(api.trust_strip())
+                    if url.path == "/api/earnings-prep":
+                        return self._json(api.earnings_prep(arg("symbol", "")))
                     if url.path == "/api/us-brief":
                         return self._json(api.us_brief())
                     if url.path == "/api/power":

@@ -242,6 +242,7 @@ async function tHome(el) {
   const mk = (h.markets || []).map((m) => `<span class="t-mk ${m.open ? "open" : ""}">${m.open ? '<i class="live-dot"></i>' : ""}${esc(m.name)} ${esc(m.state)}${m.holiday ? `<em>${esc(m.holiday)}</em>` : ""}${!m.open && m.next_kst ? `<em>${esc(m.next === "개장" ? "개장" : "마감")} ${esc(String(m.next_kst).replace(" KST", ""))}</em>` : ""}</span>`).join("");
   root.innerHTML = `
     <section class="t-hello"><div><div class="t-date">${esc(h.date || "")} · ${esc(h.as_of || "")}</div><h1>${esc(h.greeting || "안녕하세요")}</h1></div><div class="t-mks">${mk}</div></section>
+    <div id="th-strip"></div>
     <div id="th-guide"></div>
     <div id="th-goal"></div>
     ${tSec("지수", idxB, '<a href="#market">시장 전체</a>', "t-sec-idx")}
@@ -260,7 +261,36 @@ async function tHome(el) {
   tBindBar(root);
   if (typeof tPicksHome === "function") tPicksHome(root.querySelector("#th-picks2"));  // v28: 신호 엔진 매수 후보
   if (typeof tGoalHome === "function") tGoalHome(root.querySelector("#th-goal"));  // v33: 홈 맨 위 '내 목표' (진행률 · 다음 적립일)
+  if (!(typeof isMember === "function" && isMember())) tTrustStrip(root.querySelector("#th-strip"));  // v40: 매매 전 다섯 가지
   tHomeMore(root, q);
+}
+// v40 신뢰 상태줄: 증권사 · 시세 · 새 매수 · 장부 · AI — 한 줄, 자세한 건 접어 둔다
+async function tTrustStrip(box) {
+  if (!box) return;
+  let t;
+  try { t = await api("/api/trust-strip"); } catch (_) { return; }
+  if (!box.isConnected || !t || !(t.items || []).length) return;
+  box.innerHTML = `<div class="trust-strip" role="status">${t.items.map((i) => `<a class="ts-i ${esc(i.level)}" href="${esc(i.href || "#")}" title="${esc(i.detail || "")}"><i></i>${esc(i.label)} <b>${esc(i.text)}</b></a>`).join("")}
+    <details><summary>${esc(t.headline || "")}</summary><ul>${t.items.map((i) => `<li><b>${esc(i.label)}</b> ${esc(i.text)} — ${esc(i.detail || "")}</li>`).join("")}</ul></details></div>`;
+}
+// v40 투자위원회: 같은 판단 기록을 오를 이유 · 내릴 이유 · 막는 것 · 최종으로 (주문 권한 없음)
+async function tCommittee(box, sym) {
+  if (!box) return;
+  let c;
+  try { c = await api(`/api/committee?symbol=${encodeURIComponent(sym)}`); } catch (_) { return; }
+  if (!box.isConnected || !c || !c.ready) return;
+  const li = (xs, empty) => xs.length ? `<ul>${xs.map((x) => `<li>${esc(koText ? koText(x) : x)}</li>`).join("")}</ul>` : `<div class="t-sub">${empty}</div>`;
+  const cf = c.confidence || {}, tp = c.transparency || {}, pm = c.pm || {};
+  const who = (c.analysts || []).filter((a) => !a.abstain).map((a) => `<li>${esc(a.label)} · ${esc(a.kind || "")}${a.model ? ` (${esc(a.model)})` : ""} — ${a.prob_up != null ? `오를 확률 ${Math.round(a.prob_up * 100)}%` : "의견 없음"}${a.empty ? " · 재료 없음(근거에서 뺌)" : ""}${a.hit != null ? ` · 과거 적중 ${Math.round(a.hit * 100)}% (${num(a.n_scored)}회)` : ""}</li>`).join("");
+  box.innerHTML = `<div class="tsk-cmte"><span class="t-k">투자위원회 · ${esc(c.label)}${c.prob_up != null ? ` ${Math.round(c.prob_up * 100)}%` : ""}</span>
+    <div class="cm-pm">${(pm.lines || []).map((x) => esc(x)).join("<br>")}</div>
+    ${pm.caution ? `<div class="t-note warn">${esc(pm.caution)}</div>` : ""}
+    <div class="cm-cols"><div class="cm-col bull"><h3>오를 이유</h3>${li(c.bull || [], "뚜렷한 근거 없음")}</div><div class="cm-col bear"><h3>내릴 이유</h3>${li(c.bear || [], "뚜렷한 근거 없음")}</div></div>
+    <div class="cm-risk"><b>막는 것 · 위험</b>${li([...(c.risk?.blocks || []), ...(c.risk?.earnings ? [c.risk.earnings] : []), ...(c.risk?.warn ? [c.risk.warn] : [])], "지금 막는 것 없음")}</div>
+    <div class="cm-meta">데이터 신뢰도 <b>${esc(cf.label || "-")}</b> (${num(cf.used)}/${num(cf.of)} 재료)${(cf.why || []).length ? ` · ${esc(cf.why.join(" · "))}` : ""}</div>
+    <details class="cm-meta"><summary>누가 어떻게 판단했나 · 기록 #${esc(String(tp.record_id || ""))}${tp.sealed ? " · 봉인됨" : ""}</summary>
+      <div>판단 ${esc(tp.judged_at || "")} · ${esc(tp.basis || "")} · AI 모델 ${num(tp.n_llm)}개 · 규칙/학습 모델 ${num(tp.n_rules)}개</div><ul>${who}</ul></details>
+    <div class="t-foot">${esc(c.note || "")}</div></div>`;
 }
 async function tHomeMore(root, q) {  // 느린 칸: 할 일·주의·뉴스·결론·시작 안내 (홈 첫 계산 ~2초)
   const [h5, g, p] = await Promise.all([api(`/api/home5?${q}`).catch((e) => ({ error: e.message })), api("/api/start-guide").catch(() => null), loadPrefs().catch(() => ({}))]);
@@ -363,11 +393,26 @@ function tStockSide(ctx) {
   const r = v.range52;
   const r52 = r && r.pos != null ? `<div class="tsk-52"><div class="t-k">52주 종가 범위 안 지금 위치</div><div class="t-range"><i style="left:${Math.round(r.pos * 100)}%"></i></div>
       <div class="t-range-l num"><span>${tPx(r.low, sym)}</span><span class="${tCls(r.from_high)}">고점 대비 ${tPct(r.from_high, 1)}</span><span>${tPx(r.high, sym)}</span></div></div>` : "";
-  side.innerHTML = `<div class="tsk-cards">${ai}${ev}${hold}</div>${banned ? '<a class="t-note warn" href="#aitrust">AI 성적이 아직 기준 미달이라 판단은 참고만 하세요 — 주문에는 쓰이지 않아요</a>' : ""}${r52}`;
+  side.innerHTML = `<div class="tsk-cards">${ai}${ev}${hold}</div>${banned ? '<a class="t-note warn" href="#aitrust">AI 성적이 아직 기준 미달이라 판단은 참고만 하세요 — 주문에는 쓰이지 않아요</a>' : ""}${r52}<div id="tsk-prep"></div><div id="tsk-cmte"></div>`;
+  if (e && e.d_label && (e.trading_days == null || e.trading_days <= 30)) tStockPrep(side.querySelector("#tsk-prep"), sym);
+  if (typeof tCommittee === "function") tCommittee(side.querySelector("#tsk-cmte"), sym);
   const ab = side.querySelector("#analyze-btn");
   if (ab && typeof startAnalyze === "function") ab.onclick = () => startAnalyze(sym, () => render());
   side.querySelector("[data-tab=earn]")?.addEventListener("click", (ev2) => { ev2.preventDefault(); root.querySelector('#tsk-tabs button[data-k="earn"]')?.click(); });
   if ((T.stab[sym] || "sum") === "sum") tStockSumAI(ctx);
+}
+// v40 실적 대비: 발표 때 얼마나 움직일 수 있고 내 돈으로는 얼마인가 (방향은 말하지 않는다)
+async function tStockPrep(box, sym) {
+  if (!box) return;
+  let p;
+  try { p = await api(`/api/earnings-prep?symbol=${encodeURIComponent(sym)}`); } catch (_) { return; }
+  if (!box.isConnected || !p || (p.expected_move == null && !(p.past || []).length)) return;
+  const past = (p.past || []).slice(-6).reverse().map((x) => `<span class="tsk-mv num ${tCls(x.move)}" title="${esc(x.date)}${x.surprise_pct != null ? ` · 서프라이즈 ${tPct(x.surprise_pct / 100, 1)}` : ""}">${tPct(x.move, 1)}</span>`).join("");
+  box.innerHTML = `<div class="t-card tsk-prep"><span class="t-k">실적 대비${p.next ? ` · ${esc(p.next.d_label)} ${esc(p.next.kst || "")}` : ""}</span>
+    ${p.expected_move != null ? `<b class="num">±${(p.expected_move * 100).toFixed(1)}%</b> <span class="t-sub">${esc(p.move_source || "")}</span>` : ""}
+    ${p.exposure_krw ? `<div class="tsk-prep-krw">내 보유 기준 하루 ±약 <b class="num">${num(p.exposure_krw)}원</b></div>` : ""}
+    ${past ? `<div class="t-sub">지난 발표 다음 날 (최근부터)${p.beat_rate != null ? ` · 예상 상회 ${Math.round(p.beat_rate * 100)}%` : ""}</div><div class="tsk-mvs">${past}</div>` : ""}
+    <div class="t-foot">${esc(p.note || "")}</div></div>`;
 }
 const PERIODS = [[1, "1일"], [5, "1주"], [21, "1개월"], [63, "3개월"], [126, "6개월"], [252, "1년"], [756, "3년"]];
 async function tStockTab(ctx, k) {

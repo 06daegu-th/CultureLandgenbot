@@ -980,3 +980,25 @@ body.is-member #kill-btn, body.is-member #mode-card, body.is-member #balance-car
 .tsk-stale .t-btn,.t-note .t-btn{margin-left:6px;padding:3px 10px;font-size:12.5px}
 .asof-refresh{margin-left:6px;padding:4px 10px;border-radius:999px;border:1px solid rgba(245,158,11,.55);background:rgba(245,158,11,.12);color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap}
 @media (max-width:720px){.asof-refresh{display:none}}
+
+/* v40 실적 대비 · 투자위원회 · 신뢰 상태줄 */
+.tsk-prep, .tsk-cmte { display: flex; flex-direction: column; gap: 6px; background: var(--t-card); border: 1px solid var(--line); border-radius: 18px; padding: 16px; margin-bottom: 12px; }
+.tsk-prep > b.num { font-size: 22px; }
+.tsk-mvs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tsk-mv { padding: 2px 8px; border-radius: 999px; background: var(--t-bg2, rgba(127,127,127,.12)); font-size: 13px; }
+.cm-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cm-col { border-radius: 12px; padding: 10px; background: var(--t-bg2, rgba(127,127,127,.08)); min-width: 0; }
+.cm-col h3 { margin: 0 0 6px; font-size: 13px; }
+.cm-col ul, .cm-risk ul { margin: 0; padding-left: 16px; font-size: 13px; line-height: 1.5; }
+.cm-col.bull h3 { color: var(--up, #f04452); }
+.cm-col.bear h3 { color: var(--down, #3182f6); }
+.cm-pm { font-size: 14px; }
+.cm-meta { font-size: 12px; color: var(--t-sub, #8b95a1); }
+@media (max-width: 520px) { .cm-cols { grid-template-columns: 1fr; } }
+.trust-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.trust-strip .ts-i { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--t-card); font-size: 13px; color: inherit; text-decoration: none; }
+.trust-strip .ts-i i { width: 8px; height: 8px; border-radius: 50%; background: #8b95a1; display: inline-block; }
+.trust-strip .ts-i.ok i { background: #22c55e; }
+.trust-strip .ts-i.warn i { background: #f59e0b; }
+.trust-strip .ts-i.bad i { background: #ef4444; }
+.trust-strip details { width: 100%; font-size: 13px; }

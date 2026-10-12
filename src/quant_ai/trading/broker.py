@@ -131,6 +131,11 @@ class LiveBroker(Broker):
         self.settings = settings
 
     def submit(self, order: Order, quote: MarketQuote, ts: datetime) -> Fill | None:
+        if getattr(self.settings, "broker", "") == "kb":
+            raise BrokerNotConfigured(
+                "KB증권 연결은 읽기 전용(시세)이에요 — 공식 샘플에 주문·잔고 TR 이 없어 주문 경로를 만들지 않았어요. "
+                "이 주문은 보내지 않았습니다 (trading/kb.py · docs/KB_OPENAPI.md)."
+            )
         raise BrokerNotConfigured(
             "실전 주문을 보낼 증권사가 설정되지 않았습니다 — .env 에 QUANT_BROKER=kis 와 KIS 키를 넣으세요 "
             "(실제 주문은 trading/kis.py 의 KISBroker 가 처리합니다). 이 주문은 보내지 않았습니다."

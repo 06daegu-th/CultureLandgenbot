@@ -142,6 +142,9 @@ class Tools:
          "+ 대형주 실적 + 웹에서 찾은 미확인 일정. 모든 시각 한국시간 · '이번 미국장'(한국시간 밤~새벽)에 걸린 일정 묶음. symbol 을 주면 그 종목만",
          {"days": {"type": "integer", "description": "앞으로 며칠 (기본 14 · 최대 60)"}, "symbol": {"type": "string"},
           "kind": {"type": "string", "description": "특정 종류만: earnings,fomc,cpi,nfp,pce,bok,options_expiry,quad_witching,holiday (쉼표로 여러 개)"}}, []),
+        ("earnings_prep", "실적 발표 대비: 다음 실적 발표 한국시간 · 예상 변동(옵션 시장 또는 과거 반응) · 과거 8번 다음 날 움직임 · 예상 상회 비율 · "
+         "내 보유 기준 하루 변동 금액(원). '실적 발표 전에 어떻게 해야 해?', '얼마나 움직일까?'",
+         {"symbol": {"type": "string"}}, ["symbol"]),
         ("us_brief", "오늘 밤 미국장 브리핑: 개장·마감 한국시간 · 이번 장에 걸린 일정(지표·실적) · 내 미국 종목 지난 장 등락 · 이번 주 실적", {}, []),
         ("market_clock", "시장 시계: 한국·미국 증시가 지금 열렸나(정규장·프리·애프터·휴장), 다음 개장/마감 한국시간, 서머타임, 이번 미국장 시간", {}, []),
         ("replay_day", "그날 재현: 특정 날짜(YYYY-MM-DD)의 지수·상승/하락 종목 수·많이 오른/내린 종목·그날 뉴스·그날 AI 판단과 나중 결과",
@@ -481,7 +484,7 @@ class Tools:
                     hits = search(s, symbol, 1)
                 symbol = hits[0]["symbol"] if hits else symbol.upper()
         r = upcoming(self.app, days=max(1, min(int(days or 14), 60)), symbol=symbol or None)
-        keep = ("d_label", "kst", "scope", "label", "title", "name", "symbol", "estimated", "confirmed", "us_session", "source", "url")
+        keep = ("d_label", "kst", "scope", "label", "title", "name", "symbol", "estimated", "confirmed", "us_session", "source", "url", "move", "kind")
         rows = r["rows"]
         if kind:
             ks = {k.strip() for k in str(kind).split(",") if k.strip()}
@@ -489,6 +492,18 @@ class Tools:
         return {"headline": r["headline"], "now_kst": r["now_kst"], "us_session": r["us"], "next": r["next"], "counts": r["counts"],
                 "rows": [{k: e.get(k) for k in keep} for e in rows[:24]], "web": {"at": r["web"]["at"], "n": r["web"]["n"]},
                 "note": r["note"], "symbol": symbol, "kind": kind, "days": r["days"]}
+
+    def t_earnings_prep(self, symbol: str) -> dict:
+        from .prep import earnings_prep
+        symbol = symbol.strip()
+        if not symbol.isdigit() and symbol.upper() not in ("",):
+            from .data.global_stocks import search
+            with session_scope(self.engine) as s:
+                hits = search(s, symbol, 1)
+            symbol = hits[0]["symbol"] if hits else symbol.upper()
+        r = earnings_prep(self.app, symbol)
+        return {k: r.get(k) for k in ("symbol", "next", "expected_move", "move_source", "past", "beat_rate", "holding", "exposure_krw",
+                                      "lines", "note")}
 
     def t_us_brief(self) -> dict:
         from .radar import us_brief
@@ -591,6 +606,8 @@ INTENTS = [
     # v38: '다가오는 실적발표나 중대 발표 있어? 미국장 중에?' — 레이더가 이번 주 일정을 대신한다 (한국시간 · 미국장 묶음 · 웹 발견)
     ("upcoming_events", ("실적", "발표", "어닝", "earnings", "언제", "다가오", "예정", "이벤트", "일정", "fomc", "cpi", "고용지표",
                          "금리 결정", "금통위", "옵션 만기", "만기일", "pce", "d-day", "디데이")),
+    ("earnings_prep", ("실적 대비", "실적 전에", "실적 발표 전", "발표 전에", "얼마나 움직", "변동폭", "실적 리스크", "실적 때 어떻게",
+                       "실적 앞두고", "어닝 대비")),
     ("us_brief", ("미국장 브리핑", "오늘 밤 미국", "오늘밤 미국", "밤에 미국", "미국장 어때", "미국장 뭐", "미국 증시 오늘", "미국장 요약")),
     ("market_clock", ("미국장", "장 열", "장열", "개장", "폐장", "마감", "몇 시", "몇시", "열렸", "닫혔", "프리마켓", "애프터마켓",
                       "장 시작", "장시작", "서머타임", "휴장")),
@@ -664,9 +681,12 @@ def route(app, text: str, last_symbol: str | None = None) -> list[tuple[str, dic
         calls.append(("replay_day", {"date": d.isoformat()}))
     if stocks:
         sym = stocks[0]["symbol"]
-        calls = [(n, {**a, "symbol": sym} if n in ("news_board", "why_no_trade", "upcoming_events") else a) for n, a in calls]
+        calls = [(n, {**a, "symbol": sym} if n in ("news_board", "why_no_trade", "upcoming_events", "earnings_prep") else a) for n, a in calls]
         if "ai_trust" not in [c[0] for c in calls] and sym[:1].isdigit():
             calls.append(("ai_trust", {}))  # 종목 AI 판단을 말할 때 AI 성적을 같이 (참고 수준인지)
+    calls = [c for c in calls if c[0] != "earnings_prep" or c[1].get("symbol")]  # 종목 없이 '실적 대비'는 레이더로
+    if any(k in t for k in ("실적 대비", "실적 전에", "발표 전에", "얼마나 움직")) and not stocks and "upcoming_events" not in [c[0] for c in calls]:
+        calls.append(("upcoming_events", {"days": 21, "kind": "earnings"}))
     return [("stock_overview", {"symbol": x["symbol"]}) for x in stocks[:3]] + calls  # 종목이 먼저, 보조 정보는 그 뒤
 
 
@@ -677,7 +697,7 @@ LINKS = {"stock_overview": ("종목 페이지", "#analysis/{symbol}"), "news_boa
          "portfolio": ("Portfolio OS", "#pos"), "server_status": ("서버 · DB", "#server"), "db_status": ("서버 · DB", "#server"),
          "ai_performance": ("AI 성적 · 보정", "#ai"), "market_overview": ("시장 국면", "#market"),
          "upcoming_events": ("이벤트 레이더", "#radar"), "market_clock": ("이벤트 레이더 · 장 시간", "#radar"),
-         "us_brief": ("이벤트 레이더", "#radar")}
+         "us_brief": ("이벤트 레이더", "#radar"), "earnings_prep": ("종목 페이지", "#analysis/{symbol}")}
 FOLLOW = {"stock_overview": ("{name} 관련 뉴스 보여줘", "{name} 왜 안 샀어?", "이번 주 내 종목 일정"),
           "news_board": ("오늘 많이 오른 종목은?", "AI 믿어도 돼?"), "market_map": ("오늘 뉴스 요약해줘", "업종별로 보면?"),
           "keys_status": ("서버 상태 알려줘",), "ai_trust": ("거래 안 한 이유", "실적 이벤트 전략 결과"),
@@ -1112,16 +1132,21 @@ def rule_answer(text: str, pre: list[dict], tools: Tools, quota: bool = False, h
                      f"- 이번 미국 정규장: **{us.get('label', '-')}**" + (" · 서머타임" if us.get("dst") else "")]
             if usr:
                 lines.append("**이번 미국장에 걸린 일정**")
-                lines += [f"- {e['kst']} · {e['title']}{mark(e)}" for e in usr[:6]]
+                lines += [f"- {e['kst']} · {e['title']}{mark(e)}" + (f" — {e['move']}" if e.get("move") else "") for e in usr[:6]]
             other = [e for e in rows if not e.get("us_session")]
             if other:
                 lines.append("**앞으로**")
                 lines += [f"- **{e['d_label']}** {e['kst']} · {e['title']}" + (f" ({e['name']})" if e.get("name") and e["name"] not in e["title"] else "")
-                          + mark(e) for e in other[:10]]
+                          + mark(e) + (f" — {e['move']}" if e.get("move") else "") for e in other[:10]]
             if not rows:
                 lines.append("- 앞으로 이 기간에 저장된 큰 일정이 없어요 (실적 일정은 종목 화면을 열거나 '지금 최신으로'를 누르면 채워져요)")
             lines.append(f"- {r.get('note', '')}")
             parts.append("\n".join(lines))
+        elif name == "earnings_prep":
+            parts.append(f"### 실적 발표 대비 — {r.get('symbol')}\n" + "\n".join(f"- {x}" for x in r.get("lines") or [])
+                         + "".join(f"\n  - {p['date']} 다음 날 {p['move']:+.1%}" + (f" (예상 대비 {p['surprise_pct']:+.1f}%)" if p.get("surprise_pct") is not None else "")
+                                   for p in (r.get("past") or [])[-4:])
+                         + f"\n- {r.get('note', '')}")
         elif name == "us_brief":
             parts.append(f"### {r['title']}\n" + "\n".join(f"- {x}" for x in r.get("lines") or []) + f"\n- {r.get('note', '')}")
         elif name == "market_clock":

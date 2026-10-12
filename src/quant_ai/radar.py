@@ -191,6 +191,20 @@ def upcoming(app, days: int = 14, now: datetime | None = None, symbol: str | Non
             if (e.get("symbol"), "earnings") in have and e.get("kind") == "earnings":
                 continue  # 확정 일정이 있으면 웹 추정은 뺀다
             add(_row(e | {"estimated": True}, now, today, "웹 발견", e.get("symbol"), names, focus.get(e.get("symbol")), win))
+    # v40: '얼마나 움직일 수 있나' — 내 종목 실적은 예상 변동(옵션·과거 반응), 시장 큰 일정은 과거 그날 시장이 평소의 몇 배였나
+    from .prep import earnings_prep, market_move
+    for r_ in rows:
+        try:
+            if r_["kind"] == "earnings" and r_["scope"] == "내 종목" and r_["symbol"]:
+                ep = earnings_prep(app, r_["symbol"], now=now)
+                if ep.get("expected_move"):
+                    r_["move"] = f"예상 변동 ±{ep['expected_move']:.1%}" + (f" · 내 보유 ±약 {ep['exposure_krw']:,.0f}원" if ep.get("exposure_krw") else "")
+            elif r_["scope"] == "시장" and r_["kind"] in ("fomc", "cpi", "nfp", "pce", "quad_witching", "bok", "options_expiry"):
+                mm = market_move(app, r_["kind"], "US" if (r_["time"] or "").endswith("ET") else None)
+                if mm and mm.get("text"):
+                    r_["move"] = mm["text"]
+        except Exception:  # noqa: BLE001, S110 - 보조 정보 실패가 레이더를 막지 않게
+            pass
     far = datetime(9999, 1, 1, tzinfo=UTC)
     rows.sort(key=lambda r: (r["date"], datetime.fromisoformat(r["at"]) if r["at"] else far, r["scope"] != "내 종목"))
     groups = {"us_session": [r for r in rows if r.get("us_session")],

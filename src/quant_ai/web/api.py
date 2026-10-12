@@ -129,6 +129,14 @@ class _Cache(dict):
             dict.pop(self, k, None)
 
 
+def _kb_status(app) -> dict:
+    from ..trading.kb import status
+    try:
+        return status(app)
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:120]}
+
+
 class DashboardAPI:
     def __init__(self, app):
         self.app = app
@@ -1586,6 +1594,25 @@ class DashboardAPI:
             return {"ok": False, "error": str(e)}
         return {"ok": True, **aimodels.catalog(self.app.settings, self.engine)}
 
+    def committee(self, symbol: str) -> dict:
+        from .. import committee
+        sym = (symbol or "").strip()[:12]
+        if not sym:
+            return {"error": "종목이 없어요"}
+        sym = sym if sym[:1].isdigit() else sym.upper()
+        return self._cached(f"cmte:{sym}", 60, lambda: committee.committee(self.app, sym))
+
+    def trust_strip(self) -> dict:
+        from .. import truststrip
+        return self._cached("truststrip", 30, lambda: truststrip.strip(self.app))
+
+    def earnings_prep(self, symbol: str) -> dict:
+        from .. import prep
+        sym = (symbol or "").strip()[:12]
+        if not sym:
+            return {"error": "종목이 없어요"}
+        return self._cached(f"eprep:{sym.upper()}", 60, lambda: prep.earnings_prep(self.app, sym))
+
     def us_brief(self) -> dict:
         from .. import radar
         return self._cached("us_brief", 60, lambda: radar.us_brief(self.app))
@@ -1753,7 +1780,7 @@ class DashboardAPI:
                 "books": {k: {x: v for x, v in b.items() if x != "_t"} for k, b in list(BOOKS.items())[:10]}
                 or _ops.get_state(self.engine, "orderbook"),
                 "costs": {"assumed": self.app.settings.costs.__dict__}, "broker": self.app.settings.broker,
-                "kis_env": self.app.settings.kis_env}
+                "kis_env": self.app.settings.kis_env, "kb": _kb_status(self.app)}
 
     def desk(self, symbol: str) -> dict:
         from .. import desk
