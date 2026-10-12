@@ -118,7 +118,7 @@ function storyCard(sym, s) {
   box.innerHTML = card(`왜 샀나 / 왜 안 샀나 <span class="small dim">${esc(s.mode)} 장부 · 실제 기록</span>`, `
     <div class="why-head"><b>${esc(s.headline)}</b></div>
     <ul class="plain small" style="margin-top:8px">${(s.facts || []).map((f) => `<li>· ${esc(f)}</li>`).join("")}</ul>
-    ${s.signal ? `<div class="small" style="margin-top:6px">AI 합의 ${badge(s.signal.action)} P(상승) ${R(s.signal.prob_up, 0)} · 신뢰도 ${s.signal.confidence} <span class="xs dim">${esc(s.signal.as_of)}</span></div>` : ""}
+    ${s.signal ? `<div class="small" style="margin-top:6px">AI 합의 ${badge(s.signal.action)} P(상승) ${R(s.signal.prob_up, 0)} · 신뢰도 ${s.signal.confidence} <span class="xs dim">${esc(s.signal.judged_at || s.signal.as_of)} 판단 · ${esc(String(s.signal.as_of || "").slice(0, 10))} 종가 기준</span></div>` : ""}
     ${tl ? `<div class="scroll" style="max-height:220px;margin-top:8px"><table class="tight"><tbody>${tl}</tbody></table></div>` : '<div class="xs dim" style="margin-top:6px">최근 90일 이 종목 주문·차단 기록 없음</div>'}
     ${s.rule ? `<div class="xs dim" style="margin-top:6px">규칙: ${esc(s.rule)}</div>` : ""}`, s.plan_at ? asOf(s.plan_at, "fresh", "계획") : "");
 }

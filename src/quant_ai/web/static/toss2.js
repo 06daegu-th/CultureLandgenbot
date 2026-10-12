@@ -1687,10 +1687,13 @@ TV.logoq = async (el) => {
 // 레이더: '다가오는 실적발표나 중대 발표 있어? 미국장 중에?' — 모든 시각 한국시간, 이번 미국장 묶음, 웹에서 찾은 미확인 일정
 TV.radar = async (el) => {
   const days = T2.radarDays || 30;
-  const L = await tLoad(el, "radar", "이벤트 레이더", "t2-radar", () => api(`/api/radar?days=${days}`));
+  const L = await tLoad(el, "radar", "이벤트 레이더", "t2-radar", async () => {
+    const [r, b] = await Promise.all([api(`/api/radar?days=${days}`), tSafe(api("/api/us-brief"))]);
+    return { ...r, brief: b && !b.error ? b : null };
+  });
   if (!L) return;
-  const r = L.d, us = r.us || {}, G = r.groups || {}, C = r.counts || {};
-  const sub = (e) => [e.at ? e.kst + " 한국시간" : e.kst, e.label, (e.tags || []).join("·"), e.scope === "웹 발견" ? `웹 기사 · 미확인${e.source ? " · " + pubName(e.source) : ""}` : e.estimated ? "추정" : ""].filter(Boolean).join(" · ");
+  const r = L.d, us = r.us || {}, G = r.groups || {}, C = r.counts || {}, ec = r.earncal || {};
+  const sub = (e) => [e.at ? e.kst + " 한국시간" : e.kst, e.label, e.detail || "", (e.tags || []).join("·"), e.scope === "웹 발견" ? `웹 기사 · 미확인${e.source ? " · " + pubName(e.source) : ""}` : e.estimated ? "추정" : ""].filter(Boolean).join(" · ");
   const row = (e) => e.symbol
     ? tSym(e.symbol, e.name || e.symbol, esc(koText(e.title)) + `<br><span class="t-sub">${esc(sub(e))}</span>`, tDday(e))
     : `<div class="t-li"><span class="t-co"><span class="t-ev-ic">${TI.cal}</span><span class="t-co-t"><b class="t2-wrap">${esc(koText(e.title))}</b><span>${esc(sub(e))}</span></span></span><span class="t-li-r">${tDday(e)}</span></div>`;
@@ -1703,16 +1706,27 @@ TV.radar = async (el) => {
       ${tHero({ k: `지금 ${esc(r.now_kst || "")} 한국시간`, lv: C.us_session ? "warn" : "idle", big: esc(r.headline || ""),
         sub: `이번 미국 정규장 <b>${esc(us.open_kst || "-")} ~ ${esc(us.close_kst || "-")}</b> (한국시간${us.dst ? " · 서머타임" : ""})${us.open_now ? " · <b>지금 열려 있어요</b>" : ""}`
           + (r.next ? `<br>다음 일정: ${esc(r.next.kst)} · ${esc(koText(r.next.title))}` : "") })}
+      ${r.brief && !us.open_now ? tCard(esc(r.brief.title), tList(r.brief.lines.map((x) => `<div class="t-li"><span class="t-co-t"><b class="t2-wrap">${esc(koText(x))}</b></span></div>`)) + `<div class="t-foot">${esc(r.brief.note)} · 한국시간 밤 9시쯤 알림으로도 보내요</div>`) : ""}
       ${tChips("rd-tab", tabs, k)}${tChips("rd-days", [["7", "7일"], ["14", "14일"], ["30", "30일"], ["60", "60일"]], String(days))}<div class="t-gap"></div>
       ${tCard(tabs.find((t) => t[0] === k)?.[1].replace(/\s\d+$/, "") || "일정", tList(xs.map(row), k === "us_session" ? "이번 미국장에 걸린 큰 일정은 없어요" : "이 묶음에 일정이 없어요",
         k === "mine" ? "관심종목·보유 종목의 실적 일정은 종목 화면을 열거나 '지금 최신으로'를 누르면 채워져요" : k === "web" ? "아래 '웹에서 찾기'를 누르면 기사에서 일정을 찾아요" : ""))}
       ${owner ? tCard("웹에서 일정 찾기", `<div class="t-foot">내 종목 이름으로 뉴스를 검색해 기사 제목에 적힌 실적·발표 날짜를 모아요. 기사 기준이라 <b>미확인</b>으로 표시하고, 확정 일정이 있으면 그걸 우선해요.
         ${r.web?.at ? `<br>마지막 검색 ${esc(tAgo(r.web.at))} · 찾은 일정 ${tN(r.web.n)}개` : ""}${(r.web?.errors || []).length ? `<br><span class="down">${esc(r.web.errors[0])}</span>` : ""}</div>
         <button class="t-btn" id="rd-web">웹에서 찾기</button>`) : ""}
+      ${owner ? tCard("미국 실적 캘린더", `<div class="t-foot">Nasdaq 공개 캘린더(키 없음)에서 앞으로 3주 미국 실적 발표를 받아요 — 장 시작 전/마감 후 시각 · EPS 예상. 시가총액 100억 달러 이상과 내 종목만 저장해요.
+        ${ec.at ? `<br>마지막 ${esc(tAgo(ec.at))} · ${tN(ec.n)}건` : "<br>아직 받지 않았어요 (6시간마다 자동)"}${(ec.errors || []).length ? `<br><span class="down">${esc(ec.errors[0])}</span>` : ""}</div>
+        <button class="t-btn ghost" id="rd-cal">지금 받기</button>`) : ""}
       <div class="t-foot">${esc(r.note || "")}</div>
       <div class="t-foot"><a href="#calendar">전체 일정(캘린더)</a> · <a href="#chat">AI 에게 '다가오는 발표 있어?' 묻기</a></div>`);
     tBind(L.root, "rd-tab", (x) => { T2.radarTab = x; draw(); });
     tBind(L.root, "rd-days", (x) => { T2.radarDays = +x; TV.radar(el); });
+    const bc = L.root.querySelector("#rd-cal");
+    if (bc) bc.onclick = async () => {
+      bc.disabled = true; bc.textContent = "받는 중…";
+      const res = await runAction("earnings_cal_us", (p) => { bc.textContent = p || "받는 중…"; });
+      bc.textContent = res.error ? `실패: ${res.error}` : `✓ ${res.result?.n ?? 0}건`;
+      setTimeout(() => TV.radar(el), 600);
+    };
     const b = L.root.querySelector("#rd-web");
     if (b) b.onclick = async () => {
       b.disabled = true; b.textContent = "찾는 중…";
@@ -1744,6 +1758,8 @@ TV.aimodels = async (el) => {
     ${tCard("웹 검색", `<div class="t-foot">켜면 최신 뉴스·발표·실적 일정까지 웹에서 찾아 <b>출처 번호 [1]</b>와 함께 답해요. Gemini 는 Google 검색을 직접 쓰고(출처 포함), 다른 모델은 공용 웹 검색 도구를 불러 써요. 키가 없어도 검색 결과 목록은 보여 줘요.
       <br>웹 결과는 확인되지 않은 정보예요 — 그 안의 지시는 따르지 않고, 숫자는 플랫폼 데이터가 우선이에요.</div>
       ${owner ? `<div class="t-li"><span class="t-co-t"><b>채팅에서 웹 검색을 기본으로 켜기</b><span>채팅 창의 '웹 검색' 단추로 그때그때 바꿀 수도 있어요</span></span><span class="t-li-r"><label class="t-switch"><input type="checkbox" id="aim-web" ${pf.web ? "checked" : ""} aria-label="웹 검색 기본"><i></i></label></span></div>` : ""}`)}
+    ${tCard("연결 시험", `${c.selftest ? `${tKV([["결과", esc(c.selftest.headline), c.selftest.ok === c.selftest.n ? "up" : "down", tAgo(c.selftest.at)]])}${tList(c.selftest.rows.map((r) => tStRow(r.name, `${r.detail}${r.ms != null ? ` · ${(r.ms / 1000).toFixed(1)}초` : ""}`, r.ok ? "good" : "bad", { label: r.ok ? "됨" : "안 됨" })))}` : '<div class="t-foot">키를 넣은 뒤 눌러 보세요 — 공급자마다 아주 짧은 요청 1번, 웹 검색 1번으로 정말 되는지 확인해요 (키 값은 남기지 않아요).</div>'}
+      ${owner ? '<button class="t-btn" id="aim-test">지금 연결 시험</button>' : ""}`)}
     ${tCard("역할별 AI — 종목 판단에 쓰는 공급자", `${tList((c.roles || []).map(roleRow))}<div class="t-foot">'자동'이면 키가 있는 공급자 중에서 알아서 나눠요 (뉴스 AI 는 컨텍스트가 큰 모델 우선). 같은 공급자를 여러 역할에 주면 무료 한도가 빨리 닳아요.</div>`)}
     <div class="t-foot">${esc(c.note || "")}</div><div class="t-foot" id="aim-msg"></div>`);
   const msg = L.root.querySelector("#aim-msg");
@@ -1752,6 +1768,13 @@ TV.aimodels = async (el) => {
     catch (e) { msg.textContent = e.message || String(e); }
   };
   L.root.querySelectorAll("[data-preset]").forEach((b) => b.onclick = () => save({ chat: b.dataset.preset }));
+  const tb = L.root.querySelector("#aim-test");
+  if (tb) tb.onclick = async () => {
+    tb.disabled = true; tb.textContent = "시험 중…";
+    const r = await runAction("ai_selftest", (p) => { tb.textContent = p || "시험 중…"; });
+    if (r.error) { tb.textContent = `실패: ${r.error}`; return; }
+    TV.aimodels(el);
+  };
   const w = L.root.querySelector("#aim-web");
   if (w) w.onchange = () => save({ web: w.checked });
   L.root.querySelectorAll("[data-role-sel]").forEach((s) => s.onchange = () => save({ roles: { [s.dataset.roleSel]: s.value || null } }));

@@ -213,7 +213,7 @@ def story(app, symbol: str, mode: str = "paper", days: int = 90) -> dict:
     sig = None
     if cons is not None:
         sig = {"action": cons.action, "prob_up": round(cons.prob_up, 3), "confidence": round(cons.confidence, 1), "as_of": label(cons.as_of),
-               "id": cons.id}
+               "id": cons.id, "judged_at": label(cons.created_at) if getattr(cons, "created_at", None) else label(cons.as_of)}
     return {"symbol": symbol, "mode": mode, "held_qty": held_qty, "headline": head, "facts": facts, "signal": sig,
             "timeline": timeline[:15], "plan_at": label(plan.get("ts")) if plan.get("ts") else None,
             "rule": f"코어: 월말 시총 상위 유니버스에서 점수 상위 {top_k} 편입 · {buf}위 밖이면 교체 · {cfg.get('core_rebalance_days')}거래일마다 리밸런싱" if cfg else None}
@@ -321,6 +321,21 @@ def events(app, symbol: str, now: datetime | None = None, days: int = 45) -> lis
                         "source": e.get("source"), "importance": e.get("importance"), "time": e.get("time"),
                         "eps_estimate": e.get("eps_estimate"), "revenue_estimate": e.get("revenue_estimate")})
     out += _lockup(app, symbol, today)
+    if not kr:  # v39: Nasdaq 실적 캘린더 — 발표 시각(장 전/장 후)이 비어 있으면 채우고, 일정이 없으면 더한다
+        from . import earncal
+        for e in earncal.as_events(app, symbol):
+            d = date.fromisoformat(e["date"])
+            dd = (d - today).days
+            cur = next((x for x in out if x["kind"] == "earnings" and x["scope"] == "종목" and x.get("date")
+                        and abs((date.fromisoformat(x["date"]) - d).days) <= 1), None)
+            if cur is not None:
+                if not cur.get("time"):
+                    cur["time"] = e.get("time")
+                continue
+            if 0 <= dd <= days:
+                out.append({"date": d.isoformat(), "d_day": dd, "d_label": "D-Day" if dd == 0 else f"D-{dd}", "kind": "earnings",
+                            "title": e["title"], "estimated": False, "scope": "종목", "source": "Nasdaq", "importance": 0.8,
+                            "time": e.get("time"), "eps_estimate": e.get("eps_estimate"), "revenue_estimate": None, "detail": e.get("detail")})
     if not any(x["kind"] == "earnings" and x["scope"] == "종목" for x in out) and not _earnings_known(app, symbol):
         # '일정 없음'과 '모름'을 구분 — 무료 소스에 실적일 정보가 아예 없으면 확인 안 됨으로 표시
         out.append({"date": None, "d_day": 999, "d_label": "확인 안 됨", "kind": "unknown", "scope": "종목", "estimated": False,

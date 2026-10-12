@@ -147,7 +147,15 @@ def for_symbol(app, symbol: str) -> dict | None:
     except Exception:  # noqa: BLE001, S110 - 설명 보조 정보라 실패해도 본 설명은 보인다
         pass
     out = explain(rec.payload or {}, rec.action, rec.prob_up, rec.confidence, gates)
-    return out | {"id": rec.id, "as_of": label(rec.as_of), "sealed": bool(rec.row_hash)}
+    return out | {"id": rec.id, "as_of": label(rec.as_of), "judged_at": _judged(rec), "sealed": bool(rec.row_hash)}
+
+
+def _judged(rec) -> str | None:
+    """판단한 시각(기록이 만들어진 때). v38: 화면이 '판단 시각' 자리에 일봉 날짜를 보여, 같은 날 일봉으로 다시 판단한
+    서로 다른 기록(54% · 60%)이 같은 시각처럼 보였다 — 판단 시각과 기준 종가를 나눠 보여 준다."""
+    from .asof import label
+    made = getattr(rec, "created_at", None)
+    return label(made) if made else label(rec.as_of)
 
 
 ROLE_SHORT = {"primary": "News", "nvidia": "Macro", "panel": "Earnings", "quant": "Quant", "chart": "Chart", "regime": "Regime", "risk": "Risk", "challenger": "Challenger"}
@@ -301,7 +309,7 @@ def verdict(app, symbol: str, now=None) -> dict:
         ts = [str(x.get(key) or x.get("published_at") or x.get("date") or "") for x in items if isinstance(x, dict)]
         ts = [t for t in ts if t]
         return max(ts) if ts else None
-    used = {"judged_at": label(rec.as_of), "price": (ev.get("price") or {}).get("last_bar"),
+    used = {"judged_at": _judged(rec), "price": (ev.get("price") or {}).get("last_bar"),
             "news": {"n": len(news), "last": _last(news)}, "disclosures": {"n": len(discs), "last": _last(discs)},
             "macro": {"n": len(macro) if isinstance(macro, dict) else 0, "last": (macro.get("as_of") if isinstance(macro, dict) else None)},
             "regime": (ev.get("regime") or {}).get("regime"), "sealed": bool(rec.row_hash)}
@@ -314,7 +322,8 @@ def verdict(app, symbol: str, now=None) -> dict:
             "changed_by_gate": final != rec.action, "headline": ex.get("headline"), "plain": ex.get("plain") or [],
             "votes": votes, "inputs": inputs, "why_buy": why_buy, "why_not": why_not, "no_trade": all_blocks, "warn": warn, "used": used,
             "expected_return": p.get("expected_return"), "plan": {k: (p.get("plan") or {}).get(k) for k in ("stop", "target", "stop_pct")},
-            "trust": trust, "as_of": label(rec.as_of), "id": rec.id,
+            "trust": trust, "as_of": label(rec.as_of), "id": rec.id, "judged_at": _judged(rec),
+            "basis": (label(rec.as_of, with_time=False) or "") + " 종가 기준",
             "note": "FINAL = 여러 AI 의견을 성적 가중으로 합친 뒤, 거래하면 안 되는 이유(NO TRADE)를 먼저 검사한 결과"}
 
 

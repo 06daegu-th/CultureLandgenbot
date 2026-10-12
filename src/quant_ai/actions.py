@@ -354,7 +354,8 @@ def _vacuum(app) -> str:
 _ACTIONS: dict[str, dict] = {}
 _LOCK = threading.Lock()
 ACTION_LABELS = {"us_cycle": "미국 장부 갱신", "warmup": "데이터·AI 판단 채우기", "db_clean": "DB 정리", "guardian": "자동 감시 점검",
-                 "ai_snapshot": "AI 판단 지금 실행", "event_reactions": "공시 반응 통계 갱신", "radar_web": "웹에서 다가오는 일정 찾기"}
+                 "ai_snapshot": "AI 판단 지금 실행", "event_reactions": "공시 반응 통계 갱신", "radar_web": "웹에서 다가오는 일정 찾기",
+                 "earnings_cal_us": "미국 실적 캘린더 받기", "ai_selftest": "AI · 웹 검색 연결 시험"}
 
 
 def get_action(name: str) -> dict:
@@ -478,6 +479,8 @@ def start_action(app, name: str, params: dict | None = None) -> dict:
     from .global_market import run_cycle as us_cycle
     from .global_market import sync as us_sync
     fns = {"refresh_all": lambda say: _refresh.run(app, say),  # v37 '지금 최신으로' — 자료 전부 새로 받기 + 단계별 결과
+           "earnings_cal_us": lambda say: (say("미국 실적 캘린더 받는 중…"), __import__("quant_ai.earncal", fromlist=["collect"]).collect(app))[1],
+           "ai_selftest": lambda say: __import__("quant_ai.aimodels", fromlist=["selftest"]).selftest(app, say),
            "radar_web": lambda say: (say("내 종목 실적·발표 일정을 웹에서 찾는 중…"),
                                      _brief(_radar.discover_web(app), ("at", "n_symbols", "errors")) | {"found": len(ops.get_state(app.engine, _radar.WEB_STATE).get("rows") or [])})[1],
            "us_cycle": lambda say: (say("미국 일봉 받는 중…"), {"sync": us_sync(app), "cycle": us_cycle(app)})[1],"warmup": lambda say: warmup(app, say), "db_clean": lambda say: db_maintenance(app, dry_run=False),

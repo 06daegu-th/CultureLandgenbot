@@ -384,7 +384,7 @@ function chatMsgHtml(m) {
   const srcs = (m.sources || []).map((x) => { const u = safeUrl(x.url); return `<li><span class="cite">[${x.n}]</span> ${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a>` : esc(x.title || "")}${x.source ? ` <span class="dim">· ${esc(pubName(x.source))}</span>` : ""}${x.date ? ` <span class="dim">· ${esc(String(x.date).slice(0, 10))}</span>` : ""}</li>`; }).join("");
   const foot = [m.model ? m.preset_label : m.preset_label ? "플랫폼 데이터 요약 (AI 키 없이 규칙으로)" : "", m.model, m.web ? WEB_MODE[m.web] || m.web : m.web_on ? "웹 검색 안 함 (필요 없다고 판단)" : ""].filter(Boolean).join(" · ");
   const body = md(m.content).replace(/\[(\d{1,2})\]/g, '<sup class="cite">[$1]</sup>');
-  return `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble">${tools ? `<div class="tchips">${tools}</div>` : ""}${body}${cards ? `<div class="cards">${cards}</div>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}${srcs ? `<details class="chat-src" open><summary>웹 출처 ${(m.sources || []).length}개 — 확인되지 않은 정보일 수 있어요</summary><ol>${srcs}</ol></details>` : ""}${links ? `<div class="chat-links xs muted">근거 화면 ${links}</div>` : ""}${fol ? `<div class="chat-fol">${fol}</div>` : ""}${foot ? `<div class="xs dim chat-foot">${esc(foot)}</div>` : ""}</div></div>`;
+  return `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble">${tools ? `<div class="tchips">${tools}</div>` : ""}<div class="chat-txt">${body}</div>${cards ? `<div class="cards">${cards}</div>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}${srcs ? `<details class="chat-src" open><summary>웹 출처 ${(m.sources || []).length}개 — 확인되지 않은 정보일 수 있어요</summary><ol>${srcs}</ol></details>` : ""}${links ? `<div class="chat-links xs muted">근거 화면 ${links}</div>` : ""}${fol ? `<div class="chat-fol">${fol}</div>` : ""}<div class="xs dim chat-foot">${esc(foot)}${foot ? " · " : ""}<button class="link-btn chat-copy">복사</button></div></div></div>`;
 }
 
 // v34: 회원용 추천 질문 (운영·AI 판단 질문 없이)
@@ -432,7 +432,12 @@ function chatTools(root, h) {
 }
 
 function bindChatActs(root) {
-  root.querySelectorAll(".fol-q").forEach((b) => b.onclick = () => chatSend(root, b.textContent));
+  root.querySelectorAll(".fol-q").forEach((b) => b.onclick = () => chatSend(root, b.dataset.q || b.textContent));
+  root.querySelectorAll(".chat-copy").forEach((b) => b.onclick = async () => {
+    const t = b.closest(".bubble")?.querySelector(".chat-txt")?.innerText || "";
+    try { await navigator.clipboard.writeText(t); b.textContent = "복사됨"; } catch { b.textContent = "복사 안 됨"; }
+    setTimeout(() => { b.textContent = "복사"; }, 1500);
+  });
   root.querySelectorAll(".act-btn").forEach((b) => b.onclick = async () => {
     const a = b.dataset.act;
     if (b.classList.contains("danger") && !confirm("실행할까요? (DB 정리는 오래된 로그만 지우며 주문·판단 기록은 보존합니다)")) return;
@@ -449,8 +454,10 @@ async function chatSend(root, text) {
   CHAT.busy = true;
   const body = root.querySelector('[data-role="body"]');
   body.querySelector(".chat-hello")?.remove();
-  body.insertAdjacentHTML("beforeend", chatMsgHtml({ role: "user", content: text }) + `<div class="msg ai typing"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble"><span class="dots"><i></i><i></i><i></i></span> ${CHAT.web ? "플랫폼 데이터 + 웹을 찾는 중… (웹 검색은 10~30초 걸릴 수 있어요)" : "플랫폼 데이터를 조회하는 중…"}</div></div>`);
+  body.insertAdjacentHTML("beforeend", chatMsgHtml({ role: "user", content: text }) + `<div class="msg ai typing"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble"><span class="dots"><i></i><i></i><i></i></span> ${CHAT.web ? "플랫폼 데이터 + 웹을 찾는 중… (웹 검색은 10~30초 걸릴 수 있어요)" : "플랫폼 데이터를 조회하는 중…"} <span class="xs dim chat-el">0초</span></div></div>`);
   body.scrollTop = body.scrollHeight;
+  const t0 = Date.now();  // v39: 얼마나 기다리는지 보이게
+  const tick = setInterval(() => { const e = body.querySelector(".typing .chat-el"); if (e) e.textContent = `${Math.round((Date.now() - t0) / 1000)}초`; else clearInterval(tick); }, 1000);
   try {
     const r = await post("/api/chat", { message: text, sid: CHAT.sid, model: CHAT.preset || undefined, web: CHAT.web });
     body.querySelector(".typing")?.remove();
@@ -458,8 +465,9 @@ async function chatSend(root, text) {
       sources: r.sources, preset_label: r.preset_label, web: r.web, web_on: r.web_on }));
   } catch (e) {
     body.querySelector(".typing")?.remove();
-    body.insertAdjacentHTML("beforeend", `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble"><div class="veto">${esc(e.message)}</div></div></div>`);
+    body.insertAdjacentHTML("beforeend", `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble"><div class="veto">${esc(e.message)}</div><button class="fol-q chat-retry" data-q="${esc(text)}">다시 묻기</button></div></div>`);
   }
+  clearInterval(tick);
   CHAT.busy = false;
   body.scrollTop = body.scrollHeight;
   bindChatActs(root);

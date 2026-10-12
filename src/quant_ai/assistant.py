@@ -142,6 +142,7 @@ class Tools:
          "+ 대형주 실적 + 웹에서 찾은 미확인 일정. 모든 시각 한국시간 · '이번 미국장'(한국시간 밤~새벽)에 걸린 일정 묶음. symbol 을 주면 그 종목만",
          {"days": {"type": "integer", "description": "앞으로 며칠 (기본 14 · 최대 60)"}, "symbol": {"type": "string"},
           "kind": {"type": "string", "description": "특정 종류만: earnings,fomc,cpi,nfp,pce,bok,options_expiry,quad_witching,holiday (쉼표로 여러 개)"}}, []),
+        ("us_brief", "오늘 밤 미국장 브리핑: 개장·마감 한국시간 · 이번 장에 걸린 일정(지표·실적) · 내 미국 종목 지난 장 등락 · 이번 주 실적", {}, []),
         ("market_clock", "시장 시계: 한국·미국 증시가 지금 열렸나(정규장·프리·애프터·휴장), 다음 개장/마감 한국시간, 서머타임, 이번 미국장 시간", {}, []),
         ("replay_day", "그날 재현: 특정 날짜(YYYY-MM-DD)의 지수·상승/하락 종목 수·많이 오른/내린 종목·그날 뉴스·그날 AI 판단과 나중 결과",
          {"date": {"type": "string", "description": "YYYY-MM-DD"}}, ["date"]),
@@ -489,6 +490,13 @@ class Tools:
                 "rows": [{k: e.get(k) for k in keep} for e in rows[:24]], "web": {"at": r["web"]["at"], "n": r["web"]["n"]},
                 "note": r["note"], "symbol": symbol, "kind": kind, "days": r["days"]}
 
+    def t_us_brief(self) -> dict:
+        from .radar import us_brief
+        b = us_brief(self.app)
+        keep = ("kst", "title", "scope", "estimated", "symbol")
+        return {"title": b["title"], "lines": b["lines"], "tonight": [{k: e.get(k) for k in keep} for e in b["tonight"]],
+                "holdings": b["holdings"], "note": b["note"]}
+
     def t_market_clock(self) -> dict:
         from .clock import clock_status
         from .radar import us_window
@@ -500,8 +508,25 @@ class Tools:
         return {"now_kst": c["now_kst"], "markets": {k: {f: v.get(f) for f in keep} for k, v in c["markets"].items()},
                 "us_session_kst": w["label"], "us_open_now": w["open_now"]}
 
+    WEB_DAILY_MEMBER = 30  # 회원 1명이 하루에 쓸 수 있는 웹 검색 (공용 검색 출처를 아끼려고)
+
+    def _web_quota(self) -> str | None:
+        from . import tenancy
+        if not tenancy.is_member():
+            return None
+        day = (datetime.now(UTC) + timedelta(hours=9)).date().isoformat()
+        st = ops.get_state(self.engine, "chat:websearch-count")
+        n = st.get("n", 0) if st.get("day") == day else 0
+        if n >= self.WEB_DAILY_MEMBER:
+            return f"오늘 웹 검색 {self.WEB_DAILY_MEMBER}번을 다 썼어요 — 내일 다시 쓸 수 있어요 (플랫폼 데이터로는 계속 답해요)"
+        ops.set_state(self.engine, "chat:websearch-count", {"day": day, "n": n + 1})
+        return None
+
     def t_web_search(self, query: str, kind: str = "auto", days: int = 7) -> dict:
         from . import websearch
+        over = self._web_quota()
+        if over:
+            return {"query": query, "results": [], "error": over}
         r = websearch.search(query, kind=kind if kind in ("auto", "news", "web") else "auto", days=max(1, min(int(days or 7), 60)))
         rows = []
         for it in r.get("results") or []:
@@ -566,6 +591,7 @@ INTENTS = [
     # v38: '다가오는 실적발표나 중대 발표 있어? 미국장 중에?' — 레이더가 이번 주 일정을 대신한다 (한국시간 · 미국장 묶음 · 웹 발견)
     ("upcoming_events", ("실적", "발표", "어닝", "earnings", "언제", "다가오", "예정", "이벤트", "일정", "fomc", "cpi", "고용지표",
                          "금리 결정", "금통위", "옵션 만기", "만기일", "pce", "d-day", "디데이")),
+    ("us_brief", ("미국장 브리핑", "오늘 밤 미국", "오늘밤 미국", "밤에 미국", "미국장 어때", "미국장 뭐", "미국 증시 오늘", "미국장 요약")),
     ("market_clock", ("미국장", "장 열", "장열", "개장", "폐장", "마감", "몇 시", "몇시", "열렸", "닫혔", "프리마켓", "애프터마켓",
                       "장 시작", "장시작", "서머타임", "휴장")),
 ]
@@ -611,6 +637,9 @@ def route(app, text: str, last_symbol: str | None = None) -> list[tuple[str, dic
         calls = [c for c in calls if c[0] != "weekly_schedule"]
         if "event_strategy" in names and not any(k in t for k in ("pead", "서프라이즈", "이벤트 전략")):
             calls = [c for c in calls if c[0] != "event_strategy"]
+    if "us_brief" in names:  # 브리핑이 시계·일정을 함께 담는다
+        calls = [c for c in calls if c[0] not in ("market_clock", "upcoming_events", "weekly_schedule")]
+        names = [c[0] for c in calls]
     if "market_clock" in names and "upcoming_events" not in names and any(k in t for k in ("일정", "발표", "실적")):
         calls.append(("upcoming_events", {}))
     kinds = [k for w, k in EVENT_KIND_WORDS if w in t]
@@ -647,7 +676,8 @@ LINKS = {"stock_overview": ("종목 페이지", "#analysis/{symbol}"), "news_boa
          "weekly_schedule": ("일정 (D-Day)", "#calendar"), "safety_status": ("안전 센터", "#safety"), "net_alpha": ("증명 체인", "#alpha"),
          "portfolio": ("Portfolio OS", "#pos"), "server_status": ("서버 · DB", "#server"), "db_status": ("서버 · DB", "#server"),
          "ai_performance": ("AI 성적 · 보정", "#ai"), "market_overview": ("시장 국면", "#market"),
-         "upcoming_events": ("이벤트 레이더", "#radar"), "market_clock": ("이벤트 레이더 · 장 시간", "#radar")}
+         "upcoming_events": ("이벤트 레이더", "#radar"), "market_clock": ("이벤트 레이더 · 장 시간", "#radar"),
+         "us_brief": ("이벤트 레이더", "#radar")}
 FOLLOW = {"stock_overview": ("{name} 관련 뉴스 보여줘", "{name} 왜 안 샀어?", "이번 주 내 종목 일정"),
           "news_board": ("오늘 많이 오른 종목은?", "AI 믿어도 돼?"), "market_map": ("오늘 뉴스 요약해줘", "업종별로 보면?"),
           "keys_status": ("서버 상태 알려줘",), "ai_trust": ("거래 안 한 이유", "실적 이벤트 전략 결과"),
@@ -655,7 +685,8 @@ FOLLOW = {"stock_overview": ("{name} 관련 뉴스 보여줘", "{name} 왜 안 �
           "why_no_trade": ("내 투자 한도", "AI 믿어도 돼?"), "weekly_schedule": ("오늘 시장 어때?", "내 포트폴리오"),
           "market_overview": ("오늘 많이 오른 종목은?", "이번 주 일정"), "portfolio": ("내 투자 한도", "거래 안 한 이유"),
           "upcoming_events": ("오늘 밤 미국장 언제 열려?", "내 보유 종목 뉴스", "FOMC 언제야?"),
-          "market_clock": ("다가오는 실적 발표 있어?", "오늘 시장 어때?")}
+          "market_clock": ("다가오는 실적 발표 있어?", "오늘 시장 어때?"),
+          "us_brief": ("이번 주 실적 발표 일정", "FOMC 언제야?", "엔비디아 어때?")}
 
 
 def links_for(used: list[dict], names: dict | None = None) -> tuple[list[dict], list[str]]:
@@ -1091,6 +1122,8 @@ def rule_answer(text: str, pre: list[dict], tools: Tools, quota: bool = False, h
                 lines.append("- 앞으로 이 기간에 저장된 큰 일정이 없어요 (실적 일정은 종목 화면을 열거나 '지금 최신으로'를 누르면 채워져요)")
             lines.append(f"- {r.get('note', '')}")
             parts.append("\n".join(lines))
+        elif name == "us_brief":
+            parts.append(f"### {r['title']}\n" + "\n".join(f"- {x}" for x in r.get("lines") or []) + f"\n- {r.get('note', '')}")
         elif name == "market_clock":
             ms = r.get("markets") or {}
             lines = [f"### 지금 장 상태 ({r.get('now_kst', '')})"]

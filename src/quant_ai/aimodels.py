@@ -124,7 +124,62 @@ def catalog(settings, engine=None) -> dict:
     return {"presets": rows, "roles": role_rows, "providers": [{"key": k, "label": PROVIDER_LABEL[k], "ready": k in avail}
                                                                for k in PROVIDER_LABEL],
             "prefs": prefs(engine) if engine is not None else None,
+            "selftest": (ops.get_state(engine, "ai_selftest") or None) if engine is not None else None,
             "note": "키가 있는 공급자만 고를 수 있어요 · 웹 검색은 키 없이도 '규칙' 으로 결과 목록을 보여 줘요"}
 
 
-__all__ = ["PRESETS", "plan", "catalog", "prefs", "set_prefs", "available"]
+def selftest(app, say=None, post=None, search=None, client_factory=None) -> dict:
+    """키를 넣은 뒤 '정말 되나' 한 번에: 공급자마다 아주 짧은 요청 1번 + 공용 웹 검색 + (Gemini 키가 있으면) 검색 근거.
+    키 값은 어디에도 남기지 않는다 — 결과는 '됨/안 됨 + 쉬운 이유'만 (상태 ai_selftest)."""
+    import time
+    from datetime import UTC, datetime
+
+    from . import websearch
+    from .assistant import chat_client
+    from .refresh import friendly
+    say = say or (lambda m: None)
+    factory = client_factory or chat_client
+    rows = []
+
+    def run(name, kind, fn):
+        say(f"{name} 확인 중…")
+        t0 = time.monotonic()
+        try:
+            detail = fn()
+            rows.append({"name": name, "kind": kind, "ok": True, "detail": detail, "ms": int((time.monotonic() - t0) * 1000)})
+        except Exception as e:  # noqa: BLE001 - 결과에 이유로 남긴다
+            rows.append({"name": name, "kind": kind, "ok": False, "detail": friendly(e), "raw": f"{type(e).__name__}"[:60],
+                         "ms": int((time.monotonic() - t0) * 1000)})
+    for prov in sorted(available(app.settings)):
+        def ping(prov=prov):
+            client, _ = factory(app.settings, {"provider": prov, "models": ()})
+            if client is None:
+                raise RuntimeError("키를 읽지 못했어요 (.env 확인)")
+            out = client._post("/chat/completions", {"model": client.models[0], "max_tokens": 8, "temperature": 0,
+                                                      "messages": [{"role": "user", "content": "OK 라고만 답해"}]})
+            txt = ((out.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            return f"{client.models[0]} 응답함" + (f" ('{txt.strip()[:12]}')" if txt else "")
+        run(PROVIDER_LABEL.get(prov, prov), "model", ping)
+
+    def web():
+        r = (search or websearch.search)("NVIDIA earnings date", kind="auto", days=7, n=3)
+        if not r.get("results"):
+            raise RuntimeError(r.get("error") or "검색 결과 없음")
+        return f"검색 결과 {len(r['results'])}건 (예: {r['results'][0]['title'][:40]})"
+    run("공용 웹 검색 (Google 뉴스 · DuckDuckGo)", "web", web)
+    gem = (app.settings.llm_providers.get("gemini") or {}).get("key")
+    if gem:
+        def ground():
+            g = websearch.gemini_grounded(gem, "gemini-flash-latest", "한 줄로 답한다.", "오늘 미국 증시 뉴스 한 가지만 제목으로", post=post)
+            if not g.get("text"):
+                raise RuntimeError("빈 답")
+            return f"답함 · 웹 출처 {len(g.get('sources') or [])}개"
+        run("Gemini Google 검색 근거", "grounding", ground)
+    ok = sum(r["ok"] for r in rows)
+    st = {"at": datetime.now(UTC).isoformat(), "rows": rows, "ok": ok, "n": len(rows),
+          "headline": ("모두 정상" if ok == len(rows) else f"{len(rows) - ok}개 안 됨") + f" · {ok}/{len(rows)}"}
+    ops.set_state(app.engine, "ai_selftest", st)
+    return st
+
+
+__all__ = ["PRESETS", "plan", "catalog", "prefs", "set_prefs", "available", "selftest"]

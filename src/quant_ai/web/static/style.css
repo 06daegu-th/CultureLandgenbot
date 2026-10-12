@@ -1345,3 +1345,5 @@ a.co-n:hover { text-decoration: underline; }
 .cite { color: var(--accent); font-size: .78em; font-weight: 600; }
 sup.cite { vertical-align: super; line-height: 0; }
 .chat-foot { margin-top: 6px; }
+.link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.chat-retry { margin-top: 6px; }

@@ -1551,8 +1551,10 @@ class DashboardAPI:
             self._risk_cache.clear()
             return start_action(self.app, name, params)
         st = get_action(name)
-        if name.startswith("analyze:") and not st.get("running"):  # 분석이 끝나면 종목 첫 화면 판단을 바로 새로
-            self._risk_cache.pop(f"verdict:{name.split(':', 1)[1].upper()}", None)
+        if name.startswith("analyze:") and not st.get("running"):  # 분석이 끝나면 종목 화면의 모든 칸을 같은 새 판단으로
+            sym = name.split(":", 1)[1].upper()
+            for k in [k for k in self._risk_cache if k in (f"verdict:{sym}", f"t_stock:{sym}", f"desk:{sym}") or k.startswith(f"stock:{sym}:")]:
+                self._risk_cache.pop(k, None)
         return st
 
     def chat(self, body: dict) -> dict:
@@ -1583,6 +1585,10 @@ class DashboardAPI:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, **aimodels.catalog(self.app.settings, self.engine)}
+
+    def us_brief(self) -> dict:
+        from .. import radar
+        return self._cached("us_brief", 60, lambda: radar.us_brief(self.app))
 
     def radar(self, days: str | None = None, symbol: str | None = None) -> dict:
         from .. import radar

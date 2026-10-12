@@ -426,6 +426,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.radar(arg("days"), arg("symbol")))
                     if url.path == "/api/ai-models":
                         return self._json(api.ai_models())
+                    if url.path == "/api/us-brief":
+                        return self._json(api.us_brief())
                     if url.path == "/api/power":
                         return self._json(api.power())
                     if url.path == "/api/execution":

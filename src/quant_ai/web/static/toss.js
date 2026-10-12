@@ -351,7 +351,7 @@ function tStockSide(ctx) {
   const banned = v.trust?.key === "banned";
   const ai = v.final ? `<a class="tsk-card ai fin-${esc(v.final)}" href="#report/${encodeURIComponent(sym)}">
       <span class="t-k">AI 판단</span><div class="tsk-ai">${tPill(v.final, v.prob_up)}</div>
-      <span class="t-sub">${v.prob_up != null ? `${v.horizon}거래일 뒤 오를 확률 ${Math.round(v.prob_up * 100)}%` : `${v.horizon}거래일 기준`} · ${esc(String(v.as_of || "").slice(5, 16))}${banned ? " · 참고만" : ""}</span></a>`
+      <span class="t-sub">${v.prob_up != null ? `${v.horizon}거래일 뒤 오를 확률 ${Math.round(v.prob_up * 100)}%` : `${v.horizon}거래일 기준`} · ${esc(String(v.judged_at || v.as_of || "").slice(5, 16))} 판단${banned ? " · 참고만" : ""}</span></a>`
     : `<div class="tsk-card ai"><span class="t-k">AI 판단</span><div class="tsk-ai">${tPill(null)}</div><span class="t-sub" id="analyze-msg">아직 판단 기록이 없어요 · 지금 바로 판단할 수 있어요 (주문 없음)</span>
       <button class="t-btn primary sm" id="analyze-btn">지금 AI 분석</button></div>`;
   const e = v.earnings;
@@ -825,7 +825,7 @@ async function tReportInto(box, sym, compact = false) {
       <div class="t-verdict-big"><b class="vd-act">${esc(koAct(v.final))}</b>${v.final !== "NO_TRADE" && v.prob_up != null ? `<b class="num vd-p">${Math.round(v.prob_up * 100)}%</b>` : ""}
         ${delta != null ? `<span class="num vd-d ${tCls(delta)}">직전 판단 대비 ${delta > 0 ? "+" : ""}${Math.round(delta * 100)}%p</span>` : ""}</div>
       <div class="t-sub">${esc(koText(v.headline || ""))}</div>
-      <div class="t-sub">${esc(v.as_of || "")} 판단${u.sealed ? " · 기록 봉인됨 (나중에 고칠 수 없음)" : ""}</div>
+      <div class="t-sub">${esc(v.judged_at || v.as_of || "")} 판단${v.basis ? ` · ${esc(String(v.basis).replace(" 일봉", ""))}` : ""}${u.sealed ? " · 기록 봉인됨 (나중에 고칠 수 없음)" : ""}</div>
       ${banned ? `<a class="t-note warn" href="#aitrust">AI 성적이 아직 기준 미달 (${esc(v.trust.label)}) — 이 판단은 참고만, 주문에는 쓰이지 않아요</a>` : v.trust ? `<a class="t-note" href="#aitrust">AI 성적 · ${esc(v.trust.label)}</a>` : ""}
     </section>
     ${tSec("주요 근거", li(v.why_buy || [], "뚜렷한 근거가 없어요"), "", "t-card")}

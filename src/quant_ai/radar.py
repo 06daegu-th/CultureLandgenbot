@@ -111,7 +111,7 @@ def _row(e: dict, now: datetime, today: date, scope: str, sym: str | None, names
          "scope": scope, "estimated": bool(e.get("estimated")), "confirmed": not e.get("estimated") and scope != "웹 발견",
          "time": e.get("time"), "at": at.isoformat() if at else None, "approx": approx if at else None,
          "kst": kst_text(at, now, approx, d.isoformat()), "source": e.get("source"), "url": e.get("url"),
-         "importance": e.get("importance"), "eps_estimate": e.get("eps_estimate")}
+         "importance": e.get("importance"), "eps_estimate": e.get("eps_estimate"), "detail": e.get("detail")}
     if win is not None:
         if at is not None:
             r["us_session"] = win["from"] <= at <= win["to"]
@@ -167,7 +167,15 @@ def upcoming(app, days: int = 14, now: datetime | None = None, symbol: str | Non
     for e in mk:
         if e.get("kind") in ALWAYS_KINDS | {"holiday", "half_day", "options_expiry", "pce", "gdp", "retail"} or (e.get("importance") or 0) >= 0.7:
             add(_row(e, now, today, "시장", None, names, None, win))
-    # 3) 대형주 실적 (내 종목이 아니어도)
+    # 3) 대형주 실적 (내 종목이 아니어도) + v39 Nasdaq 실적 캘린더 (장 전/장 후 시각 · EPS 예상)
+    from . import earncal
+    have_earn = {r["symbol"] for r in rows if r["kind"] == "earnings" and r["symbol"]}
+    for e in earncal.as_events(app, symbol):
+        s_ = e["symbol"]
+        if s_ in focus and s_ not in have_earn:
+            add(_row(e, now, today, "내 종목", s_, names, focus.get(s_), win))
+        elif not symbol and s_ not in focus and (s_ in MOVERS or (e.get("market_cap") or 0) >= 100e9):
+            add(_row(e, now, today, "주요 기업", s_, names, None, win))
     if not symbol:
         for e in stored:
             s_ = e.get("symbol")
@@ -200,6 +208,8 @@ def upcoming(app, days: int = 14, now: datetime | None = None, symbol: str | Non
             "rows": rows, "groups": groups, "us": us, "headline": head,
             "next": nxt and {k: nxt[k] for k in ("title", "kst", "name", "kind")},
             "counts": {k: len(v) for k, v in groups.items()} | {"all": len(rows)},
+            "earncal": {k: (ops.get_state(app.engine, "earnings_cal_us") or {}).get(k) for k in ("at", "errors", "source")}
+            | {"n": len((ops.get_state(app.engine, "earnings_cal_us") or {}).get("rows") or [])},
             "web": {"at": wst.get("at"), "n": len(wst.get("rows") or []), "errors": wst.get("errors") or [], "queries": wst.get("queries") or []},
             "note": "시각은 모두 한국시간 · '경'은 장 시작 전/마감 후만 알려진 대략 시각 · '추정'·'웹 발견'은 확정 아님 (회사 IR·공시로 확인)"}
 
@@ -325,4 +335,60 @@ def alert_soon(app, now: datetime | None = None, hours: int = 12) -> int:
     return sent
 
 
-__all__ = ["upcoming", "discover_web", "alert_soon", "us_window", "when", "kst_text", "find_dates"]
+
+
+# ------------------------------------------------------------------ v39 오늘 밤 미국장 브리핑
+def us_brief(app, now: datetime | None = None) -> dict:
+    """한국시간 저녁에 보는 '오늘 밤 미국장' 한 장: 개장·마감 시각 · 걸린 일정 · 내 미국 종목 지난 장 등락 · 이번 주 실적."""
+    from .alerts import focus_symbols
+    from .pricenow import resolve
+    now = now or datetime.now(UTC)
+    win = us_window(now)
+    r = upcoming(app, days=7, now=now)
+    tonight = r["groups"]["us_session"]
+    focus = {s: t for s, t in focus_symbols(app).items() if not s[:1].isdigit()}
+    names = _names(app)
+    try:
+        from .desk import _us_data
+        bars, _, _ = _us_data(app)
+    except Exception:  # noqa: BLE001 - 미국 일봉이 없을 수 있다
+        bars = {}
+    quotes = ops.get_state(app.engine, "live_quotes") or {}
+    hold = []
+    for sym, tags in list(focus.items())[:20]:
+        pn = resolve(sym, bars.get(sym), quotes.get(sym), now)
+        if pn.get("price") is None:
+            continue
+        hold.append({"symbol": sym, "name": names.get(sym) or sym, "tags": sorted(tags), "price": pn["price"],
+                     "chg_pct": pn.get("chg_pct"), "label": pn.get("label")})
+    hold.sort(key=lambda x: -abs(x["chg_pct"] or 0))
+    week_earn = [e for e in r["rows"] if e["kind"] == "earnings" and e["scope"] in ("내 종목", "주요 기업") and not e.get("us_session")][:6]
+    ok = win["open"].astimezone(KST)
+    lines = [f"개장 {kst_text(win['open'], now)} · 마감 {kst_text(win['close'], now)} (한국시간{' · 서머타임' if win['dst'] else ''})"]
+    lines += [f"{e['kst']} · {e['title']}" + (" (추정)" if e["estimated"] else "") for e in tonight[:6]] or ["이번 장에 걸린 큰 일정은 없어요"]
+    if hold:
+        lines.append("내 미국 종목 지난 장: " + " · ".join(f"{h['name']} {h['chg_pct']:+.1%}" for h in hold[:5] if h["chg_pct"] is not None))
+    if week_earn:
+        lines.append("이번 주 실적: " + " · ".join(f"{e['d_label']} {e['name'] or e['title']}" for e in week_earn[:5]))
+    return {"title": f"오늘 밤 미국장 브리핑 · {ok:%m/%d %H:%M} 개장", "lines": lines, "open_now": win["open_now"],
+            "open_kst": ok.strftime("%m/%d %H:%M"), "tonight": tonight[:8], "holdings": hold[:10], "week_earnings": week_earn,
+            "note": "시각은 한국시간 · 지난 장 등락은 마지막 종가/시세 기준 · 투자 권유가 아니에요"}
+
+
+def us_brief_push(app, now: datetime | None = None) -> int:
+    """한국시간 20:30~21:59 사이, 오늘 밤 미국 정규장이 열리면 하루 한 번 브리핑 알림."""
+    from .alerts import push
+    now = now or datetime.now(UTC)
+    k = now.astimezone(KST)
+    if not (k.hour == 21 or (k.hour == 20 and k.minute >= 30)):
+        return 0
+    win = us_window(now)
+    if win["open_now"] or win["open"] - now > timedelta(hours=3):
+        return 0  # 오늘 밤 열리지 않음 (주말·휴장)
+    b = us_brief(app, now)
+    rid = push(app.engine, "event", b["title"], "\n".join(b["lines"])[:900], level="info", link="#radar",
+               dedupe=f"usbrief:{win['open'].astimezone(ET).date()}", now=now)
+    return int(rid is not None)
+
+
+__all__ = ["upcoming", "discover_web", "alert_soon", "us_window", "when", "kst_text", "find_dates", "us_brief", "us_brief_push"]

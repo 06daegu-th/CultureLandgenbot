@@ -78,11 +78,29 @@ def duckduckgo(query: str, get=None, n: int = 6) -> list[dict]:
     return out
 
 
+_CACHE: dict[tuple, tuple[float, dict]] = {}
+CACHE_TTL = 600  # 같은 검색은 10분 동안 다시 쓰지 않는다 (공용 검색 출처 예의 · 속도)
+
+
 def search(query: str, kind: str = "auto", days: int = 7, get=None, n: int = 8) -> dict:
-    """뉴스(한국어 → 부족하면 영어) + 일반 웹. 실패해도 예외 대신 {'error'} 와 받은 만큼."""
+    """뉴스(한국어 → 부족하면 영어) + 일반 웹. 실패해도 예외 대신 {'error'} 와 받은 만큼. 성공한 결과는 10분 캐시."""
+    import time as _t
     query = (query or "").strip()[:200]
     if not query:
         return {"query": query, "results": [], "error": "검색어가 비었어요"}
+    key = (query.lower(), kind, int(days), int(n))
+    hit = _CACHE.get(key) if get is None else None
+    if hit and _t.monotonic() - hit[0] < CACHE_TTL:
+        return hit[1] | {"cached": True}
+    out = _search(query, kind, days, get, n)
+    if get is None and out.get("results") and not out.get("error"):
+        if len(_CACHE) > 300:
+            _CACHE.clear()
+        _CACHE[key] = (_t.monotonic(), out)
+    return out
+
+
+def _search(query: str, kind: str, days: int, get, n: int) -> dict:
     results, errors = [], []
     if kind in ("auto", "news"):
         for lang in ("ko", "en"):

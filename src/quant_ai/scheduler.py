@@ -219,7 +219,10 @@ def build_default_scheduler(app, mode) -> Scheduler:
     sch.add("weekly_schedule", lambda now: _weekly(app, now), 6 * 3600, "always")  # 월요일: 이번 주 보유 종목 일정 알림
     from . import radar as _radar
     sch.add("radar_soon", lambda now: _radar.alert_soon(app, now), 3600, "always")  # v38: 12시간 안 내 종목·큰 시장 일정 알림 (한국시간)
-    sch.add("radar_web", lambda now: _radar.discover_web(app, now), 6 * 3600, "always")  # v38: 웹에서 내 종목 실적·발표 일정 찾기 (미확인 표시)
+    sch.add("radar_web", lambda now: _radar.discover_web(app, now), 6 * 3600, "always")
+    from . import earncal as _earncal
+    sch.add("earnings_cal_us", lambda now: _earncal.collect(app, now=now), 6 * 3600, "always")  # v39: 미국 실적 캘린더 (Nasdaq · 키 없음)
+    sch.add("us_brief", lambda now: _radar.us_brief_push(app, now), 1800, "always")  # v39: 한국시간 밤 9시대 '오늘 밤 미국장 브리핑  # v38: 웹에서 내 종목 실적·발표 일정 찾기 (미확인 표시)
     sch.add("pead_notary", lambda now: _pead.notarize(app), 24 * 3600, "always")  # 이벤트 전략 장부 digest 외부 공증 (DB 를 고쳐도 드러나게)
     from .aitrack import snapshot as _ai_track
     sch.add("ai_track", lambda now: _ai_track(app, now), 24 * 3600, "closed")  # AI 성적 매일 기록 · 나쁘면 자동 SHADOW
