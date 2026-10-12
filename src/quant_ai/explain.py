@@ -205,8 +205,20 @@ def verdict(app, symbol: str, now=None) -> dict:
         extra.append(f"데이터 부족 — 일봉 {n_bars}일치 (최소 {MIN_BARS}일)")
     at = pd.Timestamp(rec.as_of)
     at = at.tz_localize("UTC") if at.tzinfo is None else at
-    age_d = (pd.Timestamp(now) - at).total_seconds() / 86400
-    if age_d > STALE_DAYS:
+    # v38: '오래됨' = 판단에 쓴 일봉 뒤로 새 거래일 일봉이 나왔는데 아직 다시 판단하지 않음 (주말·휴장은 오래된 게 아니다)
+    #       + 판단한 지(created_at) 너무 오래됨. 예전엔 일봉 날짜(as_of)만 봐서 월요일 아침 미국 종목이 늘 '3일 전 판단'이었다.
+    def _utc(x):
+        t = pd.Timestamp(x)
+        return t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+    last_bar = _utc(bars.index[-1]) if bars is not None and n_bars else None
+    newer = last_bar is not None and last_bar.date() > at.tz_convert("UTC").date()
+    made = _utc(rec.created_at) if getattr(rec, "created_at", None) else at
+    if made > pd.Timestamp(now):
+        made = at
+    age_d = (pd.Timestamp(now) - made).total_seconds() / 86400
+    if newer:
+        extra.append(f"새 일봉({last_bar.strftime('%m-%d')})이 나왔는데 아직 다시 판단하지 않음 — 새로 판단하기 전까지 거래하지 않음")
+    elif age_d > STALE_DAYS + 4:
         extra.append(f"판단이 오래됨 — {age_d:.0f}일 전 판단 (새로 판단하기 전까지 거래하지 않음)")
     if _market_open(symbol, now):
         q = (ops.get_state(app.engine, "live_quotes").get(symbol) or {})

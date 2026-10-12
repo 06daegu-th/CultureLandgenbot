@@ -230,13 +230,26 @@ def clock_status(now: datetime, markets: dict[str, MarketCalendar] | None = None
             "next_event": "폐장" if ph is Phase.OPEN else "개장", "seconds_to_next": int((nxt - t).total_seconds()),
             # v18: 사람이 읽는 상태 · 휴장 안내 · 서머타임
             "light": "🟢" if ph is Phase.OPEN else "🟡" if trading and sc in ("pre_market", "after_hours", "pre_auction") else "🔴",
-            "notice": None if trading else (f"오늘 {'한국' if key == 'KRX' else '미국'} 증시는 휴장입니다"
-                                            + (f" ({holiday_ko(cal.holiday_name(d))})" if cal.holiday_name(d) else " (주말)")
-                                            + f" · 다음 개장 {no.astimezone(kst).strftime('%m/%d %H:%M')} 한국시간"),
+            "notice": None if trading else _closed_notice(key, cal, d, t, no, now),
             "dst": bool(t.dst()) if key != "KRX" else None,
         }
     return {"now": now.isoformat(), "now_kst": now.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S KST"), "markets": out,
             "calendar_source": CALENDAR_SOURCE, "calendar_ok": bool(HOLIDAY_NAMES.get("KRX")) and bool(HOLIDAY_NAMES.get("US"))}
+
+
+def _closed_notice(key, cal, d, t, no, now) -> str:
+    """휴장 안내. v38: 미국은 한국과 날짜가 달라 '오늘 휴장'이 헷갈렸다 (한국 월요일 아침 = 미국 일요일 밤)
+    → 현지 요일을 밝히고, 다음 개장이 한국 날짜로 오늘/내일이면 '오늘 밤 22:30' 처럼."""
+    from zoneinfo import ZoneInfo
+    kst = ZoneInfo("Asia/Seoul")
+    nk, ok = now.astimezone(kst), no.astimezone(kst)
+    when = ("오늘 " if ok.date() == nk.date() else "내일 " if (ok.date() - nk.date()).days == 1 else ok.strftime("%m/%d ")) + \
+        ("밤 " if ok.hour >= 18 else "") + ok.strftime("%H:%M")
+    why = holiday_ko(cal.holiday_name(d)) if cal.holiday_name(d) else "주말"
+    if key == "KRX":
+        return f"오늘 한국 증시는 휴장입니다 ({why}) · 다음 개장 {when}"
+    wd = "월화수목금토일"[t.weekday()]
+    return f"오늘 미국 증시는 휴장입니다 ({why}) · 현지 {wd}요일 · 다음 개장 한국시간 {when}"
 
 
 def any_market_open(now: datetime, markets: dict[str, MarketCalendar] = MARKETS) -> bool:

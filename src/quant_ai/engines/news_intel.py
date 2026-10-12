@@ -107,7 +107,7 @@ def tag_symbols(text: str, aliases: dict[str, list[str]]) -> list[str]:
             n = name.lower()
             if not n:
                 continue
-            if n.isascii() and len(n) <= 5:
+            if n.isascii():  # 영문은 늘 단어 경계로 (apple ≠ pineapple · meta ≠ metadata)
                 if re.search(rf"\b{re.escape(n)}\b", lower):
                     tagged.append(symbol)
                     break

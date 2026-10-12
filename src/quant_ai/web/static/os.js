@@ -230,7 +230,7 @@ async function osNews(sym) {
     : `<div class="ai-sum dim small">${d.has_llm ? `${d.ai_stale ? "새 뉴스가 있어 요약이 오래됐습니다. " : ""}<button class="btn-sm primary" id="nw-ai">AI 요약 만들기</button> <span class="xs">뉴스·공시 제목만 근거 · 목록에 없는 사실은 만들지 않음</span>` : "LLM 키가 없어 규칙 요약만 표시합니다"}</div>`;
   const items = (d.items || []).map((x) => `<div class="nw-it" data-nid="${x.id}"><div class="nw-h"><span class="chip xs ${TONE_CLS[x.tone] || ""}">${esc(x.tone)}</span>
       <a href="${esc(x.url || "#")}" target="_blank" rel="noopener noreferrer" class="small b">${esc(x.title)}</a></div>
-      <div class="xs dim">${esc(x.source || "")} · ${esc(x.at)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>
+      <div class="xs dim">${esc(pubName(x.source || ""))} · ${esc(x.at)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>
       <div class="xs muted">${esc(x.impact)} <button class="btn-xs" data-imp="${x.id}">영향 분석</button></div></div>`).join("");
   nb.innerHTML = card(`뉴스 <span class="small dim">최근 30일 중요도 순 ${(d.items || []).length}건 · 7일 톤 ${esc(d.overall)}</span>`, `
     <div class="small" style="margin-bottom:8px">${(d.rule_summary || []).map((x) => `<div>· ${esc(x)}</div>`).join("")}</div>${aiBox}
@@ -247,7 +247,7 @@ async function osNews(sym) {
   if (db) {
     const rows = (d.disclosures || []).map((x) => `<div class="nw-it ${x.important ? "imp" : ""}"><div class="nw-h">${x.important ? '<span class="chip xs warn">⚠ 중요</span>' : ""}${x.polarity > 0 ? '<span class="chip xs pos">호재성</span>' : x.polarity < 0 ? '<span class="chip xs neg">악재성</span>' : ""}
       <a href="#" data-disc="${x.id}" class="small b" title="원문·번역·요약·중요한 숫자·주가 영향">${esc(x.title)}</a> <a class="xs" href="${esc(x.url || "#")}" target="_blank" rel="noopener noreferrer">원문 ↗</a></div>
-      <div class="xs dim">${esc(x.source || "DART")} · ${esc(x.date)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>${x.summary ? `<div class="xs muted">${esc(x.summary.slice(0, 220))}</div>` : ""}</div>`).join("");
+      <div class="xs dim">${esc(pubName(x.source || "DART"))} · ${esc(x.date)}${(x.events || []).length ? " · " + x.events.map(esc).join(", ") : ""}</div>${x.summary ? `<div class="xs muted">${esc(x.summary.slice(0, 220))}</div>` : ""}</div>`).join("");
     db.innerHTML = card(`공시 <span class="small dim">최근 90일 · 중요 공시 강조</span>`, rows || empty(/^\d{6}$/.test(sym) ? "최근 90일 공시 없음 (DART 키 필요)" : "해외 종목 — DART 공시 없음"));
   }
 }
@@ -267,7 +267,7 @@ async function osImpact(id) {
     <div class="xs"><b>AI 판단 변화</b> ${esc(x.ai_change?.text || "-")}</div>
     ${(x.examples || []).length ? `<div class="xs dim">예: ${x.examples.map((e) => `${esc(e.at)} ${esc(e.title)}`).join(" / ")}</div>` : ""}</div>`).join("");
   d.innerHTML = `<div class="card"><div class="card-h"><h3>이 뉴스가 내 투자에 어떤 의미인가</h3><div class="right"><button class="btn-sm" data-x="1">닫기</button></div></div>
-    <div class="small b">${esc(n.title)}</div><div class="xs dim">${esc(n.source || "")} · ${esc(n.at)} · 톤 ${esc(n.tone)}${(n.events || []).length ? " · " + n.events.map(esc).join(", ") : ""}</div>
+    <div class="small b">${esc(n.title)}</div><div class="xs dim">${esc(pubName(n.source || ""))} · ${esc(n.at)} · 톤 ${esc(n.tone)}${(n.events || []).length ? " · " + n.events.map(esc).join(", ") : ""}</div>
     <div class="imp-flow xs">원문 → 관련 종목·업종 → 과거 유사 뉴스 → 예상 영향 → AI 판단 변화</div>
     ${rel || empty("관련 종목 없음")}
     ${(r.sector_peers || []).length ? `<div class="xs muted" style="margin-top:6px">같은 업종: ${r.sector_peers.map((p) => `<a href="#analysis/${esc(p.symbol)}">${esc(p.name)}</a>`).join(" · ")}</div>` : ""}
@@ -285,12 +285,12 @@ async function osEarnings(sym) {
     <td class="r num">${r.eps_estimate != null ? num(r.eps_estimate, 2) : "-"}</td><td class="r num">${r.eps_actual != null ? num(r.eps_actual, 2) : "-"}</td>
     <td class="r ${r.beat ? "up" : r.beat === false ? "down" : ""}">${spct(r.eps_surprise_pct ?? r.base_surprise_pct)}</td>
     <td class="r">${spct(r.revenue_surprise_pct)}</td>
-    <td class="r ${r.reaction_1d >= 0 ? "up" : "down"}">${P(r.reaction_1d, 2)}</td><td class="r">${P(r.drift_20d, 1)}</td><td class="xs dim">${esc(r.source)}</td></tr>`).join("");
+    <td class="r ${r.reaction_1d >= 0 ? "up" : "down"}">${P(r.reaction_1d, 2)}</td><td class="r">${P(r.drift_20d, 1)}</td><td class="xs dim">${esc(pubName(r.source))}</td></tr>`).join("");
   const trend = earnTrend(e.rows || []);
   const up = e.upcoming || (e.kr_upcoming ? { date: e.kr_upcoming.date || e.kr_upcoming, estimated: true } : null);
   box.innerHTML = card(`실적 <span class="small dim">예상 vs 실제 · 서프라이즈 · 발표 후 반응(시장 대비)</span>`, `
     <div class="kv-grid">${kv("다음 발표", up ? esc(String(up.date).slice(0, 10)) + (up.estimated ? " (추정)" : "") : "-")}${kv("예상 EPS", up?.eps_estimate != null ? num(up.eps_estimate, 2) : "-")}
-      ${kv("상회 비율", R(e.beat_rate, 0))}${kv("상회 시 반응", P(e.avg_reaction_beat, 2))}${kv("하회 시 반응", P(e.avg_reaction_miss, 2))}${kv("매출 YoY", P(e.revenue_yoy, 1))}</div>
+      ${kv("상회 비율", R(e.beat_rate, 0))}${kv(`상회 시 반응 · 최근 ${e.n || ""}번`, P(e.avg_reaction_beat, 2))}${kv("하회 시 반응", P(e.avg_reaction_miss, 2))}${kv("매출 YoY", P(e.revenue_yoy, 1))}</div>
     ${trend}
     ${rows ? `<div class="scroll" style="margin-top:8px"><table class="tight"><thead><tr><th>발표</th><th class="r">EPS 예상</th><th class="r">EPS 실제</th><th class="r">EPS 서프</th><th class="r">매출 서프</th><th class="r">다음날</th><th class="r">20일</th><th>출처</th></tr></thead><tbody>${rows}</tbody></table></div>` : empty("실적 이력 없음 — 종목 상세·국내 컨센서스 수집 후 채워집니다")}
     <div class="xs muted" style="margin-top:6px">가이던스: ${esc(e.guidance)}</div><div class="xs dim">${esc(e.note)} · 출처 ${(e.sources || []).map(esc).join(", ")}</div>`);
@@ -326,7 +326,7 @@ async function osRisk(sym) {
   box.innerHTML = card(`종목 리스크 <span class="small dim">과거 1년 일봉</span>`, `
     <div class="lesson small">${esc(r.read)}</div>
     <div class="kv-grid" style="margin-top:8px">${kv("변동성 20일", R(r.vol_20d, 0))}${kv("변동성 1년", R(r.vol_1y, 0))}${kv("베타", r.beta ?? "-")}${kv("1년 최대 낙폭", P(r.mdd_1y, 1), "down")}
-      ${kv("1일 VaR 95%", R(r.var95_1d, 1))}${kv("내 보유 VaR", r.var95_krw ? "₩" + num(r.var95_krw) : "-")}${kv("청산 일수", r.days_to_liquidate ?? "-")}${kv("상·하한가", r.limit_hits ?? "-")}</div>
+      ${kv("1일 VaR 95%", R(r.var95_1d, 1))}${kv("내 보유 VaR", r.var95_krw ? "₩" + num(r.var95_krw) + (r.currency === "USD" && r.var95_value ? ` <span class="xs dim">($${num(r.var95_value, 0)})</span>` : "") : "-")}${kv("청산 일수", r.days_to_liquidate == null ? "-" : r.days_to_liquidate < 0.01 ? "1일 안" : r.days_to_liquidate)}${kv("상·하한가", r.limit_hits ?? "-")}</div>
     <div class="xs muted" style="margin-top:6px">배당: ${dv.yield != null ? `수익률 ${R(dv.yield > 1 ? dv.yield / 100 : dv.yield, 2)}` : "정보 없음"}${dv.payout != null ? ` · 배당성향 ${R(dv.payout, 0)}` : ""}${(dv.events || []).length ? " · " + dv.events.map((x) => `${esc(x.label || x.kind)} ${esc(String(x.date || "").slice(0, 10))}`).join(", ") : ""}</div>
     <div class="xs dim">VaR = 하루에 이보다 크게 잃는 날이 20일에 1번꼴 · 청산 일수 = 보유 금액 ÷ (평균 거래대금 × 10%)</div>`);
 }

@@ -196,11 +196,17 @@ def risk(app, symbol: str) -> dict:
     pos = position(app, symbol)
     val = pos.get("value") or 0
     days_liq = round(val / (adv * 0.1), 2) if adv and val else None
+    kr = symbol[:1].isdigit()
+    fx, fx_src = 1.0, None
+    if not kr and val:  # v38: 미국 종목 보유 금액은 달러 — 원화 VaR 는 환율로 바꿔서 (예전엔 $372 를 ₩372 로 보였다)
+        from .usorder import fx_rate
+        fx, fx_src = fx_rate(app)
     prof = (ops.get_state(app.engine, f"profile:{symbol}").get("data") or {})
     st = prof.get("stats") or {}
     divs = [e for e in prof.get("events") or [] if e.get("kind") in ("ex_div", "dividend", "div_pay")]
     return {"symbol": symbol, "vol_20d": round(float(r.iloc[-20:].std() * np.sqrt(252)), 4), "vol_1y": round(float(r.iloc[-250:].std() * np.sqrt(252)), 4),
-            "beta": beta, "mdd_1y": round(mdd, 4), "var95_1d": round(var95, 4), "var95_krw": round(var95 * val) if val else None,
+            "beta": beta, "mdd_1y": round(mdd, 4), "var95_1d": round(var95, 4), "var95_krw": round(var95 * val * fx) if val else None,
+            "var95_value": round(var95 * val, 2) if val else None, "currency": "KRW" if kr else "USD", "fx": None if kr else fx, "fx_src": fx_src,
             "adv": round(adv) if adv else None, "days_to_liquidate": days_liq,
             "limit_hits": int((r.abs() >= 0.29).sum()) if symbol[:1].isdigit() else None,
             "dividend": {"yield": st.get("div_yield"), "rate": st.get("div_rate"), "payout": st.get("payout"),
@@ -506,7 +512,7 @@ def header(app, symbol: str, now: datetime | None = None) -> dict:
     from .pricenow import resolve
     q = (ops.get_state(app.engine, "live_quotes") or {}).get(symbol) or {}
     pn = resolve(symbol, b, q, now)  # v37: 모든 화면 같은 규칙 (묵은 시세 무시 · 시세 날짜의 전 거래일 종가 대비)
-    last, prev, chg = pn["price"], pn["prev_close"], pn["chg_pct"]
+    last, chg = pn["price"], pn["chg_pct"]
     rec = latest_consensus(app.engine, symbol)
     ai = {"action": rec.action, "prob_up": round(rec.prob_up, 3), "as_of": label(rec.as_of, with_time=False)} if rec else None
     evs = events(app, symbol, now)
@@ -519,11 +525,15 @@ def header(app, symbol: str, now: datetime | None = None) -> dict:
     cnt = {t: sum(1 for x in sents if tone(x) == t) for t in ("긍정", "중립", "부정")}
     fl = ops.get_state(app.engine, f"flow:{symbol}").get("summary") or {}
     st = (ops.get_state(app.engine, f"profile:{symbol}").get("data") or {}).get("stats") or {}
-    per = st.get("fwd_per") or st.get("per")
+    # v38: 판정은 선행 PER(내년 예상 이익) 우선이되, 화면에는 어느 PER 인지 이름을 붙인다 (예전엔 선행 PER 14.4 를 그냥 'PER'로 보여
+    #      아래 지표표의 'PER 29.0배'와 서로 달라 보였다) · 숫자 형식도 지표표와 같게 (24.2배)
+    fwd, ttm = st.get("fwd_per"), st.get("per")
+    per = fwd or ttm
     val = None
     if per:
+        parts = ([f"선행 PER {fwd:.1f}배"] if fwd else []) + ([f"PER {ttm:.1f}배"] if ttm else []) + ([f"PBR {st['pbr']:.1f}배"] if st.get("pbr") else [])
         val = {"level": "고평가" if per > 30 else "저평가" if 0 < per < 10 else "적자" if per < 0 else "보통",
-               "text": f"PER {per:.1f}" + (f" · PBR {st['pbr']:.2f}" if st.get("pbr") else "")}
+               "text": " · ".join(parts[:3]), "basis": "선행 PER" if fwd else "PER"}
     rk = None
     if b is not None and len(b) > 25:
         vol = float(b["close"].astype(float).pct_change().iloc[-20:].std() * np.sqrt(252))

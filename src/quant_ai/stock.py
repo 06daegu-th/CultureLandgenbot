@@ -77,10 +77,21 @@ def pretrade(app, symbol: str, weight: float | None = None, mode: str = "paper",
     from .trading.portfolio import Order, Side
     from .trading.risk import RiskEngine
     now = now or datetime.now(UTC)
-    bars, _, _ = app.market_data()
+    us = not symbol[:1].isdigit()
+    if us:  # v38: 미국 종목은 미국 가상 장부·미국 일봉으로 같은 한도를 시험 (예전엔 '국내 일봉이 없어 시험할 수 없습니다')
+        from .desk import _us_data
+        from .global_market import MAIN as US_MAIN
+        mode = US_MAIN
+        try:
+            bars, _, _ = _us_data(app)
+        except Exception:  # noqa: BLE001
+            bars = {}
+    else:
+        bars, _, _ = app.market_data()
     b = bars.get(symbol)
     if b is None or b.empty:
-        return {"symbol": symbol, "error": "국내 일봉이 없어 시험할 수 없습니다 (해외 종목은 미국 장부 기준)"}
+        return {"symbol": symbol, "error": "미국 일봉이 아직 없어 시험할 수 없어요 — '지금 최신으로'로 받은 뒤 다시 눌러 주세요" if us
+                else "이 종목 일봉이 없어 시험할 수 없어요"}
     price = float(b["close"].iloc[-1])
     pf = app.load_portfolio(mode)
     prices = {s: float(x["close"].iloc[-1]) for s, x in bars.items() if len(x)}
@@ -142,9 +153,13 @@ def pretrade(app, symbol: str, weight: float | None = None, mode: str = "paper",
 # ------------------------------------------------------------------ 왜 샀나 / 왜 안 샀나
 def story(app, symbol: str, mode: str = "paper", days: int = 90) -> dict:
     from .data.db import session_scope
-    from .data.models import ConsensusRecord, JournalEntry
+    from .data.models import JournalEntry
     now = datetime.now(UTC)
-    plan = ops.get_state(app.engine, f"cs-plan:{mode}")
+    us = not symbol[:1].isdigit()
+    if us:  # v38: 미국 종목은 국내 코어 전략 대상이 아니다 — 미국 가상 장부 기록으로 설명
+        from .global_market import MAIN as US_MAIN
+        mode = US_MAIN
+    plan = {} if us else ops.get_state(app.engine, f"cs-plan:{mode}")
     cfg = plan.get("config") or {}
     try:
         held = app.load_portfolio(mode).positions.get(symbol)
@@ -157,7 +172,8 @@ def story(app, symbol: str, mode: str = "paper", days: int = 90) -> dict:
         timeline = [{"ts": label(r.ts), "kind": r.kind, "message": r.message,
                      "reason": (r.data or {}).get("reason"), "reasons": (r.data or {}).get("reasons") or [],
                      "status": (r.data or {}).get("status")} for r in rows]
-        cons = s.scalar(select(ConsensusRecord).where(ConsensusRecord.symbol == symbol).order_by(ConsensusRecord.as_of.desc(), ConsensusRecord.id.desc()))
+    from .pipeline import latest_consensus
+    cons = latest_consensus(app.engine, symbol)  # v38: 종목 머리의 'AI 의견'과 같은 기록 (같은 함수)
     ranks, scores = plan.get("ranks") or {}, plan.get("scores") or {}
     top_k, buf = cfg.get("core_top_k"), cfg.get("core_buffer_k")
     rk = ranks.get(symbol)
@@ -180,6 +196,8 @@ def story(app, symbol: str, mode: str = "paper", days: int = 90) -> dict:
             facts.append("위성(AI) 편입")
         if not cfg.get("use_ai", True):
             facts.append("코어 전용 모드 — AI 신호만으로는 사지 않음 (AI 는 섀도 채점만)")
+    if us:
+        facts.append("미국 종목 — 국내 자동매매(코어 전략) 대상이 아니에요. 미국 가상 장부에서 직접 사고팔거나 주문표로 실제 계좌에서 주문해요")
     blocks = [t for t in timeline if t["kind"] in ("risk_block", "dedupe") or (t["kind"] == "order" and t["status"] not in ("filled", "partial", None))]
     buys = [t for t in timeline if t["kind"] == "order" and t["status"] in ("filled", "partial") and t["message"].startswith("buy")]
     if held_qty:
@@ -188,11 +206,14 @@ def story(app, symbol: str, mode: str = "paper", days: int = 90) -> dict:
         head = "사려고 했지만 막힘 — " + "; ".join(blocks[0]["reasons"] or [blocks[0]["message"]])[:160]
     elif plan and symbol in (plan.get("core") or []):
         head = "코어 대상이지만 아직 보유 없음 — 다음 매매 사이클에 매수 (또는 리스크 게이트 확인)"
+    elif us:
+        head = "미국 가상 장부에 보유 없음 — 사려면 종목 화면의 '모의 매수' 또는 주문표를 쓰세요"
     else:
         head = "사지 않음 — " + (facts[0] if facts else "코어 계획 기록 없음 (자동매매를 아직 돌리지 않음)")
     sig = None
     if cons is not None:
-        sig = {"action": cons.action, "prob_up": round(cons.prob_up, 3), "confidence": round(cons.confidence), "as_of": label(cons.as_of)}
+        sig = {"action": cons.action, "prob_up": round(cons.prob_up, 3), "confidence": round(cons.confidence, 1), "as_of": label(cons.as_of),
+               "id": cons.id}
     return {"symbol": symbol, "mode": mode, "held_qty": held_qty, "headline": head, "facts": facts, "signal": sig,
             "timeline": timeline[:15], "plan_at": label(plan.get("ts")) if plan.get("ts") else None,
             "rule": f"코어: 월말 시총 상위 유니버스에서 점수 상위 {top_k} 편입 · {buf}위 밖이면 교체 · {cfg.get('core_rebalance_days')}거래일마다 리밸런싱" if cfg else None}

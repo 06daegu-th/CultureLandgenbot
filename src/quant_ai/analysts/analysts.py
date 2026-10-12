@@ -112,7 +112,20 @@ class LLMAnalyst(Analyst):
 
     batch_size: int = 1  # build_analysts 가 공급자 설정(batch)으로 정한다
 
+    def _no_material(self, ctx: MarketContext) -> Opinion | None:
+        """v38: 뉴스 AI 는 뉴스·공시가 0건이면 LLM 을 부르지 않고 기권 — 예전엔 재료 없이 '시장 분위기'로 의견을 내
+        엔비디아 화면에 '뉴스 AI: 위험 선호 지속'처럼 보였다 (역할 밖 판단 · 무료 한도 낭비)."""
+        if self.name != "primary" or ctx.news or ctx.disclosures:
+            return None
+        return Opinion(analyst=self.name, symbol=ctx.symbol, prob_up=None, confidence=0.0,
+                       reasons=["최근 이 종목 뉴스·공시 0건 — 뉴스 AI 는 판단하지 않음"], sub_scores={NEWS: 0.0},
+                       summary="재료 없음 — 이 종목 뉴스·공시가 없어 뉴스 AI 는 쉬었어요", backend=backend_id(self.client),
+                       meta={"inputs": 0, "skipped_llm": True})
+
     def analyze(self, ctx: MarketContext) -> Opinion:
+        skip = self._no_material(ctx)
+        if skip is not None:
+            return skip
         user = f"분석 대상 (horizon_days={ctx.horizon_days}):\n{ctx.to_prompt()}"
         try:
             out = self.client.complete_json(self.role, user, ANALYSIS_SCHEMA)
@@ -122,6 +135,11 @@ class LLMAnalyst(Analyst):
 
     def analyze_batch(self, ctxs: list[MarketContext]) -> list[Opinion]:
         """여러 종목을 한 요청에 (무료 한도 절약). 종목마다 독립적으로 판단하게 하고, 빠진 종목은 하나씩 다시 묻는다."""
+        skipped = {c.symbol: op for c in ctxs if (op := self._no_material(c)) is not None}
+        if skipped:  # 재료 없는 종목은 빼고 묶음 호출
+            rest = self.analyze_batch([c for c in ctxs if c.symbol not in skipped])
+            by = {o.symbol: o for o in rest}
+            return [skipped.get(c.symbol) or by[c.symbol] for c in ctxs]
         if len(ctxs) <= 1:
             return [self.analyze(c) for c in ctxs]
         items = [json.loads(c.to_prompt()) for c in ctxs]
@@ -406,7 +424,7 @@ ROLE_PREFS = {  # 역할별 선호 공급자 (키가 있는 것 중 아직 안 �
 }
 
 
-def assign_roles(settings) -> dict[str, str]:
+def assign_roles(settings, prefs: dict | None = None) -> dict[str, str]:
     """역할 → 공급자. Claude 키가 있으면 primary 는 Claude, 없으면 무료 공급자 중 최고 품질(Gemini) 부터.
 
     QUANT_AI_ROLES="primary=gemini,second=nvidia,risk=groq,panel=cloudflare" 로 직접 지정 가능.
@@ -419,6 +437,9 @@ def assign_roles(settings) -> dict[str, str]:
             role = "nvidia" if role == "second" else role
             if role in AI_ROLES and prov in avail:
                 override[role] = prov
+    for role, prov in (prefs or {}).items():  # v38: 'AI 모델' 화면에서 역할별로 고른 공급자 (키가 있을 때만)
+        if role in AI_ROLES and prov in avail:
+            override[role] = prov
     roles: dict[str, str] = dict(override)
     if "primary" not in roles and settings.anthropic_enabled:
         roles["primary"] = "claude"
@@ -466,7 +487,14 @@ def build_analysts(settings, predictor: Predictor | None, model_version: str | N
     """
     from .guard import GuardedLLM
 
-    roles = assign_roles(settings)
+    prefs = None
+    if engine is not None:
+        try:
+            from ..aimodels import prefs as _prefs
+            prefs = _prefs(engine)["roles"]
+        except Exception:  # noqa: BLE001 - 설정을 못 읽으면 기본 배정
+            prefs = None
+    roles = assign_roles(settings, prefs)
     llms: dict[str, LLMAnalyst] = {}
     for role, prov in roles.items():
         try:

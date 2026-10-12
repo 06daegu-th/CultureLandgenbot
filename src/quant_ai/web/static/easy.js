@@ -4,7 +4,7 @@
 // 쉬운 화면에서 보이는 메뉴 6개 (나머지는 '고급 메뉴'에 접혀 있다)
 // v25: 토스식 메뉴 — 홈 · 관심종목 · 포트폴리오 · 시장 · 뉴스/공시 · 일정 · AI 분석 · 알림 · 더보기 (종목은 검색·목록에서 바로)
 const NAV_EASY = [["dashboard", "home", "홈"], ["watch", "star", "관심종목"], ["pos", "portfolio", "포트폴리오"], ["market", "market", "시장"],
-  ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["picks", "ai", "AI 추천"], ["autopilot", "auto", "AI 자동매매"], ["goal", "target", "내 목표"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
+  ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["radar", "bell", "이벤트 레이더"], ["picks", "ai", "AI 추천"], ["autopilot", "auto", "AI 자동매매"], ["goal", "target", "내 목표"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
 // v32: 'AI 분석'(종목별 판단)은 홈 'AI가 본 오늘의 종목' · 종목 화면 · 더보기에서 — 대신 날마다 보는 '내 목표'를 앞으로
 
 function uiMode() { return (typeof isMember === "function" && isMember()) ? "easy" : S.uiMode || safeGet("qa_ui") || "easy"; }  // v34: 회원은 쉬운 화면 고정
@@ -240,7 +240,7 @@ async function stockTop(sym) {
     ${m.local_time ? `<span class="xs dim">· 현지 ${esc(String(m.local_time).slice(11, 16) || m.local_time)}</span>` : ""}
     ${m.next_kst ? `<span class="xs dim">· 다음 ${esc(m.next === "폐장" ? "마감" : "개장")} ${esc(m.next_kst)}</span>` : ""}
     ${m.notice && !($("#market-notice")?.textContent || "").includes(m.notice.slice(0, 12)) ? `<div class="xs warn-t">${esc(m.notice)}</div>` : ""}</div>`;
-  const r52 = r && r.pos != null ? `<div class="vt-52"><span class="xs muted">52주</span>
+  const r52 = r && r.pos != null ? `<div class="vt-52"><span class="xs muted" title="일봉 종가 기준 — 아래 지표의 52주 범위는 장중 고가·저가라 조금 다를 수 있어요">52주 종가</span>
     <span class="xs num">${esc(price(r.low, sym))}</span><span class="r52-bar"><i style="left:${Math.round(r.pos * 100)}%"></i></span><span class="xs num">${esc(price(r.high, sym))}</span>
     <span class="xs ${r.from_high > -0.05 ? "up" : r.from_high < -0.3 ? "down" : ""}">고점 대비 ${P(r.from_high, 1)}</span></div>` : "";
   let ai;

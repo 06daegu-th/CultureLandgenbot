@@ -16,7 +16,7 @@ import pytest
 
 pw = pytest.importorskip("playwright.sync_api")
 
-SCREENS = ["dashboard", "watch", "pos", "goal", "picks", "autopilot", "news", "market", "calendar", "alerts", "more",
+SCREENS = ["dashboard", "watch", "pos", "goal", "picks", "autopilot", "news", "market", "calendar", "radar", "aimodels", "chat", "alerts", "more",
            "report", "proof", "datacheck", "budget", "settings", "logoq", "ops"]
 
 

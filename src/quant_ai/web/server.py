@@ -422,6 +422,10 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                         return self._json(api.readiness(arg("mode")))
                     if url.path == "/api/calendar":
                         return self._json(api.calendar())
+                    if url.path == "/api/radar":
+                        return self._json(api.radar(arg("days"), arg("symbol")))
+                    if url.path == "/api/ai-models":
+                        return self._json(api.ai_models())
                     if url.path == "/api/power":
                         return self._json(api.power())
                     if url.path == "/api/execution":
@@ -605,6 +609,8 @@ def make_handler(api: DashboardAPI, token: str | None, allowed_hosts: set[str], 
                                                  params={k: v for k, v in body.items() if k in ("symbol",)}))
                 if url.path == "/api/chat":
                     return self._json(api.chat(body))
+                if url.path == "/api/ai-models":
+                    return self._json(api.ai_models_write(body))
                 if url.path == "/api/rules":
                     return self._json(api.rule_write(body))
                 if url.path == "/api/t/alerts":

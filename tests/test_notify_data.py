@@ -276,13 +276,13 @@ def test_decide_uses_batches_and_fewer_calls(app):
                 syms = [x["symbol"] for x in json.loads(user.split("\n", 1)[1])]
                 return {"results": [{"symbol": s, **item} for s in syms]}
             return item
-    fake = A.LLMAnalyst("primary", L())
+    fake = A.LLMAnalyst("nvidia", L())  # v38: 뉴스 AI(primary)는 뉴스 0건이면 LLM 을 안 부른다 → 경제·시장 AI 로 묶음 호출 확인
     fake.batch_size = 3
     orig = A.build_analysts
 
     def build(*a, **k):
         base = orig(*a, **k)
-        return [fake] + [x for x in base if x.name != "primary"]
+        return [fake] + [x for x in base if x.name != "nvidia"]
     A.build_analysts, old = build, orig
     import quant_ai.pipeline as P
     P_old = P.build_analysts
@@ -294,7 +294,7 @@ def test_decide_uses_batches_and_fewer_calls(app):
         A.build_analysts = old
         P.build_analysts = P_old
     assert len(ds) == 5 and calls.count("batch") == 2 and "one" not in calls  # 5종목 → 3 + 2 묶음 2번
-    assert all(any(o.analyst == "primary" and o.prob_up == 0.6 for o in d.opinions) for d in ds)
+    assert all(any(o.analyst == "nvidia" and o.prob_up == 0.6 for o in d.opinions) for d in ds)
 
 
 # ------------------------------------------------------------------ DART 원문 요약

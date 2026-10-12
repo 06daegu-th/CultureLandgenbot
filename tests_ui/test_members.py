@@ -14,7 +14,7 @@ import pytest
 pw = pytest.importorskip("playwright.sync_api")
 
 MEMBER_SCREENS = ["dashboard", "watch", "goal", "pos", "accounts", "market", "news", "calendar", "alerts", "more", "map",
-                  "compare", "myjournal", "manual", "chat", "account", "analysis/000001", "explore", "together"]
+                  "compare", "myjournal", "manual", "chat", "account", "analysis/000001", "explore", "together", "radar"]
 PW = "calm-ocean-4821"
 
 

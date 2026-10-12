@@ -213,7 +213,10 @@ def test_clock_light_holiday_notice_and_dst():
     from quant_ai.clock import clock_status, holiday_ko
     m = clock_status(datetime(2026, 7, 3, 15, tzinfo=UTC))["markets"]  # 미국 독립기념일 대체 휴장 · 한국은 토요일
     assert m["US"]["light"] == "🔴" and m["US"]["notice"].startswith("오늘 미국 증시는 휴장입니다 (독립기념일 대체 휴장)")
-    assert "다음 개장 07/06 22:30 한국시간" in m["US"]["notice"] and m["US"]["dst"] is True
+    assert "현지 금요일 · 다음 개장 한국시간 07/06 밤 22:30" in m["US"]["notice"] and m["US"]["dst"] is True
+    # v38: 한국 월요일 아침(미국 일요일 밤) → '오늘 밤 22:30'
+    m2 = clock_status(datetime(2026, 10, 12, 2, tzinfo=UTC))["markets"]
+    assert "현지 일요일" in m2["US"]["notice"] and m2["US"]["notice"].endswith("다음 개장 한국시간 오늘 밤 22:30")
     assert m["KRX"]["notice"].startswith("오늘 한국 증시는 휴장입니다 (주말)") and m["KRX"]["dst"] is None
     m = clock_status(datetime(2026, 1, 15, 15, tzinfo=UTC))["markets"]  # 미국 정규장 · 겨울(서머타임 아님)
     assert m["US"]["light"] == "🟢" and m["US"]["notice"] is None and m["US"]["dst"] is False

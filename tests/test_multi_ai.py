@@ -12,7 +12,8 @@ NOW = datetime(2024, 3, 4, 6, 0, tzinfo=UTC)
 
 def ctx(**kw):
     base = dict(symbol="005930", name="삼성전자", market="KRX", as_of=NOW, horizon_days=5,
-                price={"ret_20": 0.05, "vol_ratio": 1.0, "rsi_14": 0.6}, regime={"regime": "bull_quiet"})
+                price={"ret_20": 0.05, "vol_ratio": 1.0, "rsi_14": 0.6}, regime={"regime": "bull_quiet"},
+                news=[{"title": "삼성전자 신제품 발표", "sentiment": 0.2, "importance": 0.6}])  # v38: 뉴스 0건이면 뉴스 AI 는 LLM 을 안 부른다
     base.update(kw)
     return MarketContext(**base)
 
@@ -113,3 +114,11 @@ def test_hashing_embeddings_similarity():
     e = HashingEmbeddings()
     v = e.embed(["삼성전자 반도체 실적 호조", "삼성전자 반도체 실적 개선", "테슬라 리콜 발표"])
     assert v[0] @ v[1] > v[0] @ v[2]
+
+
+def test_news_ai_skips_llm_without_news():
+    fake = FakeLLM(out={"prob_up": 0.7, "confidence": 0.8})
+    op = LLMAnalyst("primary", fake).analyze(ctx(news=[], disclosures=[]))
+    assert op.abstained and not fake.calls and op.meta.get("skipped_llm") and "0건" in op.reasons[0]
+    ops = LLMAnalyst("primary", fake).analyze_batch([ctx(news=[]), ctx(symbol="000660")])
+    assert ops[0].abstained and ops[1].symbol == "000660"

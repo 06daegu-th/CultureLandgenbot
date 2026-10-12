@@ -32,7 +32,7 @@ def fx_rate(app) -> tuple[float, str]:
     from .engines.market_intel import load_macro
     with session_scope(app.engine) as s:
         fx = load_macro(s, ["DEXKOUS"], days=30).get("DEXKOUS")
-    return (float(fx.iloc[-1]), "FRED DEXKOUS") if fx is not None and len(fx) else (1350.0, "기본값 1,350원 (FRED_API_KEY 없음 — 실제 환율로 바꿔 계산하세요)")
+    return (float(fx.iloc[-1]), f"FRED DEXKOUS · {fx.index[-1]:%m/%d} 기준") if fx is not None and len(fx) else (1350.0, "기본값 1,350원 (FRED_API_KEY 없음 — 실제 환율로 바꿔 계산하세요)")
 
 
 def after_tax(gain_krw: float, ytd_gain_krw: float = 0.0) -> dict:

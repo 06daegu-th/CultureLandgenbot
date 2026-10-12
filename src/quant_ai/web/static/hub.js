@@ -160,7 +160,7 @@ async function viewAILabV16(el) {
 // ------------------------------------------------------------ 데이터 건강 (점수 · Sentinel · Fail-Closed)
 async function viewDataHealth(el) {
   const [h, sn, g] = await Promise.all([api("/api/data-health"), api("/api/sentinel"), api("/api/governance")]);
-  const rows = (h.rows || []).map((r) => `<tr><td class="small b">${OS_ST[r.status] || "⚪"} ${esc(r.name)}</td><td style="min-width:120px">${r.pct == null ? '<span class="xs dim">해당 없음</span>' : `${bar100(r.pct / 100)} <span class="xs num">${r.pct}%</span>`}</td><td class="xs" style="white-space:normal">${esc(r.detail)}</td><td class="xs dim">${esc(r.source)}</td></tr>`).join("");
+  const rows = (h.rows || []).map((r) => `<tr><td class="small b">${OS_ST[r.status] || "⚪"} ${esc(r.name)}</td><td style="min-width:120px">${r.pct == null ? '<span class="xs dim">해당 없음</span>' : `${bar100(r.pct / 100)} <span class="xs num">${r.pct}%</span>`}</td><td class="xs" style="white-space:normal">${esc(r.detail)}</td><td class="xs dim">${esc(pubName(r.source))}</td></tr>`).join("");
   el.innerHTML = `
   <div class="card dh-hero ${h.trading === "BLOCKED" ? "blocked" : ""}"><div class="card-h"><h3>DATA HEALTH <span class="small dim">${esc(h.as_of)}</span></h3><div class="right"><button class="btn-sm" id="dh-re">다시 점검</button></div></div>
     <div class="dh-top"><div class="big num">${h.overall}%</div><div><div class="b ${h.trading === "BLOCKED" ? "bad-t" : "good"}">${h.trading === "BLOCKED" ? "⛔ TRADING BLOCKED" : "✅ 거래 가능"}</div><div class="xs muted">${esc(h.block_reason || h.price_delay?.detail || "")}</div></div></div>
@@ -260,7 +260,7 @@ async function viewPortfolioOS(el) {
   const soon = (o.earnings_soon || []).map((e) => `<a class="chip ${e.d_day <= 3 ? "warn" : ""}" href="#analysis/${esc(e.symbol)}">${stockLogo(e.symbol, e.name, 16)} ${esc(e.name)} 실적 ${esc(e.d_label)}${e.estimated ? " 추정" : ""}</a>`).join(" ");
   const nws = (o.news_alerts || []).map((n) => `<div class="small" data-news="${esc(n.top?.id)}" role="button" style="cursor:pointer">${stockLogo(n.symbol, n.name, 16)} <b>${esc(n.name)}</b> ${esc(n.top?.title || "")} <span class="xs dim">${n.n}건</span></div>`).join("");
   el.innerHTML = `
-  <div class="card pos-hero"><div class="card-h"><h3>내 자산 한눈에 <span class="small dim">${esc(o.source)} · ${esc(o.as_of)}</span></h3><div class="right">
+  <div class="card pos-hero"><div class="card-h"><h3>내 자산 한눈에 <span class="small dim">${esc(pubName(o.source))} · ${esc(o.as_of)}</span></h3><div class="right">
     ${o.n_accounts ? `<div class="tabs" id="pos-src"><button data-k="accounts" class="${o.source_key === "accounts" ? "on" : ""}">내가 입력한 계좌</button><button data-k="system" class="${o.source_key === "system" ? "on" : ""}">시스템 모의 장부</button></div>` : ""}
     <a class="btn-sm" href="#accounts">계좌 입력</a></div></div>
     <div class="kv-grid">${kv("내 자산", "₩" + num(o.total))}${kv("주식", R(o.stock_pct, 0))}${kv("현금", R(o.cash_pct, 0))}${kv("종목 수", o.n)}${kv("업종 집중", esc({ HIGH: "높음", MEDIUM: "보통", LOW: "낮음", UNKNOWN: "모름 (업종 정보 없음)" }[o.sector_level] || o.sector_level))}${kv("최대 비중", o.top ? `${esc(o.top.name)} ${R(o.top.weight, 0)}` : "-")}</div>
@@ -342,7 +342,7 @@ async function viewGovernance(el) {
   el.innerHTML = `
   ${card(`서비스 단계 · 규제 <span class="small dim">지금: ${esc(sv.current_label)}</span>`, `<div class="gov-flow">${lv}</div><div class="lesson small" style="margin-top:8px">${esc(sv.note)}</div>`)}
   ${card(`데이터 라이선스 <span class="small dim">${esc(lic.usage)}</span>`, `${lic.warning ? `<div class="veto">${esc(lic.warning)}</div>` : ""}
-    <div class="scroll"><table class="tight"><thead><tr><th>출처</th><th>쓰는 곳</th><th>개인 사용</th><th>상용 서비스</th><th>위험</th></tr></thead><tbody>${lic.rows.map((r) => `<tr><td class="small b">${esc(r.source)}</td><td class="xs">${esc(r.used)}</td><td class="xs">${esc(r.personal)}</td><td class="xs" style="white-space:normal">${esc(r.commercial)}</td><td class="${RK[r.risk]}">${esc(r.risk.toUpperCase())}</td></tr>`).join("")}</tbody></table></div>
+    <div class="scroll"><table class="tight"><thead><tr><th>출처</th><th>쓰는 곳</th><th>개인 사용</th><th>상용 서비스</th><th>위험</th></tr></thead><tbody>${lic.rows.map((r) => `<tr><td class="small b">${esc(pubName(r.source))}</td><td class="xs">${esc(r.used)}</td><td class="xs">${esc(r.personal)}</td><td class="xs" style="white-space:normal">${esc(r.commercial)}</td><td class="${RK[r.risk]}">${esc(r.risk.toUpperCase())}</td></tr>`).join("")}</tbody></table></div>
     <div class="xs muted" style="margin-top:6px">상용화 경로: ${lic.path.map(esc).join(" → ")}</div><div class="xs dim">${esc(lic.note)}</div>`)}
   <div class="grid g-2">
     ${card(`보안 점검 <span class="small dim">${sec.score}/100</span>`, `<div class="tr-rows">${sec.items.map((x) => `<div class="tr-row"><span class="tr-ic">${{ ok: "🟢", partial: "🟡", missing: "🔴" }[x.status]}</span><div><div class="small b">${esc(x.item)}</div><div class="xs muted">${esc(x.detail)}</div></div></div>`).join("")}</div><div class="xs dim" style="margin-top:6px">${esc(sec.note)}</div>`)}
@@ -371,7 +371,7 @@ async function viewBudget(el) {
     `<tr><td class="small b">${LBL[k] || k}</td><td class="r num">${fmt(k, v)}</td><td class="xs muted">${esc(p.why[k])}</td></tr>`).join("")}</tbody></table>`;
   const warn = (p) => (p.warnings || []).map((w) => `<div class="veto small" style="margin-top:6px">⚠ ${esc(w)}</div>`).join("");
   const rp = (r) => !r ? "" : !r.available ? `<div class="xs dim">${esc(r.message)}</div>` : `
-    <div class="small b" style="margin-top:12px">과거로 재생 — 이 한도였으면 몇 번 걸렸을까 <span class="xs dim">${esc(r.source)} · ${esc(r.from)} ~ ${esc(r.to)}</span></div>
+    <div class="small b" style="margin-top:12px">과거로 재생 — 이 한도였으면 몇 번 걸렸을까 <span class="xs dim">${esc(pubName(r.source))} · ${esc(r.from)} ~ ${esc(r.to)}</span></div>
     <div class="grid g-4" style="margin-top:6px">
       <div class="kpi"><div class="xs muted">신규 매수 중단 (일 ${R(r.limit, 1)})</div><div class="big num">연 ${r.stop_per_year}회</div><div class="xs">총 ${r.stop_days}일</div></div>
       <div class="kpi ${r.kill_per_year > 1 ? "warn" : ""}"><div class="xs muted">자동 정지 (일 ${R(r.kill_at, 1)})</div><div class="big num">연 ${r.kill_per_year}회</div><div class="xs">총 ${r.kill_days}일${r.kill_dates.length ? ` · 최근 ${esc(r.kill_dates.slice(-3).join(", "))}` : ""}</div></div>

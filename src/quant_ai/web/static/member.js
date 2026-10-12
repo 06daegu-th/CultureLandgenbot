@@ -5,11 +5,11 @@
 // 회원 메뉴 (운영 기능 없음). 투자 정보 범위가 info 일 때만 'AI 추천'
 const MEMBER_NAV = [["dashboard", "home", "홈"], ["goal", "target", "내 목표"], ["explore", "target", "얼마를 언제까지"], ["together", "star", "같이 모으기"],
   ["watch", "star", "관심종목"], ["pos", "portfolio", "모의투자"], ["accounts", "portfolio", "내 계좌"], ["market", "market", "시장"],
-  ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
+  ["news", "news", "뉴스 · 공시"], ["calendar", "calendar", "일정"], ["radar", "bell", "이벤트 레이더"], ["alerts", "bell", "알림 설정"], ["more", "grid", "더보기"]];
 // 회원이 열 수 있는 화면 (나머지는 '운영자 전용' 안내)
 const MEMBER_VIEWS = new Set(["dashboard", "watch", "goal", "pos", "accounts", "market", "news", "newslist", "calendar", "alerts", "more",
   "analysis", "n", "d", "map", "compare", "myjournal", "manual", "chat", "account", "profile", "picks", "aitrust", "scorecard", "report",
-  "verify", "signup", "reset", "login", "explore", "together", "club"]);
+  "verify", "signup", "reset", "login", "explore", "together", "club", "radar"]);
 const ADVICE_VIEWS = new Set(["picks", "aitrust", "scorecard", "report"]);
 
 const isMulti = () => !!(S.auth && S.auth.multi);

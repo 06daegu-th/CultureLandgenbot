@@ -95,7 +95,9 @@ def stamp(ts, kind: str | None = None, now: datetime | None = None, market_open:
     if kind in ("bar_kr", "bar_us", "bar_index"):
         mk = "US" if kind == "bar_us" else "KR"
         want = last_trading_close(mk, now)
-        have = t.astimezone(KST if mk == "KR" else ZoneInfo("America/New_York")).date()
+        # v38: 일봉은 '그 거래일 0시(UTC)'로 저장된다 — 미국 시간으로 바꾸면 전날 저녁이 되어 금요일 종가가 '1거래일 밀림'으로 보였다
+        tu = t.astimezone(UTC)
+        have = tu.date() if (tu.hour, tu.minute) == (0, 0) else t.astimezone(KST if mk == "KR" else ZoneInfo("America/New_York")).date()
         from .clock import KRX, US
         lag = (KRX if mk == "KR" else US).trading_days_between(have, want)
         status = "fresh" if lag <= 0 else "stale" if lag <= 2 else "old"

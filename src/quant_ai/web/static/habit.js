@@ -139,7 +139,7 @@ TV.explore = (el) => exploreView(el);
 // ------------------------------------------------------------ 꾸준함 (내 목표 화면)
 function calmCard(c) {
   if (!c) return "";
-  return `<section class="t-card t-sec xp-calm"><div class="xp-calm-h"><b>${esc(c.title)}</b><span class="t-sub">${esc(c.as_of || "")} · ${esc(c.source || "")}</span></div>
+  return `<section class="t-card t-sec xp-calm"><div class="xp-calm-h"><b>${esc(c.title)}</b><span class="t-sub">${esc(c.as_of || "")} · ${esc(pubName(c.source || ""))}</span></div>
     <div>${esc(c.body)}</div>${(c.lines || []).length ? `<ul>${c.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}<div class="t-sub">${esc(c.note || "")}</div></section>`;
 }
 function streakDots(st) {

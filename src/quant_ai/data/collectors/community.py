@@ -52,7 +52,7 @@ def fetch_stocktwits(symbol: str) -> list[dict]:
     out = []
     for m in raw.get("messages") or []:
         basic = (((m.get("entities") or {}).get("sentiment")) or {}).get("basic")
-        body = (m.get("body") or "")[:200]
+        body = html.unescape(m.get("body") or "")[:200]  # v38: &#39; 같은 HTML 문자가 그대로 보이던 문제
         out.append({"title": body, "ts": m.get("created_at"),
                     "sentiment": 0.6 if basic == "Bullish" else -0.6 if basic == "Bearish" else slang_score(body),
                     "label": basic, "url": f"https://stocktwits.com/message/{m.get('id')}"})

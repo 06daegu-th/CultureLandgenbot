@@ -21,7 +21,23 @@ S.alphaMarket = safeGet("qa_mkt") || "KR";
 
 // ------------------------------------------------------------ 유틸
 const $ = (sel, el = document) => el.querySelector(sel);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// v38: 외부 글(커뮤니티·RSS)에 이미 들어 있는 HTML 문자(&#39; &amp; …)를 먼저 풀고 다시 안전하게 바꾼다 — 'Let&#39;s' 가 그대로 보이던 문제
+const ENT = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'", "#039": "'", "#x27": "'", "#34": '"' };
+const deEnt = (s) => String(s ?? "").replace(/&(amp|lt|gt|quot|apos|nbsp|#39|#039|#x27|#34);/gi, (m, k) => ENT[k.toLowerCase()] ?? m);
+const esc = (s) => deEnt(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// v38: 뉴스 출처가 RSS 주소(https://www.hankyung.com/feed/finance)로 보이던 문제 → 매체 이름
+const PUBS = [["hankyung", "한국경제"], ["yna.co.kr", "연합뉴스"], ["yonhap", "연합뉴스"], ["mk.co.kr", "매일경제"], ["chosun", "조선일보"], ["joongang", "중앙일보"],
+  ["donga", "동아일보"], ["mt.co.kr", "머니투데이"], ["edaily", "이데일리"], ["sedaily", "서울경제"], ["hankyoreh", "한겨레"], ["fnnews", "파이낸셜뉴스"],
+  ["asiae", "아시아경제"], ["heraldcorp", "헤럴드경제"], ["etnews", "전자신문"], ["news.google", "구글뉴스"], ["dowjones", "MarketWatch"],
+  ["marketwatch", "MarketWatch"], ["cnbc", "CNBC"], ["reuters", "Reuters"], ["bloomberg", "Bloomberg"], ["wsj", "WSJ"], ["yahoo", "Yahoo Finance"],
+  ["nasdaq.com", "Nasdaq"], ["seekingalpha", "Seeking Alpha"], ["fool.com", "Motley Fool"], ["investing.com", "Investing.com"], ["dart.fss", "DART"]];
+const pubName = (s) => {
+  const t = String(s ?? "").trim();
+  if (!/^https?:\/\//i.test(t)) return t;
+  const low = t.toLowerCase(), hit = PUBS.find(([k]) => low.includes(k));
+  if (hit) return hit[1];
+  try { return new URL(t).hostname.replace(/^www\./, ""); } catch (e) { return t; }
+};
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const isKR = (sym) => /^\d{6}$/.test(sym) || /\.K[SQ]$/.test(sym);
 
@@ -1146,8 +1162,8 @@ function viewSettings(d) {
 // ------------------------------------------------------------ 내비게이션
 const NAV = [
   // v16 메뉴: 홈 · 종목 · 시장 · 뉴스/공시 · AI · 포트폴리오 · 리스크 · 백테스트 · AI 성적표 · 일정 · 투자일지 (+ 신뢰 · 시스템)
-  ["핵심", [["dashboard", "home", "홈"], ["explore", "target", "얼마를 언제까지 (목표 계산기)"], ["action", "bell", "오늘 할 일 (전체)"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["map", "market", "증시 지도"], ["market", "market", "시장 분위기 · 경제지표"], ["news", "news", "뉴스 · 공시"], ["newslist", "news", "뉴스 · 공시 원문 목록"], ["calendar", "bell", "일정 (D-Day)"], ["replay", "review", "그날 다시 보기 (날짜 선택)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
-  ["AI", [["picks", "ai", "AI 추천 (매수·매도 후보)"], ["autopilot", "auto", "AI 자동매매"], ["aitrust", "shield", "AI 신뢰 센터"], ["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI가 틀린 이유 연구"], ["ai", "score", "AI 성적 · 확률 보정"], ["aihealth", "pulse", "AI 상태 점검"], ["power", "learn", "AI 예측력 통계 검정"], ["pead", "evidence", "실적 발표 전략 (실전 기록)"], ["verify", "evidence", "예측 기록장 (봉인)"], ["alpha", "alpha", "AI가 돈을 벌었나 (증명)"], ["graph", "models", "종목 관계도 · 업종"]]],
+  ["핵심", [["dashboard", "home", "홈"], ["explore", "target", "얼마를 언제까지 (목표 계산기)"], ["action", "bell", "오늘 할 일 (전체)"], ["analysis", "ai", "종목"], ["watch", "score", "관심종목"], ["map", "market", "증시 지도"], ["market", "market", "시장 분위기 · 경제지표"], ["news", "news", "뉴스 · 공시"], ["newslist", "news", "뉴스 · 공시 원문 목록"], ["calendar", "bell", "일정 (D-Day)"], ["radar", "bell", "이벤트 레이더 (실적·발표·미국장)"], ["replay", "review", "그날 다시 보기 (날짜 선택)"], ["compare", "compare", "종목 비교"], ["chat", "chat", "AI 어시스턴트"]]],
+  ["AI", [["aimodels", "ai", "AI 모델 · 웹 검색"], ["picks", "ai", "AI 추천 (매수·매도 후보)"], ["autopilot", "auto", "AI 자동매매"], ["aitrust", "shield", "AI 신뢰 센터"], ["scorecard", "score", "AI 성적표 (공개)"], ["ailab", "lab", "AI가 틀린 이유 연구"], ["ai", "score", "AI 성적 · 확률 보정"], ["aihealth", "pulse", "AI 상태 점검"], ["power", "learn", "AI 예측력 통계 검정"], ["pead", "evidence", "실적 발표 전략 (실전 기록)"], ["verify", "evidence", "예측 기록장 (봉인)"], ["alpha", "alpha", "AI가 돈을 벌었나 (증명)"], ["graph", "models", "종목 관계도 · 업종"]]],
   ["포트폴리오 · 리스크", [["proof", "check", "증명 프로젝트 (100만원)"], ["budget", "risk", "내 투자 한도"], ["pos", "portfolio", "내 자산 한눈에"], ["portfolio", "portfolio", "장부별 포트폴리오"], ["risk", "risk", "리스크 관리"], ["notrade", "stop", "거래 안 한 이유"], ["accounts", "portfolio", "계좌 · 세금 · 배당"], ["manual", "orders", "수동 모의 장부"], ["core", "auto", "자동매매 설정"], ["orders", "orders", "주문 내역"], ["execution", "engine", "체결 품질 · 증권사 점검"], ["sheet", "sheet", "국내 주문표 (리밸런싱)"], ["usorder", "sheet", "미국 주식 주문표"]]],
   ["기록 · 연구", [["myjournal", "journal", "내 투자일지 vs AI"], ["profile", "settings", "내 투자 성향"], ["journal", "journal", "AI 판단 일지"], ["research", "research", "과거로 시험하기 (백테스트)"], ["lab", "lab", "모델 실험 · 승격"], ["review", "review", "복기 리포트"], ["reports", "review", "리포트 · 브리핑"], ["models", "models", "모델 목록 · 검증"]]],
   ["신뢰 · 시스템", [["datahealth", "data", "데이터 상태 · 키 진단"], ["datacheck", "data", "데이터 점검 (수정주가 · 외부 대조)"], ["logoq", "data", "로고 관리 (없는 종목)"], ["readiness", "check", "매매해도 되나 (7가지 점검)"], ["truth", "shield", "데이터 사실 확인"], ["validation", "check", "실전 검증 진행표"], ["control", "control", "실시간 감시실"], ["safety", "shield", "안전 센터"], ["governance", "shield", "규제 · 보안 · 라이선스"], ["server", "server", "서버 · DB"], ["trades", "evidence", "거래 · 위험 기록"], ["ops", "ops", "운영 · 작업 기록"], ["settings", "settings", "설정"]]],
@@ -1342,7 +1358,7 @@ function renderChrome(d) {
   kb.innerHTML = d.halted ? `${ICONS.stop} HALTED · 자동 정지` : d.kill_switch ? `${ICONS.play} 매수 정지 중 · 해제` : `${ICONS.stop} 긴급 정지`;
   kb.title = d.halted ? `자동 정지 사유: ${d.kill_info?.reason || ""}` : "긴급 정지: 신규 매수 즉시 중단 (매도·위험 축소는 계속)";
   if (!window.MKT_CLOCK_ON) $("#market-badges").innerHTML = Object.entries(d.markets).map(([k, v]) => `<span class="pill ${v === "open" ? "open" : ""}">${k} ${v === "open" ? "장중" : v === "pre_open" ? "장전" : "장외"}</span>`).join(" ");
-  $("#sys-last").textContent = d.system.last_bar ? `데이터 ${date(d.system.last_bar)}` : "-";
+  $("#sys-last").textContent = d.system.last_bar ? `최근 일봉 ${date(d.system.last_bar)} (국내·해외 중 최신)` : "-";  // v38: 위 '국내 일봉' 날짜와 다르게 보이던 이유를 밝힘
   $("#avatar").textContent = homeMode(d).slice(0, 2).toUpperCase();
   api("/api/health").then((h) => {
     const bad = !h.ok || h.recent_job_failures > 0;

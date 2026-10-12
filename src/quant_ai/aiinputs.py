@@ -13,7 +13,6 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
-
 LABELS = {"primary": "뉴스 AI", "nvidia": "경제·시장 AI", "panel": "공시·실적 AI", "quant": "차트·Quant AI", "chart": "차트 신호",
           "regime": "시장 국면", "risk": "Risk AI", "challenger": "도전자 모델"}
 SOURCES = (  # key, 이름, 누가 읽나

@@ -334,16 +334,18 @@ function bindSetup() {
 // ================================================================= 채팅 AI
 // 대화 id 는 app.js 의 safeGet 이 준비된 뒤(첫 사용 시) 정한다
 const CHAT = {
-  _sid: null, busy: false, info: null,
+  _sid: null, busy: false, info: null, preset: null, web: null,
   get sid() {
     if (!this._sid) { this._sid = safeGet("qa_chat_sid") || Math.random().toString(36).slice(2, 12); safeSet("qa_chat_sid", this._sid); }
     return this._sid;
   },
 };
-const SUGGEST = ["하이닉스 지금 상태 어때?", "엔비디아 어때?", "오늘 많이 오른 종목은?", "오늘 뉴스 요약해줘", "AI 믿어도 돼?", "이번 주 일정", "왜 안 샀어?", "내 투자 한도", "DART 키 왜 안돼?", "어제 무슨 일 있었어?"];
+const SUGGEST = ["다가오는 실적 발표나 중대 발표 있어?", "오늘 밤 미국장 몇 시에 열려?", "하이닉스 지금 상태 어때?", "엔비디아 어때?", "오늘 많이 오른 종목은?", "오늘 뉴스 요약해줘", "AI 믿어도 돼?", "FOMC 언제야?", "왜 안 샀어?", "내 투자 한도"];
 const TOOL_LABEL = { search_stocks: "🔎 종목 검색", stock_overview: "📈 종목 조회", market_overview: "🌐 시장", portfolio: "💼 포트폴리오", net_alpha: "🏆 Net Alpha", safety_status: "🛡️ 안전 점검", ai_performance: "🎯 AI 성적", server_status: "🖥️ 서버", db_status: "🗄️ DB", propose_action: "▶ 실행 제안",
   ai_trust: "🧪 AI 신뢰", keys_status: "🔑 키 진단", news_board: "📰 뉴스 보드", market_map: "🗺️ 증시 지도", budget: "💰 투자 한도",
-  event_strategy: "📊 이벤트 전략", why_no_trade: "⛔ 거래 안 한 이유", weekly_schedule: "📅 이번 주 일정", replay_day: "⏪ 그날 재현" };
+  event_strategy: "📊 이벤트 전략", why_no_trade: "⛔ 거래 안 한 이유", weekly_schedule: "📅 이번 주 일정", replay_day: "⏪ 그날 재현",
+  upcoming_events: "📡 일정 레이더", market_clock: "🕘 장 시계", web_search: "🌐 웹 검색", read_page: "📄 웹 페이지" };
+const WEB_MODE = { gemini_grounding: "Gemini 가 직접 웹 검색", groq_compound: "Groq 가 직접 웹 검색", tool: "웹 검색 도구 사용", rules: "웹 검색 결과 목록" };
 
 function md(text) {
   const lines = esc(text || "").split("\n");
@@ -378,7 +380,11 @@ function chatMsgHtml(m) {
   const acts = (m.actions || []).map((a) => `<button class="act-btn ${a.danger ? "danger" : ""}" data-act="${esc(a.action)}" data-sym="${esc(a.symbol || "")}" title="${esc(a.reason || "")}">▶ ${esc(a.label)}</button>`).join("");
   const links = (m.links || []).map((l) => `<a class="chip xs" href="${esc(l.href)}">↗ ${esc(l.label)}</a>`).join(" ");
   const fol = (m.followups || []).map((q) => `<button class="fol-q">${esc(q)}</button>`).join("");
-  return `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble">${tools ? `<div class="tchips">${tools}</div>` : ""}${md(m.content)}${cards ? `<div class="cards">${cards}</div>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}${links ? `<div class="chat-links xs muted">근거 화면 ${links}</div>` : ""}${fol ? `<div class="chat-fol">${fol}</div>` : ""}${m.model ? `<div class="xs dim" style="margin-top:6px">${esc(m.model)}</div>` : ""}</div></div>`;
+  // v38: 웹 출처 · 어떤 모델이 어떻게 답했나 (모델 묶음 · 웹 검색 방식)
+  const srcs = (m.sources || []).map((x) => { const u = safeUrl(x.url); return `<li><span class="cite">[${x.n}]</span> ${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a>` : esc(x.title || "")}${x.source ? ` <span class="dim">· ${esc(pubName(x.source))}</span>` : ""}${x.date ? ` <span class="dim">· ${esc(String(x.date).slice(0, 10))}</span>` : ""}</li>`; }).join("");
+  const foot = [m.model ? m.preset_label : m.preset_label ? "플랫폼 데이터 요약 (AI 키 없이 규칙으로)" : "", m.model, m.web ? WEB_MODE[m.web] || m.web : m.web_on ? "웹 검색 안 함 (필요 없다고 판단)" : ""].filter(Boolean).join(" · ");
+  const body = md(m.content).replace(/\[(\d{1,2})\]/g, '<sup class="cite">[$1]</sup>');
+  return `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble">${tools ? `<div class="tchips">${tools}</div>` : ""}${body}${cards ? `<div class="cards">${cards}</div>` : ""}${acts ? `<div class="acts">${acts}</div>` : ""}${srcs ? `<details class="chat-src" open><summary>웹 출처 ${(m.sources || []).length}개 — 확인되지 않은 정보일 수 있어요</summary><ol>${srcs}</ol></details>` : ""}${links ? `<div class="chat-links xs muted">근거 화면 ${links}</div>` : ""}${fol ? `<div class="chat-fol">${fol}</div>` : ""}${foot ? `<div class="xs dim chat-foot">${esc(foot)}</div>` : ""}</div></div>`;
 }
 
 // v34: 회원용 추천 질문 (운영·AI 판단 질문 없이)
@@ -387,6 +393,7 @@ function chatShell(id, full = false) {
   return `<div class="chat ${full ? "full" : ""}" id="${id}">
     <div class="chat-h"><span class="ch-ic">${ICONS.chat}</span><div><b>Quant AI 어시스턴트</b><div class="xs muted" data-role="model">연결 확인 중…</div></div>
       <button class="icon-btn" data-role="clear" title="대화 지우기">${ICONS.refresh}</button>${full ? "" : `<button class="icon-btn" data-role="close" title="닫기">✕</button>`}</div>
+    <div class="chat-tools" data-role="tools"></div>
     <div class="chat-body" data-role="body"></div>
     <div class="chat-sug" data-role="sug">${(typeof isMember === "function" && isMember() ? SUGGEST_MEMBER : SUGGEST).map((s) => `<button>${esc(s)}</button>`).join("")}</div>
     <form class="chat-in" data-role="form"><textarea rows="1" placeholder="${typeof isMember === "function" && isMember() ? "종목·시장·용어 무엇이든 물어보세요 (Enter 전송)" : "종목·시장·서버·DB 무엇이든 물어보세요 (Enter 전송)"}" maxlength="2000"></textarea><button type="submit" class="send">${ICONS.send}</button></form>
@@ -399,10 +406,29 @@ async function chatLoad(root) {
     const h = await api(`/api/chat?sid=${CHAT.sid}`);
     CHAT.info = h;
     root.querySelector('[data-role="model"]').innerHTML = h.model ? `${aiIcon(h.provider, null, h.model, 14)} ${esc(h.model)} · 플랫폼 데이터 연결됨` : "AI 키 없음 · 플랫폼 데이터 요약 모드";
+    chatTools(root, h);
     body.innerHTML = h.messages.length ? h.messages.map(chatMsgHtml).join("") : `<div class="chat-hello"><div class="hello-ic">${ICONS.chat}</div><b>무엇이든 물어보세요</b><div class="small muted">${typeof isMember === "function" && isMember() ? "시세·뉴스·일정·내 목표와 용어를 직접 조회해서 답해요.<br>투자 판단은 본인 몫이에요 — 참고용으로 써 주세요." : "이 사이트의 시세·AI 판단·성과·서버 상태를 직접 조회해서 답합니다.<br>DB 정리 같은 작업은 버튼을 눌러야 실행됩니다."}</div></div>`;
   } catch (e) { body.innerHTML = empty(e.message); }
   body.scrollTop = body.scrollHeight;
   bindChatActs(root);
+}
+
+// v38: 모델 고르기(Quant AI 모델 묶음) + 웹 검색 스위치 — 선택은 이 브라우저에 기억
+function chatTools(root, h) {
+  const box = root.querySelector('[data-role="tools"]');
+  if (!box) return;
+  const ps = h.presets || [];
+  if (CHAT.preset == null) CHAT.preset = safeGet("qa_chat_model") || h.prefs?.chat || "auto";
+  if (CHAT.web == null) CHAT.web = (safeGet("qa_chat_web") ?? (h.prefs?.web ? "1" : "0")) === "1";
+  const draw = () => {
+    const cur = ps.find((p) => p.key === CHAT.preset) || ps[0] || {};
+    box.innerHTML = `<div class="ct-models">${ps.map((p) => `<button class="ct-m ${p.key === CHAT.preset ? "on" : ""}" data-m="${esc(p.key)}" ${p.ready ? "" : "disabled"} title="${esc(p.desc + (p.ready ? (p.now ? " · 지금 연결: " + p.now : "") : " · 키가 없어 못 써요"))}">${esc(p.label)}</button>`).join("")}</div>
+      <button class="ct-web ${CHAT.web ? "on" : ""}" data-role="web" title="켜면 최신 뉴스·발표·실적 일정을 웹에서 찾아 출처와 함께 답해요">${CHAT.web ? "🌐 웹 검색 켜짐" : "🌐 웹 검색"}</button>
+      <div class="ct-desc xs dim">${esc(cur.desc || "")}${cur.now ? ` · ${esc(cur.now)}` : ""}</div>`;
+    box.querySelectorAll(".ct-m").forEach((b) => b.onclick = () => { CHAT.preset = b.dataset.m; safeSet("qa_chat_model", CHAT.preset); draw(); });
+    box.querySelector('[data-role="web"]').onclick = () => { CHAT.web = !CHAT.web; safeSet("qa_chat_web", CHAT.web ? "1" : "0"); draw(); };
+  };
+  draw();
 }
 
 function bindChatActs(root) {
@@ -423,12 +449,13 @@ async function chatSend(root, text) {
   CHAT.busy = true;
   const body = root.querySelector('[data-role="body"]');
   body.querySelector(".chat-hello")?.remove();
-  body.insertAdjacentHTML("beforeend", chatMsgHtml({ role: "user", content: text }) + `<div class="msg ai typing"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble"><span class="dots"><i></i><i></i><i></i></span> 플랫폼 데이터를 조회하는 중…</div></div>`);
+  body.insertAdjacentHTML("beforeend", chatMsgHtml({ role: "user", content: text }) + `<div class="msg ai typing"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble"><span class="dots"><i></i><i></i><i></i></span> ${CHAT.web ? "플랫폼 데이터 + 웹을 찾는 중… (웹 검색은 10~30초 걸릴 수 있어요)" : "플랫폼 데이터를 조회하는 중…"}</div></div>`);
   body.scrollTop = body.scrollHeight;
   try {
-    const r = await post("/api/chat", { message: text, sid: CHAT.sid });
+    const r = await post("/api/chat", { message: text, sid: CHAT.sid, model: CHAT.preset || undefined, web: CHAT.web });
     body.querySelector(".typing")?.remove();
-    body.insertAdjacentHTML("beforeend", chatMsgHtml({ role: "assistant", content: r.answer, tools: r.tools_used, cards: r.cards, actions: r.actions, model: r.model, links: r.links, followups: r.followups }));
+    body.insertAdjacentHTML("beforeend", chatMsgHtml({ role: "assistant", content: r.answer, tools: r.tools_used, cards: r.cards, actions: r.actions, model: r.model, links: r.links, followups: r.followups,
+      sources: r.sources, preset_label: r.preset_label, web: r.web, web_on: r.web_on }));
   } catch (e) {
     body.querySelector(".typing")?.remove();
     body.insertAdjacentHTML("beforeend", `<div class="msg ai"><div class="avatar-ai">${ICONS.chat}</div><div class="bubble"><div class="veto">${esc(e.message)}</div></div></div>`);
@@ -566,7 +593,10 @@ const EV_ICON = new Proxy({ earnings: "earnings", earnings_prelim: "earnings", e
 const safeUrl = (u) => /^https?:\/\//i.test(u || "") ? esc(u) : null;
 
 function pfEvents(p) {
-  const evs = p.events || [];
+  // v38: '다가오는 일정'에는 앞으로 올 일정만 — 지난 일정(D+11 배당 지급일 등)은 아래 '지난 일정' 한 줄로
+  const all = p.events || [], evs = all.filter((e) => !e.past), past = all.filter((e) => e.past).slice(0, 3);
+  const pastLine = past.length ? `<div class="xs dim" style="margin-top:6px">지난 일정: ${past.map((e) => `${esc(e.label)} ${evDate(e.date)} (${-e.d_day}일 전)`).join(" · ")}</div>` : "";
+  if (!evs.length && past.length) return `<div class="ev-none small dim">앞으로 예정된 실적 발표·배당 일정 정보가 없습니다</div>${pastLine}`;
   if (!evs.length) return `<div class="ev-none small dim">예정된 실적 발표·배당 일정 정보가 없습니다${(p.sources || []).length ? "" : " — 외부 데이터 소스에 연결하지 못했습니다"}</div>`;
   const earn = evs.find((e) => (e.kind === "earnings") && !e.past);
   const warn = earn && earn.d_day <= 7 ? `<div class="ev-warn">⚡ <b>${earn.d_label === "오늘" ? "오늘" : earn.d_label}</b> 실적 발표 — 발표 전후로 주가 변동이 커질 수 있습니다. 새로 사기 전에 발표 결과를 확인하는 것도 방법입니다.</div>` : "";
@@ -574,13 +604,13 @@ function pfEvents(p) {
     <div class="ev-d">${esc(e.d_label)}</div>
     <div class="ev-b"><div><span>${EV_ICON[e.kind] || "📌"}</span> <b>${esc(e.label)}</b>${e.estimated ? ' <span class="chip xs">예상</span>' : ""}${e.filed ? ' <span class="chip xs">공시</span>' : ""}</div>
       <div class="small">${evDate(e.date)}${e.date_end ? ` ~ ${evDate(e.date_end)}` : ""}${e.time ? ` · ${esc(e.time)}` : ""}</div>
-      ${e.detail ? `<div class="xs dim ev-det">${e.url && safeUrl(e.url) ? `<a class="link" href="${safeUrl(e.url)}" target="_blank" rel="noopener">${esc(e.detail)}</a>` : esc(e.detail)}</div>` : ""}</div></div>`).join("")}</div>${warn}`;
+      ${e.detail ? `<div class="xs dim ev-det">${e.url && safeUrl(e.url) ? `<a class="link" href="${safeUrl(e.url)}" target="_blank" rel="noopener">${esc(e.detail)}</a>` : esc(e.detail)}</div>` : ""}</div></div>`).join("")}</div>${warn}${pastLine}`;
 }
 
 function range52(st, cur) {
   if (st.high52 == null || st.low52 == null) return "";
   const pos = st.pos52 == null ? null : Math.max(0, Math.min(1, st.pos52));
-  return `<div class="r52"><div class="xs muted">52주 범위 ${pos == null ? "" : `· 현재 <b>${Math.round(pos * 100)}%</b> 위치`}</div>
+  return `<div class="r52"><div class="xs muted">52주 범위 (장중 고가·저가) ${pos == null ? "" : `· 현재 <b>${Math.round(pos * 100)}%</b> 위치`}</div>
     <div class="r52-bar">${pos == null ? "" : `<i style="left:${pos * 100}%"></i>`}</div>
     <div class="r52-l xs"><span class="down">${esc(priceCur(st.low52, cur))}</span><span class="up">${esc(priceCur(st.high52, cur))}</span></div></div>`;
 }
@@ -702,7 +732,7 @@ function pfNews(p, dbNews) {
   if (!list.length) return "";
   return `<div class="news-list">${list.map((n) => { const u = safeUrl(n.url); return `<div class="pfn"><div style="flex:1;min-width:0">
     <div class="t">${u ? `<a href="${u}" target="_blank" rel="noopener">${esc(n.title)}</a>` : esc(n.title)}</div>
-    <div class="xs dim">${esc(n.src || "")} · ${n.ts ? time(n.ts, true) : ""}</div></div>${n.sentiment != null ? sentChip(n.sentiment) : ""}</div>`; }).join("")}</div>`;
+    <div class="xs dim">${esc(pubName(n.src || ""))} · ${n.ts ? time(n.ts, true) : ""}</div></div>${n.sentiment != null ? sentChip(n.sentiment) : ""}</div>`; }).join("")}</div>`;
 }
 
 async function loadProfile(sym, name, a, refresh = false) {

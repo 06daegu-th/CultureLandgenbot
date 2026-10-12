@@ -248,7 +248,7 @@ async function tHome(el) {
     <div id="th-picks2"></div>
     ${typeof adviceOn === "function" && !adviceOn() ? "" : tSec(`AI가 본 오늘의 종목${picks[0]?.as_of ? ` <span class="t-sub">${esc(String(picks[0].as_of).replace(" 일봉", ""))} 종가 기준</span>` : ""}`, trustLine + picksB, '<a href="#report">AI 분석</a>')}
     <div class="t-grid2">
-      ${tSec("오늘의 주요 이벤트", evB, '<a href="#calendar">일정 전체</a>', "t-card")}
+      ${tSec("오늘의 주요 이벤트", evB, '<a href="#radar">레이더 · 미국장</a> · <a href="#calendar">일정 전체</a>', "t-card")}
       ${tSec(/mode=live/.test(q) ? "내 보유 종목 현황" : "모의투자 장부 <span class=\"t-tag\">가상 돈</span>", hdB, '<a href="#pos">포트폴리오</a>', "t-card")}
     </div>
     <div class="t-grid2" id="th-todo">${tSec("오늘 확인할 것", tSkel(2), "", "t-card")}${tSec("오늘 주의할 것", tSkel(2), "", "t-card")}</div>
@@ -407,7 +407,7 @@ async function tStockTab(ctx, k) {
     if (!body.isConnected) return;
     const sum = (n.rule_summary || []).length ? `<div class="t-note">${n.rule_summary.map((x) => `<div>${esc(x)}</div>`).join("")}</div>` : "";
     const com = k === "news" ? await api(`/api/t/community?symbol=${encodeURIComponent(sym)}`).catch(() => null) : null;
-    const comB = com ? tSec("커뮤니티 분위기", com.at ? `<div class="t-kvs"><div><span class="t-k">${esc(com.source || "")} · ${esc(com.ago || "")}</span><b>${esc(com.label || "-")}</b><span class="t-sub">글 ${num(com.n)}개 · 낙관 ${num(com.bull)} · 비관 ${num(com.bear)}</span></div></div>
+    const comB = com ? tSec("커뮤니티 분위기", com.at ? `<div class="t-kvs"><div><span class="t-k">${esc(pubName(com.source || ""))} · ${esc(com.ago || "")}</span><b>${esc(com.label || "-")}</b><span class="t-sub">글 ${num(com.n)}개 · 낙관 ${num(com.bull)} · 비관 ${num(com.bear)}</span></div></div>
         <div class="t-list">${(com.posts || []).slice(0, 6).map((p) => `<a class="t-li" href="${esc(p.url || "#")}" target="_blank" rel="noopener noreferrer"><span class="t-co-t"><b class="clamp2">${esc(p.title)}</b></span>${p.sentiment != null ? `<span class="t-tone ${p.sentiment > 0.1 ? "up" : p.sentiment < -0.1 ? "down" : ""}">${p.sentiment > 0.1 ? "낙관" : p.sentiment < -0.1 ? "비관" : "중립"}</span>` : ""}</a>`).join("")}</div>
         <div class="t-foot">${esc(com.note)}</div>`
       : tEmpty("아직 모은 커뮤니티 글이 없어요", com.failed_at ? "최근 수집이 실패했어요 — 데이터 상태 화면에서 이유를 볼 수 있어요" : "관심종목·보유 종목만 30분마다 모아요 (24시간 운영이 켜져 있을 때)", '<a class="t-btn" href="#datahealth">수집 상태</a>'), "", "t-card") : "";
@@ -490,7 +490,7 @@ async function tStockIntraday(ctx, el) {
   const prev = Number(d.prev_close) || bars[0].close;
   const last = bars[bars.length - 1].close;
   const hm = (t) => { const x = new Date(t * 1000); return `${String(x.getUTCHours()).padStart(2, "0")}:${String(x.getUTCMinutes()).padStart(2, "0")}`; };
-  const base = () => { if (hv) hv.innerHTML = `<span>오늘 (어제 종가 대비)</span> <b class="num ${tCls(last - prev)}">${tPct(last / prev - 1)}</b> <span class="t-sub">${esc(d.source || "")}</span>`; };
+  const base = () => { if (hv) hv.innerHTML = `<span>오늘 (어제 종가 대비)</span> <b class="num ${tCls(last - prev)}">${tPct(last / prev - 1)}</b> <span class="t-sub">${esc(pubName(d.source || ""))}</span>`; };
   base();
   const ch = tArea(el, bars, sym, (p) => {
     if (!hv) return;
@@ -661,7 +661,7 @@ async function tFeed(el) {
     const href = x.kind === "news" ? `#n/${x.id}` : x.kind === "disc" ? `#d/${x.id}` : x.symbols[0] ? `#analysis/${encodeURIComponent(x.symbols[0])}` : "#calendar";
     const ic = x.symbols[0] ? stockLogo(x.symbols[0], x.names[0], 44) : `<span class="t-ev-ic big">${x.kind === "event" ? TI.cal : x.kind === "disc" ? TI.doc : TI.news}</span>`;
     const meta = x.kind === "event" ? [`<em class="t-kind k-event">${esc(EV_KO[x.ev_kind] || "일정")}</em>`, esc(tDate(x.date)), x.market ? (x.market === "KR" ? "한국" : x.market === "US" ? "미국" : esc(x.market)) : "", esc(x.names[0] || "")].filter(Boolean).join(" · ")
-      : [x.kind !== "news" ? `<em class="t-kind k-${x.kind}">${KIND[x.kind]}</em>` : "", esc(x.names.slice(0, 2).join(" · ")), esc(x.source || ""), esc(x.ago || "")].filter(Boolean).join(" · ");
+      : [x.kind !== "news" ? `<em class="t-kind k-${x.kind}">${KIND[x.kind]}</em>` : "", esc(x.names.slice(0, 2).join(" · ")), esc(pubName(x.source || "")), esc(x.ago || "")].filter(Boolean).join(" · ");
     const right = x.kind === "event" ? tDday({ d_day: x.d_day, d_label: x.d_label }) : x.tone !== "중립" ? `<span class="t-tone ${x.tone === "긍정" ? "up" : "down"}">${esc(x.tone)}</span>` : "";
     return tRow(href, `<span class="t-co">${ic}<span class="t-co-t"><b class="clamp2">${esc(x.title)}</b><span>${meta}${x.mine ? ' · <em class="t-held">내 종목</em>' : ""}</span></span></span>`, right, { cls: "t-li-feed" });
   }).join("")}</div><div class="t-foot">${d.n}건 · ${esc(d.as_of)} · 최근 7일 (일정은 30일 안)</div>`;
@@ -691,7 +691,7 @@ async function tArticle(el, kind, id) {
           ${d.tone_ko ? `<span class="t-tag ${d.tone_ko === "긍정" ? "up" : d.tone_ko === "부정" ? "down" : ""}">${esc(d.tone_ko)}</span>` : ""}${d.rumor ? '<span class="t-tag warn">루머·관측</span>' : ""}${d.important ? '<span class="t-tag warn">중요 공시</span>' : ""}</div></div></div>
       <h1 class="t-art-title">${esc(foreign && ex.ko_title ? ex.ko_title : d.title)}</h1>
       ${foreign && ex.ko_title ? `<div class="t-art-orig">${esc(d.title)}</div>` : ""}
-      <div class="t-art-meta">${esc(d.source || "")}${d.source_weight ? ` · 출처 신뢰도 ${Math.round(d.source_weight * 100)}%` : kind !== "news" ? " · 1차 자료" : ""} · ${esc(d.time?.text || "")}</div>
+      <div class="t-art-meta">${esc(pubName(d.source || ""))}${d.source_weight ? ` · 출처 신뢰도 ${Math.round(d.source_weight * 100)}%` : kind !== "news" ? " · 1차 자료" : ""} · ${esc(d.time?.text || "")}</div>
       <div class="t-art-chips">${d.url ? `<a class="t-chipa" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">원문 보기 ${TI.ext}</a>` : ""}
         <span class="t-chipa ${translated ? "ok" : ""}">${!foreign ? "한국어 기사" : ex.translation ? "번역 완료" : "번역 전"}</span>
         <span class="t-chipa ${ex.by === "llm" ? "ok" : ""}">${ex.by === "llm" ? "AI 설명 완료" : "규칙 기반 설명"}</span></div>
@@ -703,7 +703,7 @@ async function tArticle(el, kind, id) {
         ${(d.numbers || []).map((n) => `<div><span class="t-k">${esc(n.label || "기사 속 숫자")}</span><b class="num">${esc(n.value)}</b></div>`).join("")}</div>`, "", "t-card") : ""}
       ${syms.length ? tSec("관련 종목", `<div class="t-hs" id="ta-rel">${syms.map((c) => `<a class="t-relc" href="#analysis/${encodeURIComponent(c.symbol)}" data-sym="${esc(c.symbol)}">${stockLogo(c.symbol, c.name, 36)}<b>${esc(c.name)}</b><span class="num t-pc" data-chg>&nbsp;</span>${c.level ? `<em>${esc({ "🔴": "기사에 직접", "🟠": "같은 업종", "🟡": "함께 언급" }[c.level] || c.level)}</em>` : ""}</a>`).join("")}</div>`, "", "t-card") : ""}
       ${(d.terms || []).length ? tSec("용어 풀이", d.terms.map((t) => `<div class="t-term"><b>${esc(t.term)}</b><span>${esc(t.meaning)}</span></div>`).join(""), "", "t-card") : ""}
-      ${(d.siblings || []).length ? tSec(`같은 소식 · 다른 매체 ${d.siblings.length}곳`, `<div class="t-list">${d.siblings.map((a) => `<a class="t-li" href="${esc(a.url || "#")}" target="_blank" rel="noopener noreferrer"><span class="t-co-t"><b class="clamp2">${esc(a.title)}</b><span>${esc(a.source || "")} · ${esc(a.at || "")}</span></span></a>`).join("")}</div>`, "", "t-card") : ""}
+      ${(d.siblings || []).length ? tSec(`같은 소식 · 다른 매체 ${d.siblings.length}곳`, `<div class="t-list">${d.siblings.map((a) => `<a class="t-li" href="${esc(a.url || "#")}" target="_blank" rel="noopener noreferrer"><span class="t-co-t"><b class="clamp2">${esc(a.title)}</b><span>${esc(pubName(a.source || ""))} · ${esc(a.at || "")}</span></span></a>`).join("")}</div>`, "", "t-card") : ""}
       <div class="t-foot">${esc(d.note || "")}</div>
     </article>`;
   tBindBar(root, "#news");
@@ -790,7 +790,7 @@ async function tMarket(el) {
       <div class="t-mks big">${(m.markets || []).map((x) => `<div class="t-mkc ${x.open ? "open" : ""}"><span class="t-k">${esc(x.name)} 증시</span><b>${x.open ? '<i class="live-dot"></i>' : ""}${esc(x.state)}</b>
         <span class="t-sub">${x.holiday ? `${esc(x.holiday)} · ` : ""}${x.next_kst ? `${x.next === "폐장" ? "마감" : "개장"} ${esc(String(x.next_kst).replace(" KST", ""))} (한국시간)` : ""}</span></div>`).join("")}</div>
       ${tSec("지수", idx.length ? `<div class="t-idx">${idx.map((x) => x.missing ? `<div class="t-idx-c miss"><div class="t-idx-n">${esc(x.name)}</div><div class="t-idx-v dim">-</div><div class="t-idx-d">${esc(x.why)}</div></div>` : `<div class="t-idx-c"><div class="t-idx-n">${esc(x.name)}${x.proxy ? '<span class="t-tag">대용</span>' : ""}</div>
-        <div class="t-idx-v num">${num(x.last, 2)}</div><div class="num t-idx-c2 ${tCls(x.chg_pct)}">${tPct(x.chg_pct)}</div>${tSpark(x.spark, { h: 44 })}<div class="t-idx-d">${esc(x.as_of)}${x.source ? ` · ${esc(x.source)}` : " · 60일"}</div></div>`).join("")}</div>
+        <div class="t-idx-v num">${num(x.last, 2)}</div><div class="num t-idx-c2 ${tCls(x.chg_pct)}">${tPct(x.chg_pct)}</div>${tSpark(x.spark, { h: 44 })}<div class="t-idx-d">${esc(x.as_of)}${x.source ? ` · ${esc(pubName(x.source))}` : " · 60일"}</div></div>`).join("")}</div>
         ${proxy ? `<div class="t-foot">대용: ${esc(proxy.proxy_note)}</div>` : ""}` : tErr(m.indices))}
       ${tTabs("tm-mk", [["kr", "국내"], ["us", "해외"]], T.mvTab, "t-tabs-line")}
       <div class="t-grid3">${tSec("많이 오른", list(mv.up), "", "t-card")}${tSec("많이 내린", list(mv.down), "", "t-card")}${tSec("거래대금 많은", list(mv.turnover), "", "t-card")}</div>

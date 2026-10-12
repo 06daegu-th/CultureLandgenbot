@@ -17,11 +17,13 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutTimeout
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 log = logging.getLogger(__name__)
 KST = timedelta(hours=9)
+ET = ZoneInfo("America/New_York")
 PROFILE_TTL = timedelta(hours=6)
 FAIL_COOLDOWN = timedelta(minutes=30)
 FETCH_TIMEOUT = 25.0
@@ -43,21 +45,31 @@ def _fnum(x) -> float | None:
         return None
 
 
-def _day(x) -> date | None:
-    """epoch 초 · datetime · date · 'YYYY-MM-DD' · 'MM/DD/YYYY' · 'Nov 19, 2025' → date."""
+def _day(x, us: bool = False) -> date | None:
+    """epoch 초 · datetime · date · 'YYYY-MM-DD' · 'MM/DD/YYYY' · 'Nov 19, 2025' → date.
+    us=True: 시각이 있는 값은 미국 동부(거래소) 날짜로 — 장 마감 후(16시 ET) 실적이 한국 날짜로 하루 밀려
+    Nasdaq('11/18') 과 Yahoo('11/19') 가 서로 다른 날로 보이던 문제 (v38)."""
     if x is None:
         return None
     try:
+        if isinstance(x, pd.Timestamp):
+            x = x.to_pydatetime()
         if isinstance(x, datetime):
-            return (x.astimezone(UTC) + KST).date() if x.tzinfo else x.date()
+            if not x.tzinfo:
+                return x.date()
+            xu = x.astimezone(UTC)
+            if us and (xu.hour, xu.minute, xu.second) == (0, 0, 0):  # 날짜만 있는 값(배당락일 등)은 0시 UTC — 그 날짜 그대로
+                return xu.date()
+            return x.astimezone(ET).date() if us else (xu + KST).date()
         if isinstance(x, date):
             return x
         if isinstance(x, int | float):
             if isinstance(x, float) and math.isnan(x):
                 return None
-            return (datetime.fromtimestamp(float(x), UTC) + KST).date()
-        if isinstance(x, pd.Timestamp):
-            return _day(x.to_pydatetime())
+            t = datetime.fromtimestamp(float(x), UTC)
+            if us and (t.hour, t.minute, t.second) == (0, 0, 0):
+                return t.date()
+            return t.astimezone(ET).date() if us else (t + KST).date()
         s = str(x).strip()
         for cand, fmt in ((s, "%b %d, %Y"), (s, "%m/%d/%Y"), (s[:10], "%Y-%m-%d"), (s[:10], "%Y.%m.%d"), (s[:8], "%Y%m%d")):
             try:
@@ -183,6 +195,7 @@ def _kr_rating(mean: float | None) -> str | None:
 
 
 def _from_info(info: dict, p: dict) -> None:
+    us = not is_kr(p.get("symbol") or "0")
     g = info.get
     price = _fnum(g("currentPrice")) or _fnum(g("regularMarketPrice"))
     div_rate = _fnum(g("dividendRate")) or _fnum(g("trailingAnnualDividendRate"))
@@ -229,17 +242,19 @@ def _from_info(info: dict, p: dict) -> None:
     ts = g("earningsTimestampStart") or g("earningsTimestamp")
     if ts:
         te = g("earningsTimestampEnd")
-        p["_events"].append({"kind": "earnings", "label": "실적 발표", "date": _day(ts),
-                             "date_end": _day(te) if te and _day(te) != _day(ts) else None,
+        p["_events"].append({"kind": "earnings", "label": "실적 발표", "date": _day(ts, us),
+                             "date_end": _day(te, us) if te and _day(te, us) != _day(ts, us) else None,
                              "estimated": bool(g("isEarningsDateEstimate")), "source": "Yahoo"})
     for k, lbl in (("exDividendDate", "배당락일"), ("dividendDate", "배당 지급일")):
         if g(k):
             p["_events"].append({"kind": "ex_div" if k == "exDividendDate" else "div_pay", "label": lbl,
-                                 "date": _day(g(k)), "source": "Yahoo",
-                                 "detail": f"주당 {div_rate:g}(연간)" if div_rate else None})
+                                 "date": _day(g(k), us), "source": "Yahoo",
+                                 "detail": (f"주당 연 ${div_rate:,.2f}" if (g("currency") or "USD") == "USD" else f"주당 연 {div_rate:,.0f}원")
+                                 if div_rate else None})
 
 
 def _from_calendar(cal, p: dict, cur: str) -> None:
+    us = not is_kr(p.get("symbol") or "0")
     if isinstance(cal, pd.DataFrame):  # 옛 yfinance: 행=항목, 열=값
         cal = {k: (v.dropna().tolist() if len(v.dropna()) > 1 else (v.dropna().iloc[0] if len(v.dropna()) else None))
                for k, v in cal.T.items()} if not cal.empty else {}
@@ -247,7 +262,7 @@ def _from_calendar(cal, p: dict, cur: str) -> None:
         return
     ed = cal.get("Earnings Date")
     eds = [d for d in (ed if isinstance(ed, list | tuple) else [ed]) if d is not None]
-    days = sorted({x for x in (_day(d) for d in eds) if x})
+    days = sorted({x for x in (_day(d, us) for d in eds) if x})
     if days:
         det = []
         if _fnum(cal.get("Earnings Average")) is not None:
@@ -263,10 +278,11 @@ def _from_calendar(cal, p: dict, cur: str) -> None:
                              "revenue_estimate": _fnum(cal.get("Revenue Average"))})
     for k, kind, lbl in (("Ex-Dividend Date", "ex_div", "배당락일"), ("Dividend Date", "div_pay", "배당 지급일")):
         if cal.get(k):
-            p["_events"].append({"kind": kind, "label": lbl, "date": _day(cal.get(k)), "source": "Yahoo"})
+            p["_events"].append({"kind": kind, "label": lbl, "date": _day(cal.get(k), us), "source": "Yahoo"})
 
 
 def _from_earnings_dates(df, p: dict) -> None:
+    us = not is_kr(p.get("symbol") or "0")
     if not isinstance(df, pd.DataFrame) or df.empty:
         return
     cols = {c.lower(): c for c in df.columns}
@@ -276,7 +292,7 @@ def _from_earnings_dates(df, p: dict) -> None:
     today = today_kst()
     hist = []
     for ts, row in df.iterrows():
-        d = _day(ts)
+        d = _day(ts, us)
         if d is None:
             continue
         a = _fnum(row.get(act)) if act else None
@@ -304,8 +320,13 @@ def _session_of(ts) -> str | None:
         t = pd.Timestamp(ts)
         if t.tz is None:
             return None
-        h = t.tz_convert("America/New_York").hour
-        return "장 시작 전" if h < 10 else "장 마감 후" if h >= 16 else "장중"
+        e = t.tz_convert("America/New_York")
+        h = e.hour + e.minute / 60
+        # v38: 미국 기업은 정규장 중에 실적을 거의 내지 않는다. 그 시각(10~16시 ET)은 Yahoo 가 시각을 모를 때 넣는
+        #      자리표시값이라 '장중'으로 단정하면 틀린다 (엔비디아가 '장중 예정'으로 보이던 문제) → 모름
+        if h == 0:  # 날짜만 있는 값
+            return None
+        return "장 시작 전" if h < 9.5 else "장 마감 후" if h >= 16 else None
     except (ValueError, TypeError):
         return None
 

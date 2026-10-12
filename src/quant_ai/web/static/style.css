@@ -1328,3 +1328,20 @@ a.co-n:hover { text-decoration: underline; }
 .co-s .held { color: var(--text-2, var(--muted)); font-weight: 600; }
 .co-id.big { gap: 14px; } .co-id.big .co-n { font-size: 22px; letter-spacing: -.2px; } .co-id.big .co-s { font-size: 13px; }
 .search-results a .co-id { flex: 1; }
+
+/* v38 채팅: 모델 고르기 · 웹 검색 · 출처 */
+.chat-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.ct-models { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+.ct-m, .ct-web { flex: none; font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 999px; cursor: pointer; color: var(--muted);
+  background: var(--panel-2); border: 1px solid var(--line-2); }
+.ct-m.on, .ct-web.on { color: var(--accent-ink, #fff); background: var(--accent); border-color: var(--accent); }
+.ct-m:disabled { opacity: .4; cursor: not-allowed; }
+.ct-desc { flex-basis: 100%; line-height: 1.4; }
+.chat-src { margin-top: 8px; font-size: 12px; border-top: 1px dashed var(--line-2); padding-top: 6px; }
+.chat-src summary { cursor: pointer; color: var(--muted); }
+.chat-src ol { margin: 4px 0 0; padding-left: 4px; list-style: none; }
+.chat-src li { margin: 2px 0; overflow-wrap: anywhere; }
+.chat-src a { color: var(--accent); }
+.cite { color: var(--accent); font-size: .78em; font-weight: 600; }
+sup.cite { vertical-align: super; line-height: 0; }
+.chat-foot { margin-top: 6px; }

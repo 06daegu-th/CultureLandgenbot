@@ -363,7 +363,7 @@ function pfCommunity(p) {
   const c = p.community;
   if (!c || !c.n) return "";
   const tot = (c.bull || 0) + (c.bear || 0);
-  return `<div class="com-top"><div><div class="xs muted">${esc(c.source || "")} · 글 ${c.n}개 · ${c.at ? ago(c.at) : ""}</div>
+  return `<div class="com-top"><div><div class="xs muted">${esc(pubName(c.source || ""))} · 글 ${c.n}개 · ${c.at ? ago(c.at) : ""}</div>
       <div class="big">${esc(c.label || "-")}</div></div>
       <div class="com-bar">${tot ? `<span class="b" style="flex:${c.bull}">낙관 ${c.bull}</span><span class="r" style="flex:${c.bear}">비관 ${c.bear}</span>` : '<span class="n">분위기 표시 없음</span>'}</div></div>
     ${(c.posts || []).map((x) => `<div class="pfn"><div style="flex:1;min-width:0"><div class="t">${safeUrl(x.url) ? `<a href="${safeUrl(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a>` : esc(x.title)}</div></div>${x.sentiment != null ? sentChip(x.sentiment) : ""}</div>`).join("")}

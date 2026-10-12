@@ -532,6 +532,13 @@ def stock_desk(app, symbol: str) -> dict:
     if risk and risk.get("earnings"):
         from datetime import date as _d
         earn_date = _d.fromisoformat(risk["earnings"]["date"])
+    if earn_date is None:  # v38: 화면 위 '실적 발표 D-n' 과 같은 날짜를 쓴다 (예전엔 모델이 자기 이력에서 다른 날을 골라 11/17 vs 11/18)
+        from datetime import date as _d
+        prof = (ops.get_state(app.engine, f"profile:{symbol}").get("data") or {})
+        fut = sorted(str(e.get("date"))[:10] for e in prof.get("events") or []
+                     if e.get("kind") == "earnings" and str(e.get("date"))[:10] >= today.isoformat())
+        if fut:
+            earn_date = _d.fromisoformat(fut[0])
     try:
         opt = options.get(app.engine, symbol, earn_date)
     except Exception as e:  # noqa: BLE001

@@ -1557,13 +1557,41 @@ class DashboardAPI:
 
     def chat(self, body: dict) -> dict:
         from ..assistant import reply
-        return reply(self.app, str(body.get("message", "")), body.get("sid"))
+        web = body.get("web")
+        return reply(self.app, str(body.get("message", "")), body.get("sid"), preset=str(body.get("model") or "") or None,
+                     web=None if web is None else bool(web))
 
     def chat_history(self, sid: str) -> dict:
+        from .. import aimodels
         from ..assistant import chat_client, history
         client, prov = chat_client(self.app.settings)
+        cat = aimodels.catalog(self.app.settings, self.engine)
         return {"messages": history(self.engine, sid), "provider": prov,
-                "model": client.models[0] if client else None}
+                "model": client.models[0] if client else None,
+                "presets": [{k: p[k] for k in ("key", "label", "desc", "ready", "now", "web")} for p in cat["presets"]],
+                "prefs": cat["prefs"]}
+
+    # ------------------------------------------------------------------ v38 AI 모델 · 이벤트 레이더
+    def ai_models(self) -> dict:
+        from .. import aimodels
+        return aimodels.catalog(self.app.settings, self.engine)
+
+    def ai_models_write(self, body: dict) -> dict:
+        from .. import aimodels
+        try:
+            aimodels.set_prefs(self.engine, body or {}, self.app.settings)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, **aimodels.catalog(self.app.settings, self.engine)}
+
+    def radar(self, days: str | None = None, symbol: str | None = None) -> dict:
+        from .. import radar
+        try:
+            d = int(days or 14)
+        except ValueError:
+            d = 14
+        sym = (symbol or "").strip().upper()[:12] or None
+        return self._cached(f"radar:{d}:{sym}", 30, lambda: radar.upcoming(self.app, days=d, symbol=sym))
 
     # ------------------------------------------------------------------ 운영
     def health(self) -> dict:

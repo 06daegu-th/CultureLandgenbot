@@ -67,7 +67,8 @@ def test_decide_runs_providers_in_parallel_and_saves_each_symbol(app, monkeypatc
     took = time.monotonic() - t0
     assert len(ds) == 4 and all(d.consensus_id for d in ds)
     assert took < 4 * 3 * 0.3 * 0.75, took  # 한 줄로 부르면 3.6초 → 공급자 동시 호출로 훨씬 빠름
-    assert all(c.calls == 4 for c in clients)
+    # v38: 뉴스 AI(primary)는 이 종목 뉴스·공시가 0건이면 LLM 을 부르지 않는다 — 나머지 공급자는 종목마다 한 번씩
+    assert clients[0].calls == 0 and all(c.calls == 4 for c in clients[1:])
     prog = ops.get_state(app.engine, "ai_progress:KR")
     assert prog["done"] == 4 and prog["total"] == 4 and not prog["running"]
 

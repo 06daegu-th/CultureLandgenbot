@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
 import defusedxml.ElementTree as ET  # XML 폭탄(billion laughs)·외부 엔티티 공격 방어
@@ -73,10 +73,7 @@ class NewsCollector:
         self.fetch = fetch
 
     def collect(self, session: Session) -> int:
-        aliases = {
-            i.symbol: [i.symbol, *(i.keywords or []), *([i.name] if i.name else [])]
-            for i in session.scalars(select(Instrument))
-        }
+        aliases = symbol_aliases(session)
         n = 0
         for feed in self.feeds:
             try:
@@ -96,7 +93,35 @@ class NewsCollector:
                 ))
                 session.flush()
                 n += 1
+        retag_global(session, aliases)
         return n
+
+
+def symbol_aliases(session: Session) -> dict[str, list[str]]:
+    """종목 → 기사에서 찾을 이름들. v38: 해외 종목은 영어 이름·별칭까지 (예전엔 '엔비디아'만 찾아
+    'Why Nvidia's stock…' 같은 영문 기사가 NVDA 뉴스로 잡히지 않아 종목 화면이 '뉴스 0건'이었다)."""
+    from ..global_stocks import GLOBAL_STOCKS
+    out = {i.symbol: [i.symbol, *(i.keywords or []), *([i.name] if i.name else [])] for i in session.scalars(select(Instrument))}
+    for sym, ko, al in GLOBAL_STOCKS:
+        if sym in out:  # 짧은 한글 별칭(엔비·테슬·마소)은 검색용 — 기사 태깅에는 오탐이 많아 뺀다
+            out[sym] = list(dict.fromkeys([*out[sym], ko, *(a for a in al if a.isascii() or len(a) >= 3)]))
+    return out
+
+
+def retag_global(session: Session, aliases: dict[str, list[str]], days: int = 7) -> int:
+    """최근 기사에 해외 종목 태그를 다시 붙인다 (해외 종목을 나중에 추가했거나 별칭이 늘었을 때)."""
+    glob = {k: v for k, v in aliases.items() if not k[:1].isdigit()}
+    if not glob:
+        return 0
+    since = datetime.now(UTC) - timedelta(days=days)
+    n = 0
+    for a in session.scalars(select(NewsArticle).where(NewsArticle.published_at >= since)):
+        tags = tag_symbols(f"{a.title} {a.body or ''}", glob)
+        new = [t for t in tags if t not in (a.symbols or [])]
+        if new:
+            a.symbols = [*(a.symbols or []), *new]
+            n += 1
+    return n
 
 
 # v26: 종목별 뉴스 — 일반 경제 RSS 만으로는 덜 알려진 종목에 뉴스가 거의 안 붙는다.

@@ -423,7 +423,7 @@ def test_assistant_v17_routes_tools_links_and_rule_answers(app, monkeypatch):
     names = [n for n, _ in route(app, "DART 키 왜 안돼? 공시가 안 채워져")]
     assert names[0] == "keys_status" or "keys_status" in names
     assert "ai_trust" in [n for n, _ in route(app, "AI 믿어도 돼?")]
-    assert {"why_no_trade", "budget", "weekly_schedule", "market_map"} <= {n for n, _ in route(app, "왜 안 샀어? 내 투자 한도랑 이번 주 일정, 많이 오른 종목")}
+    assert {"why_no_trade", "budget", "upcoming_events", "market_map"} <= {n for n, _ in route(app, "왜 안 샀어? 내 투자 한도랑 이번 주 일정, 많이 오른 종목")}
     r = route(app, "2020-12-01 에 무슨 일 있었어? 뉴스도")
     assert ("replay_day", {"date": "2020-12-01"}) in r and "news_board" not in [n for n, _ in r]
 

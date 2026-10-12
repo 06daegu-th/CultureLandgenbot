@@ -504,7 +504,7 @@ TV.budget = async (el) => {
   const plan = (p) => `${(p.plain || []).length ? `<div class="t-concl"><b>${p.plain.map((x) => esc(koText(x))).join("<br>")}</b></div>` : ""}
     ${(p.warnings || []).map((w) => `<div class="t-note warn">${esc(koText(w))}</div>`).join("")}
     <div class="t-list">${Object.entries(p.limits || {}).map(([k, v]) => `<div class="t-li"><span class="t-co-t"><b>${LBL[k] || esc(k)}</b><span class="t2-wrap">${esc(koText(p.why?.[k] || ""))}</span></span><span class="t-li-r"><b class="num">${fmt(k, v)}</b></span></div>`).join("")}</div>`;
-  const replay = (r) => !r ? "" : !r.available ? `<div class="t-foot">${esc(r.message || "")}</div>` : tCard("이 한도였으면 과거에 몇 번 걸렸을까", `${tKV([["신규 매수 멈춤", `연 ${r.stop_per_year}번`, "", `하루 ${tPr(r.limit, 1)} 손실 때`], ["자동 정지", `연 ${r.kill_per_year}번`, r.kill_per_year > 1 ? "down" : "", `하루 ${tPr(r.kill_at, 1)} 손실 때`], ["최대 손실선에 닿은 해", tPr(r.hit_share), r.hit_share > 0.3 ? "down" : ""], ["같은 기간 최대 낙폭", tPct(r.max_drawdown, 0), "down"]])}<div class="t-sub">${(r.plain || []).map((x) => esc(koText(x))).join("<br>")}</div><div class="t-foot">${esc(r.source || "")} · ${esc(r.from || "")} ~ ${esc(r.to || "")}</div>`);
+  const replay = (r) => !r ? "" : !r.available ? `<div class="t-foot">${esc(r.message || "")}</div>` : tCard("이 한도였으면 과거에 몇 번 걸렸을까", `${tKV([["신규 매수 멈춤", `연 ${r.stop_per_year}번`, "", `하루 ${tPr(r.limit, 1)} 손실 때`], ["자동 정지", `연 ${r.kill_per_year}번`, r.kill_per_year > 1 ? "down" : "", `하루 ${tPr(r.kill_at, 1)} 손실 때`], ["최대 손실선에 닿은 해", tPr(r.hit_share), r.hit_share > 0.3 ? "down" : ""], ["같은 기간 최대 낙폭", tPct(r.max_drawdown, 0), "down"]])}<div class="t-sub">${(r.plain || []).map((x) => esc(koText(x))).join("<br>")}</div><div class="t-foot">${esc(pubName(r.source || ""))} · ${esc(r.from || "")} ~ ${esc(r.to || "")}</div>`);
   const pol = sv?.on_stop || "hold";
   const POL_T = { hold: "그대로 두기", reduce: "절반 줄이기", liquidate: "전부 정리" };
   tPaint(L.root, "내 투자 한도", `
@@ -833,7 +833,7 @@ TV.calendar = async (el) => {
       ${tHero({ k: `오늘 ${esc(tDate(c.today))}`, lv: evs[0]?.d_day <= 1 ? "warn" : "idle", big: evs.length ? `다가오는 일정 ${evs.length}개` : "다가오는 일정이 없어요", sub: evs[0] ? `가장 가까운 것: ${esc(evs[0].title)} (${esc(evs[0].d_label)})` : "" })}
       ${tChips("cl-k", [["all", "전체"], ...kinds.map((x) => [x, EV_KO[x] || ({ export: "수출입", index_rebalance: "지수 변경", disclosure: "공시", ipo: "상장", split: "분할", meeting: "주총" }[x] || x)])], k)}<div class="t-gap"></div>
       ${Object.keys(byDate).length ? Object.entries(byDate).map(([d, es]) => tCard(`${esc(tDate(d))} <span class="t-h1s">${esc(es[0].d_label)}</span>`, tList(es.map(tEventRow)))).join("") : tCard("", tEmpty("이 종류의 일정이 없어요"))}
-      ${vk.available ? tCard(`시장 불안 정도 (${tG("VKOSPI", "VKOSPI")})`, `${tKV([["지금", tN(vk.level, 1), vk.fear ? "down" : "", vk.proxy ? "대용 값" : ""], ["1년 중 위치", tPr(vk.percentile_1y), "", "높을수록 불안"], ["하루 예상 움직임", `±${tPr(vk.daily_move, 1)}`], ["한 달 예상 움직임", `±${tPr(vk.move_20d, 1)}`]])}${(vk.series || []).length > 2 ? tSpark(vk.series, { h: 60, w: 600, color: "var(--warn)" }) : ""}<div class="t-foot">${esc(vk.source || "")}</div>`) : ""}
+      ${vk.available ? tCard(`시장 불안 정도 (${tG("VKOSPI", "VKOSPI")})`, `${tKV([["지금", tN(vk.level, 1), vk.fear ? "down" : "", vk.proxy ? "대용 값" : ""], ["1년 중 위치", tPr(vk.percentile_1y), "", "높을수록 불안"], ["하루 예상 움직임", `±${tPr(vk.daily_move, 1)}`], ["한 달 예상 움직임", `±${tPr(vk.move_20d, 1)}`]])}${(vk.series || []).length > 2 ? tSpark(vk.series, { h: 60, w: 600, color: "var(--warn)" }) : ""}<div class="t-foot">${esc(pubName(vk.source || ""))}</div>`) : ""}
       ${(c.risk || []).length ? tCard("일정 때문에 조심할 종목", tList(c.risk.filter((r) => r.level !== "low").slice(0, 10).map((r) => tSym(r.symbol, r.name, esc(koText(r.reason || (r.drivers || []).map((d) => d.label || d.name || "").filter(Boolean).join(" · ") || "")), tSt(r.level === "high" ? "bad" : "warn", r.level === "high" ? "높음" : "보통"))), "조심할 종목이 없어요")) : ""}
       ${(c.impact?.market_kr || []).length ? tCard("이런 날 시장은 얼마나 움직였나", tList(c.impact.market_kr.map((x) => `<div class="t-li"><span class="t-co-t"><b>${esc(EV_KO[x.kind] || x.kind)}</b><span>${tN(x.n)}번 · 가장 나빴던 날 ${tPct(x.worst, 1)}</span></span><span class="t-li-r"><b class="num">평소의 ${tN(x.vs_normal, 1)}배</b><span class="t-sub">보통 ±${tPr(x.abs_median, 1)}</span></span></div>`))) : ""}
       ${past.length ? tCard("지난 일정", tList(past.map(tEventRow))) : ""}
@@ -859,7 +859,7 @@ TV.replay = async (el) => {
     ${r.trading ? `<div class="t-grid2">${tCard("그날 많이 오른", tList((r.gainers || []).map(mv)))}${tCard("그날 많이 내린", tList((r.losers || []).map(mv)))}</div>` : ""}
     ${r.us?.trading ? tCard(`미국 장 (한국 시간 그날 밤) · 오름 ${r.us.breadth.up} · 내림 ${r.us.breadth.down}`, `<div class="t-grid2">${tList((r.us.gainers || []).map(mv))}${tList((r.us.losers || []).map(mv))}</div>`) : r.us?.holiday ? `<div class="t-note">미국 휴장 · ${esc(r.us.holiday)}</div>` : ""}
     ${tCard(`그날 AI 판단 ${r.ai_n || 0}건${r.ai_hit_later != null ? ` · 나중에 맞은 비율 ${tPr(r.ai_hit_later)}` : ""}`, tList((r.ai || []).map((a) => tSym(a.symbol, a.name, `확신 ${a.confidence}`, `${tPill(a.action, a.prob_up, { short: true })}${a.later ? `<span class="num t-sub ${tCls(a.later.ret)}">${tPct(a.later.ret, 1)}</span>${tOk(a.later.correct)}` : '<span class="t-sub">결과 전</span>'}`)), "그날 AI 판단이 없어요"))}
-    ${tCard(`그날 뉴스 ${(r.news || []).length}건`, tList((r.news || []).map((n) => `<a class="t-li" href="${n.id ? `#n/${esc(n.id)}` : esc(n.url || "#")}"><span class="t-co-t"><b class="t2-wrap">${esc(n.title)}</b><span>${esc(n.source || "")} · ${esc(n.at || "")}${(n.symbols || []).length ? ` · ${n.symbols.map(esc).join(", ")}` : ""}</span></span></a>`), "그날 저장된 뉴스가 없어요"))}
+    ${tCard(`그날 뉴스 ${(r.news || []).length}건`, tList((r.news || []).map((n) => `<a class="t-li" href="${n.id ? `#n/${esc(n.id)}` : esc(n.url || "#")}"><span class="t-co-t"><b class="t2-wrap">${esc(n.title)}</b><span>${esc(pubName(n.source || ""))} · ${esc(n.at || "")}${(n.symbols || []).length ? ` · ${n.symbols.map(esc).join(", ")}` : ""}</span></span></a>`), "그날 저장된 뉴스가 없어요"))}
     ${(r.events || []).length ? tCard("그날 일정", tList(r.events.map((e) => `<div class="t-li"><span class="t-co"><span class="t-ev-ic">${TI.cal}</span><span class="t-co-t"><b>${esc(e.title)}</b><span>${esc(e.market || "")}${e.estimated ? " · 추정" : ""}</span></span></span></div>`))) : ""}
     ${(r.alerts || []).length ? tCard("그날 알림", tList(r.alerts.map((a) => `<div class="t-li"><span class="t-co-t"><b>${esc(a.title)}</b><span>${esc(a.at)}</span></span></div>`))) : ""}
     <div class="t-foot">${esc(koText(r.note || ""))}</div>
@@ -940,7 +940,7 @@ TV.newslist = async (el) => {
     <div class="t2-filter"><input id="nl-q" class="t-in" placeholder="종목·단어로 찾기 (예: 삼성, HBM, 금리)" value="${esc(q)}" aria-label="검색어">${tChips("nl-d", [["7", "1주"], ["30", "1개월"], ["90", "3개월"]], String(T2.nd || 30))}</div>
     ${tCard(q ? `'${esc(q)}' 검색 결과 ${items.length}건` : "최근 뉴스", tList(items.map((n) => {
       const sym = (n.symbols || [])[0];
-      return `<a class="t-li" href="#n/${esc(n.id)}">${sym ? stockLogo(sym, (n.names || [])[0] || "", 40) : `<span class="t-ev-ic">${TI.news}</span>`}<span class="t-co-t"><b class="t2-wrap">${esc(n.title)}</b><span>${esc(n.source || "")} · ${esc(n.time || n.ago || "")}${(n.names || n.symbols || []).length ? ` · ${esc((n.names || n.symbols).slice(0, 3).join(", "))}` : ""}</span></span>${n.tone != null ? `<span class="t-li-r"><span class="t-tone ${n.tone > 0.2 ? "up" : n.tone < -0.2 ? "down" : ""}">${n.tone > 0.2 ? "좋음" : n.tone < -0.2 ? "나쁨" : "보통"}</span></span>` : ""}</a>`;
+      return `<a class="t-li" href="#n/${esc(n.id)}">${sym ? stockLogo(sym, (n.names || [])[0] || "", 40) : `<span class="t-ev-ic">${TI.news}</span>`}<span class="t-co-t"><b class="t2-wrap">${esc(n.title)}</b><span>${esc(pubName(n.source || ""))} · ${esc(n.time || n.ago || "")}${(n.names || n.symbols || []).length ? ` · ${esc((n.names || n.symbols).slice(0, 3).join(", "))}` : ""}</span></span>${n.tone != null ? `<span class="t-li-r"><span class="t-tone ${n.tone > 0.2 ? "up" : n.tone < -0.2 ? "down" : ""}">${n.tone > 0.2 ? "좋음" : n.tone < -0.2 ? "나쁨" : "보통"}</span></span>` : ""}</a>`;
     }), q ? "찾는 뉴스가 없어요" : "최근 뉴스가 없어요", "뉴스는 24시간 운영(./run.sh)이 켜져 있을 때 모여요"))}
     ${tFull("newslist", '<a class="t-btn ghost" href="#news">뉴스 · 공시</a>')}`);
   const inp = L.root.querySelector("#nl-q");
@@ -959,7 +959,7 @@ TV.datahealth = async (el) => {
     ${tHero({ k: `데이터 믿을 만한 정도 · ${esc(h.as_of || "")}`, lv: blocked ? "bad" : h.overall >= 80 ? "good" : "warn", big: `${tN(h.overall, 0)}점 · ${blocked ? "새로 사지 않아요" : "거래해도 돼요"}`, sub: esc(koText(h.block_reason || h.price_delay?.detail || "")),
       body: tProg((h.overall || 0) / 100, blocked ? "bad" : h.overall >= 80 ? "good" : "warn", "데이터 점수"), foot: "주가 점수 50% 미만 · 장중 실시간 가격 15분 이상 늦음 → 신규 매수를 막아요 (팔기·위험 줄이기는 가능)" })}
     <div class="t-pro" style="margin-top:0"><button class="t-btn ghost" id="dh-re">다시 점검</button><button class="t-btn ghost" data-logo-up="">종목 로고 직접 넣기</button><a class="t-btn ghost" href="#logoq">로고 없는 종목</a><a class="t-btn ghost" href="#datacheck">데이터 점검</a></div><div class="t-gap"></div>
-    ${tCard("분야별", tList((h.rows || []).map((r) => `<div class="t2-item"><div class="t-li"><span class="t-co"><span class="t-dot-ic">${lvDot(tLv(r.status))}</span><span class="t-co-t"><b>${esc(r.name)}</b><span class="t2-wrap">${esc(koText(r.detail || ""))}</span></span></span><span class="t-li-r t2-w">${r.pct == null ? '<span class="t-sub">해당 없음</span>' : `${tProg(r.pct / 100, tLv(r.status))}<b class="num">${r.pct}%</b>`}</span></div><div class="t2-why">출처: ${esc(r.source || "-")}</div></div>`)))}
+    ${tCard("분야별", tList((h.rows || []).map((r) => `<div class="t2-item"><div class="t-li"><span class="t-co"><span class="t-dot-ic">${lvDot(tLv(r.status))}</span><span class="t-co-t"><b>${esc(r.name)}</b><span class="t2-wrap">${esc(koText(r.detail || ""))}</span></span></span><span class="t-li-r t2-w">${r.pct == null ? '<span class="t-sub">해당 없음</span>' : `${tProg(r.pct / 100, tLv(r.status))}<b class="num">${r.pct}%</b>`}</span></div><div class="t2-why">출처: ${esc(pubName(r.source || "-"))}</div></div>`)))}
     ${sn && !sn.error ? tCard("5분마다 자동 감시", tList((sn.checks || []).map((c) => tStRow(c.title, c.detail, c.status)))) : ""}
     ${g && !g.error && (g.failmode || []).length ? tCard("장애가 나도 돈은 이렇게 지켜요", tList(g.failmode.map((m) => `<div class="t-li"><span class="t-co-t"><b>${esc(m.part)} 이 멈추면</b><span class="t2-wrap">가진 주식 ${esc(m.positions)} · 새로 사기 ${esc(m.new_buys)} · 팔기 ${esc(m.sells)}</span></span></div>`))) : ""}
     ${tLegacy("dh-legacy")}
@@ -1058,7 +1058,7 @@ TV.governance = async (el) => {
     ${tHero({ k: "지금 쓰는 방식", lv: "idle", big: esc(sv.current_label || "-"), sub: esc(koText(sv.note || "")) })}
     ${tCard("다른 사람에게 제공하면 필요한 것", tList((sv.levels || []).map((l) => `<div class="t2-item"><div class="t-li"><span class="t-co-t"><b>${esc(l.name)}</b><span class="t2-wrap">${esc(l.desc)}</span></span>${l.key === sv.current ? '<span class="t-li-r"><span class="t-st st-good">지금</span></span>' : ""}</div><div class="t2-why">${esc(l.legal)}</div></div>`)))}
     ${tCard(`보안 점검 · ${tN(se.score)}점`, `${tProg((se.score || 0) / 100, se.score >= 80 ? "good" : "warn")}<div class="t-gap"></div>${tList((se.items || []).map((x) => tStRow(x.item, x.detail, x.status === "partial" ? "warn" : x.status, { label: { ok: "됨", partial: "일부", missing: "없음", bad: "없음" }[x.status] })))}<div class="t-foot">${esc(koText(se.note || ""))}</div>`)}
-    ${tCard("데이터 사용 조건", tList((lc.rows || []).map((r) => `<div class="t2-item"><div class="t-li"><span class="t-co-t"><b>${esc(r.source)}</b><span class="t2-wrap">${esc(r.used)}</span></span><span class="t-li-r">${tSt(...(RISK[r.risk] || ["idle", r.risk]))}</span></div><div class="t2-why">개인: ${esc(r.personal)}<br>상업: ${esc(r.commercial)}</div></div>`)) + `<div class="t-foot">${esc(koText(lc.note || ""))}</div>`)}
+    ${tCard("데이터 사용 조건", tList((lc.rows || []).map((r) => `<div class="t2-item"><div class="t-li"><span class="t-co-t"><b>${esc(pubName(r.source))}</b><span class="t2-wrap">${esc(r.used)}</span></span><span class="t-li-r">${tSt(...(RISK[r.risk] || ["idle", r.risk]))}</span></div><div class="t2-why">개인: ${esc(r.personal)}<br>상업: ${esc(r.commercial)}</div></div>`)) + `<div class="t-foot">${esc(koText(lc.note || ""))}</div>`)}
     ${tCard("최근 기록 (누가 무엇을)", tList((g.audit || []).slice(0, 15).map((a) => `<div class="t-li"><span class="t-co-t"><b>${esc(a.action)}${a.detail ? ` · ${esc(a.detail)}` : ""}</b><span>${esc(a.as_of || "")} · ${esc(a.actor || "")}</span></span></div>`)))}
     ${tFull("governance")}`);
 };
@@ -1416,7 +1416,7 @@ async function tGoalHome(box) {
     <div class="t-prog lv-${lv}"><i style="width:${Math.max(1, pct * 100)}%"></i></div>
     <div class="t-goalhome-bot"><span>${lvDot(lv)}${esc(pr.band_text || pr.text || "")}${b && pr.months >= 1 ? ` <span class="t-sub">(정상 범위 ${tMoney(b.p10)} ~ ${tMoney(b.p90)})</span>` : ""}</span><span>${dcaTxt}</span></div>
     ${nd?.sheet ? `<div class="t-note">주문표: ${esc(nd.sheet)}</div>` : ""}
-    <div class="t-sub">${esc(pr.source || "")}${sk ? ` · <b class="${sk.status === "missed" ? "warn-t" : ""}">${esc(sk.text)}</b>` : ""}</div></a>`;
+    <div class="t-sub">${esc(pubName(pr.source || ""))}${sk ? ` · <b class="${sk.status === "missed" ? "warn-t" : ""}">${esc(sk.text)}</b>` : ""}</div></a>`;
 }
 async function tPicksHome(box) {
   let d;
@@ -1655,7 +1655,7 @@ async function tCompany(body, sym, refresh = false) {
     ${tCard("돈은 잘 버나 (재무 5년)", rows.length ? `
       <div class="t2-fin-g"><div><span class="t-k">매출</span>${tFinBars(rows, "revenue", sym)}</div><div><span class="t-k">영업이익</span>${tFinBars(rows, "op_income", sym)}</div><div><span class="t-k">순이익</span>${tFinBars(rows, "net_income", sym)}</div></div>
       ${tKV([["영업이익률", last.op_margin == null ? "-" : tPr(last.op_margin, 1), "", `${last.year || ""}년`], ["부채비율", last.debt_ratio == null ? "-" : tPr(last.debt_ratio), last.debt_ratio > 2 ? "down" : "", "부채 ÷ 자본 (200% 넘으면 주의)"]])}
-      <div class="t-foot">${esc(f.source || "")}${f.at ? ` · ${tAgo(f.at)} 받음` : ""}</div>`
+      <div class="t-foot">${esc(pubName(f.source || ""))}${f.at ? ` · ${tAgo(f.at)} 받음` : ""}</div>`
       : tEmpty("재무 정보가 없어요", f.error || "DART 키를 넣으면 5년 재무가 나와요", '<button class="t-btn ghost" id="co-re">다시 받기</button>'))}
     ${tCard("비싼가 싼가", `${tKV([[tG("PER"), v.per == null ? "-" : `${v.per.toFixed(1)}배`, "", v.per_src || ""], [tG("PBR"), v.pbr == null ? "-" : `${v.pbr.toFixed(2)}배`], ["배당수익률", v.div_yield == null ? "-" : tPr(v.div_yield, 2)], ["외국인 비율", v.foreign_rate == null ? "-" : tPr(v.foreign_rate, 1)]])}
       ${v.target_mean ? `<div class="t-foot">증권사 목표주가 평균 ${tPx(v.target_mean, sym)}${v.rating ? ` · 의견 ${esc(v.rating)}` : ""} (참고만 — 맞을 때보다 틀릴 때가 많아요)</div>` : ""}`)}
@@ -1681,4 +1681,78 @@ TV.logoq = async (el) => {
       + (miss.length > 80 ? `<div class="t-foot">외 ${miss.length - 80}개</div>` : ""))}
     ${tCard("출처별", tKV(Object.entries(d.by_source || {}).map(([k, v]) => [esc(SRC[k] || k), tN(v)])))}
     <div class="t-pro"><a class="t-btn ghost" href="#datahealth">데이터 상태</a></div>`);
+};
+
+// ------------------------------------------------------------ v38 이벤트 레이더 · AI 모델
+// 레이더: '다가오는 실적발표나 중대 발표 있어? 미국장 중에?' — 모든 시각 한국시간, 이번 미국장 묶음, 웹에서 찾은 미확인 일정
+TV.radar = async (el) => {
+  const days = T2.radarDays || 30;
+  const L = await tLoad(el, "radar", "이벤트 레이더", "t2-radar", () => api(`/api/radar?days=${days}`));
+  if (!L) return;
+  const r = L.d, us = r.us || {}, G = r.groups || {}, C = r.counts || {};
+  const sub = (e) => [e.at ? e.kst + " 한국시간" : e.kst, e.label, (e.tags || []).join("·"), e.scope === "웹 발견" ? `웹 기사 · 미확인${e.source ? " · " + pubName(e.source) : ""}` : e.estimated ? "추정" : ""].filter(Boolean).join(" · ");
+  const row = (e) => e.symbol
+    ? tSym(e.symbol, e.name || e.symbol, esc(koText(e.title)) + `<br><span class="t-sub">${esc(sub(e))}</span>`, tDday(e))
+    : `<div class="t-li"><span class="t-co"><span class="t-ev-ic">${TI.cal}</span><span class="t-co-t"><b class="t2-wrap">${esc(koText(e.title))}</b><span>${esc(sub(e))}</span></span></span><span class="t-li-r">${tDday(e)}</span></div>`;
+  const tabs = [["us_session", `이번 미국장 ${C.us_session || 0}`], ["mine", `내 종목 ${C.mine || 0}`], ["market", `시장 ${C.market || 0}`], ["movers", `대형주 ${C.movers || 0}`], ["web", `웹 발견 ${C.web || 0}`], ["all", `전체 ${C.all || 0}`]];
+  const owner = !(typeof isMember === "function" && isMember());
+  const draw = () => {
+    const k = T2.radarTab || (C.us_session ? "us_session" : C.mine ? "mine" : "all");
+    const xs = k === "all" ? r.rows || [] : G[k] || [];
+    tPaint(L.root, "이벤트 레이더", `
+      ${tHero({ k: `지금 ${esc(r.now_kst || "")} 한국시간`, lv: C.us_session ? "warn" : "idle", big: esc(r.headline || ""),
+        sub: `이번 미국 정규장 <b>${esc(us.open_kst || "-")} ~ ${esc(us.close_kst || "-")}</b> (한국시간${us.dst ? " · 서머타임" : ""})${us.open_now ? " · <b>지금 열려 있어요</b>" : ""}`
+          + (r.next ? `<br>다음 일정: ${esc(r.next.kst)} · ${esc(koText(r.next.title))}` : "") })}
+      ${tChips("rd-tab", tabs, k)}${tChips("rd-days", [["7", "7일"], ["14", "14일"], ["30", "30일"], ["60", "60일"]], String(days))}<div class="t-gap"></div>
+      ${tCard(tabs.find((t) => t[0] === k)?.[1].replace(/\s\d+$/, "") || "일정", tList(xs.map(row), k === "us_session" ? "이번 미국장에 걸린 큰 일정은 없어요" : "이 묶음에 일정이 없어요",
+        k === "mine" ? "관심종목·보유 종목의 실적 일정은 종목 화면을 열거나 '지금 최신으로'를 누르면 채워져요" : k === "web" ? "아래 '웹에서 찾기'를 누르면 기사에서 일정을 찾아요" : ""))}
+      ${owner ? tCard("웹에서 일정 찾기", `<div class="t-foot">내 종목 이름으로 뉴스를 검색해 기사 제목에 적힌 실적·발표 날짜를 모아요. 기사 기준이라 <b>미확인</b>으로 표시하고, 확정 일정이 있으면 그걸 우선해요.
+        ${r.web?.at ? `<br>마지막 검색 ${esc(tAgo(r.web.at))} · 찾은 일정 ${tN(r.web.n)}개` : ""}${(r.web?.errors || []).length ? `<br><span class="down">${esc(r.web.errors[0])}</span>` : ""}</div>
+        <button class="t-btn" id="rd-web">웹에서 찾기</button>`) : ""}
+      <div class="t-foot">${esc(r.note || "")}</div>
+      <div class="t-foot"><a href="#calendar">전체 일정(캘린더)</a> · <a href="#chat">AI 에게 '다가오는 발표 있어?' 묻기</a></div>`);
+    tBind(L.root, "rd-tab", (x) => { T2.radarTab = x; draw(); });
+    tBind(L.root, "rd-days", (x) => { T2.radarDays = +x; TV.radar(el); });
+    const b = L.root.querySelector("#rd-web");
+    if (b) b.onclick = async () => {
+      b.disabled = true; b.textContent = "찾는 중…";
+      const res = await runAction("radar_web", (p) => { b.textContent = p || "찾는 중…"; });
+      b.textContent = res.error ? `실패: ${res.error}` : `✓ ${res.result?.found ?? 0}개 찾음`;
+      setTimeout(() => TV.radar(el), 600);
+    };
+  };
+  draw();
+};
+
+// AI 모델: 일의 종류로 고르는 Quant AI 모델 묶음 + 역할(뉴스·경제·공시·위험)별 공급자 지정
+TV.aimodels = async (el) => {
+  const L = await tLoad(el, "aimodels", "AI 모델 · 웹 검색", "t2-aim", () => api("/api/ai-models"));
+  if (!L) return;
+  const c = L.d, pf = c.prefs || {}, owner = !(typeof isMember === "function" && isMember());
+  const ready = (c.providers || []).filter((p) => p.ready);
+  const WM = { gemini_grounding: "Gemini 가 직접 Google 검색", groq_compound: "Groq 가 직접 웹 검색", tool: "공용 웹 검색 도구", rules: "검색 결과 목록 (AI 없이)" };
+  const cur = (c.presets || []).find((p) => p.key === pf.chat) || (c.presets || [])[0] || {};
+  const presetRow = (p) => `<div class="t-li"><span class="t-co"><span class="t-dot-ic">${lvDot(p.ready ? "good" : "idle")}</span><span class="t-co-t"><b>${esc(p.label)}${p.key === pf.chat ? ' <span class="t-tag up">기본</span>' : ""}</b>
+      <span class="t2-wrap">${esc(p.desc)}</span><span class="t2-wrap">${(p.chain || []).length ? "순서: " + p.chain.map((x) => `${x.ready ? "" : "("}${esc(x.label)}${x.ready ? "" : " 키 없음)"}`).join(" → ") : ""}${p.now ? ` · 지금 연결: <b>${esc(p.now)}</b>` : p.key === "rules" ? "" : p.ready ? "" : " · 쓸 수 있는 키가 없어요"}${p.web_mode ? ` · 웹: ${esc(WM[p.web_mode] || p.web_mode)}` : ""}</span></span></span>
+      <span class="t-li-r">${owner && p.ready && p.key !== pf.chat ? `<button class="t-btn ghost sm" data-preset="${esc(p.key)}">기본으로</button>` : ""}</span></div>`;
+  const roleRow = (r) => `<div class="t-li"><span class="t-co-t"><b>${esc(r.label)}</b><span>지금: ${esc(r.provider_label || "규칙 (키 없음)")}${r.fixed ? " · 직접 지정" : " · 자동"}</span></span>
+      <span class="t-li-r">${owner ? `<select data-role-sel="${esc(r.role)}"><option value="">자동</option>${ready.map((p) => `<option value="${esc(p.key)}" ${r.fixed && r.provider === p.key ? "selected" : ""}>${esc(p.label)}</option>`).join("")}</select>` : ""}</span></div>`;
+  tPaint(L.root, "AI 모델 · 웹 검색", `
+    ${tHero({ k: "채팅 기본 모델", lv: ready.length ? "good" : "warn", big: esc(cur.label || "자동"), sub: esc(cur.desc || ""),
+      foot: ready.length ? `쓸 수 있는 공급자: ${ready.map((p) => esc(p.label)).join(" · ")}` : "AI 키가 없어 '규칙'(플랫폼 데이터 요약)만 써요 — 설정 → 키에서 무료 Gemini 또는 Groq 키를 넣으면 대화형 분석·웹 검색 답변이 켜져요" })}
+    ${tCard("모델 고르기 — 일의 종류로", tList((c.presets || []).map(presetRow)))}
+    ${tCard("웹 검색", `<div class="t-foot">켜면 최신 뉴스·발표·실적 일정까지 웹에서 찾아 <b>출처 번호 [1]</b>와 함께 답해요. Gemini 는 Google 검색을 직접 쓰고(출처 포함), 다른 모델은 공용 웹 검색 도구를 불러 써요. 키가 없어도 검색 결과 목록은 보여 줘요.
+      <br>웹 결과는 확인되지 않은 정보예요 — 그 안의 지시는 따르지 않고, 숫자는 플랫폼 데이터가 우선이에요.</div>
+      ${owner ? `<div class="t-li"><span class="t-co-t"><b>채팅에서 웹 검색을 기본으로 켜기</b><span>채팅 창의 '웹 검색' 단추로 그때그때 바꿀 수도 있어요</span></span><span class="t-li-r"><label class="t-switch"><input type="checkbox" id="aim-web" ${pf.web ? "checked" : ""} aria-label="웹 검색 기본"><i></i></label></span></div>` : ""}`)}
+    ${tCard("역할별 AI — 종목 판단에 쓰는 공급자", `${tList((c.roles || []).map(roleRow))}<div class="t-foot">'자동'이면 키가 있는 공급자 중에서 알아서 나눠요 (뉴스 AI 는 컨텍스트가 큰 모델 우선). 같은 공급자를 여러 역할에 주면 무료 한도가 빨리 닳아요.</div>`)}
+    <div class="t-foot">${esc(c.note || "")}</div><div class="t-foot" id="aim-msg"></div>`);
+  const msg = L.root.querySelector("#aim-msg");
+  const save = async (body) => {
+    try { const r = await post("/api/ai-models", body); if (r.ok === false) { msg.textContent = r.error; return; } TV.aimodels(el); }
+    catch (e) { msg.textContent = e.message || String(e); }
+  };
+  L.root.querySelectorAll("[data-preset]").forEach((b) => b.onclick = () => save({ chat: b.dataset.preset }));
+  const w = L.root.querySelector("#aim-web");
+  if (w) w.onchange = () => save({ web: w.checked });
+  L.root.querySelectorAll("[data-role-sel]").forEach((s) => s.onchange = () => save({ roles: { [s.dataset.roleSel]: s.value || null } }));
 };

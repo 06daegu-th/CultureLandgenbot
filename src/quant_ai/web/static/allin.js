@@ -107,7 +107,7 @@ function trustChip(t) {
 function ddayStrip(evs) {
   const box = $("#pf-dday");
   if (!box || !Array.isArray(evs)) return;
-  box.innerHTML = evs.length ? `<div class="dday">${evs.slice(0, 8).map((e) => `<span class="dd ${e.d_day >= 0 && e.d_day <= 1 ? "hot" : ""} ${e.d_day < 0 ? "past" : ""}" title="${esc(e.source || "")}${e.estimated ? " · 추정" : ""}"><b>${esc(e.d_label)}</b> ${calDot(e.kind)} ${esc(e.title)}${e.scope === "시장" ? ' <span class="xs dim">시장</span>' : ""}${e.estimated ? ' <span class="xs dim">추정</span>' : ""}</span>`).join("")}</div>`
+  box.innerHTML = evs.length ? `<div class="dday">${evs.slice(0, 8).map((e) => `<span class="dd ${e.d_day >= 0 && e.d_day <= 1 ? "hot" : ""} ${e.d_day < 0 ? "past" : ""}" title="${esc(pubName(e.source || ""))}${e.estimated ? " · 추정" : ""}"><b>${esc(e.d_label)}</b> ${calDot(e.kind)} ${esc(e.title)}${e.scope === "시장" ? ' <span class="xs dim">시장</span>' : ""}${e.estimated ? ' <span class="xs dim">추정</span>' : ""}</span>`).join("")}</div>`
     : '<div class="xs dim">이벤트 캘린더에 이 종목·시장의 가까운 일정 없음</div>';
 }
 
@@ -144,7 +144,7 @@ async function pretradeCard(sym, weight = "", mode = S.ptMode || "paper") {
 function digestCard(g) {
   const box = $("#pf-digest");
   if (!box || !g || g.error) return;
-  const hl = (g.headlines || []).map((n) => `<div class="pfn"><div style="flex:1;min-width:0"><div class="t">${esc(n.title)}</div><div class="xs dim">${esc(n.at)} · ${esc(n.source)} · 감성 ${n.sent > 0 ? "+" : ""}${n.sent}</div></div></div>`).join("");
+  const hl = (g.headlines || []).map((n) => `<div class="pfn"><div style="flex:1;min-width:0"><div class="t">${esc(n.title)}</div><div class="xs dim">${esc(n.at)} · ${esc(pubName(n.source))} · 감성 ${n.sent > 0 ? "+" : ""}${n.sent}</div></div></div>`).join("");
   const ds = (g.disclosures || []).map((x) => `<div class="pfn"><div style="flex:1;min-width:0"><div class="t">📑 ${esc(x.title)}</div>${x.summary ? `<div class="xs muted disc-sum">${esc(x.summary)}</div>` : ""}<div class="xs dim">${esc(x.date)}</div></div></div>`).join("");
   box.innerHTML = card(`뉴스·공시 자동 요약 <span class="small dim">${esc(g.tone || "")}</span>`, `
     <ul class="plain small">${(g.summary || []).map((l) => `<li>→ ${esc(l)}</li>`).join("")}</ul>
